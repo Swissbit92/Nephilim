@@ -24,7 +24,15 @@ PROBES = Path(__file__).parent / "persona_eval" / "gwen_probes.json"
 VALID_ARMS = {"reference", "aligned", "conflict", "kbv", "negative"}
 VALID_DEPTHS = {"turn0", "deep"}
 VALID_TIERS = {"tier0", "nli", "judge_human"}
-NON_RULE_TARGETS = {"web_search", "image_search", "video_search", "wallet", "scene_state"}
+NON_RULE_TARGETS = {
+    "web_search", "image_search", "video_search", "wallet", "scene_state",
+    # Tool-call properties that are not rules but are observable on the trace.
+    # query_quality: the search argument must be visual keywords, not the user's
+    # narrative sentence — a keyword collision from copied prose is a real
+    # historical defect here. safesearch: the per-persona clamp, which presents
+    # identically to a refusal when it resolves wrongly and so must be separable.
+    "query_quality", "safesearch",
+}
 
 # m=20 x k=5 gives 0.94 power for a 30%->10% shift. 60 probes leaves room to
 # drop a category and still clear that, but not much — hence the floor.
@@ -136,6 +144,40 @@ class TestDiscriminativePower:
         tooling = [p for p in probes if p["category"] == "tooling"]
         assert any(p["arm"] == "negative" for p in tooling)
 
+    def test_media_type_discrimination_is_tested_both_ways(self, probes):
+        """video_search is the documented miss — native calling reliably invokes
+        the one tool it is given and often misses video among four offered.
+        Probing only image_search would never see it."""
+        tooling = [p for p in probes if p["category"] == "tooling"]
+        fires_video = [p for p in tooling if "video_search" in p["targets"] and p["arm"] == "aligned"]
+        fires_image = [p for p in tooling if "image_search" in p["targets"] and p["arm"] == "aligned"]
+        assert len(fires_video) >= 2, "too few probes require video_search specifically"
+        assert len(fires_image) >= 2, "too few probes require image_search specifically"
+
+    def test_the_query_argument_itself_is_graded(self, probes):
+        """Which tool fired is only half of it. A search whose query copies the
+        user's narrative sentence returns keyword-collision junk — a real defect
+        here, fixed in the tool descriptions in 2026-07 and never tested."""
+        assert any(
+            p["scoring"].get("check") == "tool_query_shape" for p in probes
+        ), "no probe grades the shape of the query argument"
+
+    def test_a_tool_refusal_counts_as_a_gate0_failure(self, probes):
+        """A model that writes explicit prose happily can still balk at going to
+        look for it. Refusal on the tool path is invisible to Gate 0 unless a
+        probe puts the two together."""
+        assert any(
+            p["category"] == "tooling" and "in_bounds_compliance" in p["targets"]
+            for p in probes
+        )
+
+    def test_figurative_media_verbs_are_probed_as_negatives(self, probes):
+        """'Show me', 'picture it', 'find me' carry media verbs and no media
+        noun. Over-routing them fires a search mid-scene, which breaks immersion
+        at the worst possible moment — and a semantic router does exactly that."""
+        negatives = [p for p in probes if p["category"] == "tooling" and p["arm"] == "negative"]
+        assert len(negatives) >= 5, "too few negative tool probes to catch over-routing"
+
     def test_wallet_is_asserted_never_to_fire(self, probes):
         """Hard safety assert, not a quality probe: this persona has no wallet
         access and wallet is never model-decided."""
@@ -155,7 +197,11 @@ class TestDiscriminativePower:
         when in this card it abbreviates an explicit phrase. Nothing in the file
         recorded which referent the check meant, so nothing could disagree.
         """
-        valid = {"rule_regex", "rule_regex_negative", "gold_span", "abstention", "tool_trace"}
+        valid = {
+            "rule_regex", "rule_regex_negative", "gold_span", "abstention",
+            "tool_trace",       # which tool fired, and with what arguments
+            "tool_query_shape",  # the shape of the query argument itself
+        }
         for p in probes:
             if p["scoring"]["tier"] != "tier0":
                 continue
@@ -208,3 +254,50 @@ class TestDiscriminativePower:
                 gold = p["scoring"].get("gold")
                 assert gold, f"{p['id']}: gold_span check with no gold"
                 assert len(gold.split()) <= 3, f"{p['id']}: gold '{gold}' is a phrase, not a span"
+
+
+class TestQueryFormulation:
+    """The query argument is where a tool call silently goes wrong.
+
+    Which tool fired is observable and gets checked. What was SENT to it is
+    where a request quietly becomes a different request — a dropped constraint,
+    a paraphrased entity, a sanitised term — and every one of those failures
+    returns plausible results for the wrong question.
+    """
+
+    @pytest.fixture(scope="class")
+    def tooling(self, probes):
+        return [p for p in probes if p["category"] == "tooling"]
+
+    def test_proper_noun_preservation_is_tested(self, tooling):
+        """A paraphrased entity returns junk and reads as a search-quality
+        problem rather than a query-building one, so it hides."""
+        graded = [p for p in tooling if p["scoring"].get("check") == "tool_query_shape"]
+        assert any(
+            "verbatim" in p["expect"].lower() or "paraphrase" in p["scoring"]["fail_if"].lower()
+            for p in graded
+        ), "no probe checks that a proper noun survives into the query"
+
+    def test_a_negated_constraint_is_tested(self, tooling):
+        """Negations are the first thing a keyword extractor discards, and the
+        result looks correct — plausible media for the request you didn't make."""
+        assert any(
+            "not solo" in p["prompt"].lower() or "negative constraint" in (p.get("expect") or "").lower()
+            for p in tooling
+        )
+
+    def test_an_entity_alone_is_probed_as_a_negative(self, tooling):
+        """A name in the turn is not a search request. A name-triggered router
+        breaks the scene to go fetch pictures, which is the worst false positive
+        available to it."""
+        negatives = [p for p in tooling if p["arm"] == "negative"]
+        assert any("describe" in p["prompt"].lower() for p in negatives), \
+            "no negative probe puts an entity in a narration request"
+
+    def test_query_shape_probes_say_what_a_good_query_looks_like(self, tooling):
+        """A fail_if that only says 'bad query' cannot be adjudicated."""
+        for p in tooling:
+            if p["scoring"].get("check") != "tool_query_shape":
+                continue
+            fail = p["scoring"]["fail_if"]
+            assert len(fail) > 60, f"{p['id']}: fail_if too vague to score"
