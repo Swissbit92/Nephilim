@@ -209,7 +209,10 @@ class ToolBrainService:
         max_iter = st.tool_brain.max_iterations
         # Ollama applies keep_alive per request, last-one-wins, so a call that
         # omits it silently reverts OLLAMA_KEEP_ALIVE=-1 to the server default.
-        keep_alive = st.ollama.keep_alive
+        # It must be coerced: Ollama parses this as a Go duration and rejects a
+        # bare numeric string ("-1" -> HTTP 400 'missing unit in duration'),
+        # which surfaces here as a 503 naming neither the field nor the cause.
+        keep_alive = type(st.ollama).wire_keep_alive(st.ollama.keep_alive)
         decision_opts = {"temperature": 0.4, "num_predict": st.ollama.max_output_tokens,
                          "num_ctx": st.ollama.context_window}
         prose_opts = {**decision_opts, **(sampling_overrides or {})}
