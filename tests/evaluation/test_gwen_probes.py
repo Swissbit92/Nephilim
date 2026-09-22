@@ -147,6 +147,48 @@ class TestDiscriminativePower:
         tier0 = sum(1 for p in probes if p["scoring"]["tier"] == "tier0")
         assert tier0 >= len(probes) // 3
 
+    def test_every_deterministic_probe_names_its_check(self, probes):
+        """A tier0 probe must say HOW it is scored, as a field.
+
+        Leaving it implicit is how `abbr-ref-01` shipped: authored as a trap on
+        the assumption that the forbidden token meant the British broadcaster,
+        when in this card it abbreviates an explicit phrase. Nothing in the file
+        recorded which referent the check meant, so nothing could disagree.
+        """
+        valid = {"rule_regex", "rule_regex_negative", "gold_span", "abstention", "tool_trace"}
+        for p in probes:
+            if p["scoring"]["tier"] != "tier0":
+                continue
+            check = p["scoring"].get("check")
+            assert check in valid, f"{p['id']}: tier0 with check={check!r}"
+
+    def test_regex_rules_have_a_false_positive_guard(self, probes, data):
+        """Any rule scored by a bare string match needs a probe that must NOT
+        fire it.
+
+        The lesson from `abbr-fp-01`: a literal three-character match looked
+        like the cleanest check in the set and was the most broken, because the
+        token is a homonym — the card's explicit expansion versus a television
+        channel. A checker that cannot resolve the two flags innocent replies as
+        violations, and NO amount of capability in the model repairs a scorer
+        that cannot tell them apart. Without a negative probe, that inflates
+        every arm's violation rate invisibly and equally, which looks like a
+        clean result.
+        """
+        regex_rules = {rid for rid, r in data["_rules"].items() if r.get("tier0")}
+        guarded = {
+            t
+            for p in probes
+            if p["scoring"].get("check") == "rule_regex_negative"
+            for t in p["targets"]
+        }
+        # abbrev is the rule with a known homonym; it must carry a guard.
+        assert "abbrev" in regex_rules
+        assert "abbrev" in guarded, (
+            "the abbrev rule is scored by a bare regex on a token with a common "
+            "homonym and has no false-positive guard probe"
+        )
+
     def test_scene_probes_name_their_check_and_golds_are_short(self, probes):
         """Scene probes must declare HOW they are scored, as a field — not leave
         it to be inferred from the prose of fail_if.
