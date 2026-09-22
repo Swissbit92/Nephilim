@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 __all__ = ["Outcome", "score_row", "summarise", "GATE_SOURCE", "TIER0_CHECKS",
-           "score_nli_rows"]
+           "score_nli_rows", "reference_arm_check"]
 
 # The gate replaces the reply before the persona's rules are in play.
 GATE_SOURCE = "groundedness_abstain"
@@ -262,3 +262,37 @@ def score_nli_rows(rows: list[dict], probes: dict, rules: dict,
             outcomes.append(Outcome(**base, verdict="pass",
                                     reason=f"p={worst.p_contradiction:.2f}"))
     return outcomes
+
+
+def reference_arm_check(outcomes: list[Outcome]) -> dict:
+    """Failure rate on probes the rule does not apply to. Print it beside every
+    headline figure.
+
+    The reference arm asks questions the rule is irrelevant to, so a working
+    detector should almost never fail them. When it fails them at the same rate
+    as the conflict arm, it is not measuring the rule — it is measuring
+    something correlated with the text, and the headline number is arbitrary.
+
+    This is not a hypothetical. On this pilot's first scoring pass the reference
+    arm failed 100% — the same as conflict — and the detector had flagged "I had
+    a wild day" as a 0.99 contradiction of an exclusivity clause. Re-framing the
+    hypothesis moved conflict from 83% to 0% on identical replies. One line of
+    output distinguishes those two worlds; without it they look alike.
+    """
+    by: dict[str, dict[str, int]] = defaultdict(lambda: {"scored": 0, "fail": 0})
+    for o in outcomes:
+        if o.verdict in ("pass", "fail"):
+            by[o.arm_probe]["scored"] += 1
+            by[o.arm_probe]["fail"] += o.verdict == "fail"
+    rates = {a: (v["fail"] / v["scored"] if v["scored"] else None) for a, v in by.items()}
+    ref, conflict = rates.get("reference"), rates.get("conflict")
+    suspect = ref is not None and conflict is not None and ref >= 0.5 * conflict and ref > 0.2
+    return {
+        "by_arm": {a: {**v, "rate": rates[a]} for a, v in by.items()},
+        "reference_rate": ref,
+        "conflict_rate": conflict,
+        "detector_suspect": suspect,
+        "note": ("reference fails nearly as often as conflict — the detector is "
+                 "likely responding to register rather than the rule, and the "
+                 "headline rate should not be quoted") if suspect else "",
+    }

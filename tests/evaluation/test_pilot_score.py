@@ -136,3 +136,37 @@ class TestSummary:
         was measured'."""
         s = ps.summarise([ps.Outcome("p", 0, "c", "conflict", "gated")])["c"]
         assert s["base_rate"] is None
+
+
+class TestReferenceArmDiagnostic:
+    """The one line that caught a detector reporting 100% violations."""
+
+    def _outs(self, ref_fail, conf_fail, n=10):
+        o = []
+        for i in range(n):
+            o.append(ps.Outcome("p", i, "c", "reference", "fail" if i < ref_fail else "pass"))
+            o.append(ps.Outcome("p", i, "c", "conflict", "fail" if i < conf_fail else "pass"))
+        return o
+
+    def test_a_healthy_detector_is_not_flagged(self):
+        """Reference near zero, conflict high — the detector separates them."""
+        d = ps.reference_arm_check(self._outs(ref_fail=0, conf_fail=8))
+        assert d["detector_suspect"] is False
+        assert d["reference_rate"] == 0.0
+
+    def test_reference_failing_like_conflict_is_flagged(self):
+        """The observed case: both arms at 100%. A detector that cannot tell
+        'the rule does not apply' from 'the rule was broken' is measuring
+        something else, and its headline number is arbitrary."""
+        d = ps.reference_arm_check(self._outs(ref_fail=10, conf_fail=10))
+        assert d["detector_suspect"] is True
+        assert "register" in d["note"]
+
+    def test_the_note_is_empty_when_nothing_is_wrong(self):
+        assert ps.reference_arm_check(self._outs(0, 7))["note"] == ""
+
+    def test_no_reference_arm_yields_no_verdict_not_a_pass(self):
+        """Absent evidence must not read as a clean bill of health."""
+        d = ps.reference_arm_check([ps.Outcome("p", 0, "c", "conflict", "fail")])
+        assert d["reference_rate"] is None
+        assert d["detector_suspect"] is False
