@@ -141,12 +141,16 @@ class SamplingPreset(BaseModel):
     )
     repeat_last_n: Optional[int] = Field(
         default=None,
-        ge=-1,
+        ge=0,
         description=(
             "How many recent tokens the repetition penalty looks back over. "
             "Ollama's default is 64 (~50 words) — long enough to stop a sentence "
             "repeating inside one reply, far too short to notice a whole paragraph "
-            "being reproduced. -1 scales the window to the full context; 0 disables."
+            "being reproduced. 0 disables the penalty. Must be non-negative: the "
+            "old -1 'full context' sentinel was removed from llama.cpp in PR #26524 "
+            "(2026-08-04) and now returns HTTP 400. Persona cards are loaded "
+            "leniently, so this bound states the contract but does not enforce it "
+            "at runtime — get_persona_sampling_overrides is the guard that binds."
         )
     )
     top_k: Optional[int] = Field(

@@ -63,7 +63,7 @@ def test_min_p_reaches_the_wire():
 
 
 def test_every_sampler_survives_verbatim():
-    opts = {"min_p": 0.05, "repeat_penalty": 1.15, "repeat_last_n": -1, "top_k": 40, "top_p": 0.9}
+    opts = {"min_p": 0.05, "repeat_penalty": 1.15, "repeat_last_n": 384, "top_k": 40, "top_p": 0.9}
     with _captured_post() as client:
         OllamaHTTPClient("http://x", "m", options=opts).invoke("hi")
     assert client.post.call_args.kwargs["json"]["options"] == opts
