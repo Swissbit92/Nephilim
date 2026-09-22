@@ -2,7 +2,7 @@
 title: Lessons Learned
 status: active
 created: 2026-04-19
-last_reviewed_on: 2026-07-19
+last_reviewed_on: 2026-09-22
 review_in: 12 months
 applies_to: nephilim
 ---
@@ -10,6 +10,28 @@ applies_to: nephilim
 # Lessons Learned
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
+
+## 2026-09-22 — A fix verified end to end, on the transport the traffic doesn't use
+
+- **What:** `c00cf084` ("widen the repetition-penalty window") was landed to stop gwen repeating whole paragraphs, and its commit message records a genuine end-to-end verification: persona card → `get_persona_sampling_overrides` → `ollama_params` → `OllamaLLM` → `ollama.Options`. Every link was real. The change was still **completely inert in production**, because `OllamaLLM` is the *legacy* transport and gwen's turns go through the tool brain, which builds its own options dict — `{"temperature": 0.4}`, hardcoded, no persona overrides at all. The verification walked a path the traffic had stopped taking two months earlier.
+- **Learned (the big one):** "Verified end to end" is only as good as the assumption about *which* end. This repo has two generation transports, and which one a persona uses depends on flags (`TOOL_BRAIN_ENABLED`, `TOOL_BRAIN_UNGATED_WEB`) and on the persona's own `toolsets` — none of which appear anywhere near the sampler code. **Before tracing a chain, establish which chain a real request takes**, from the flags actually set in prod, not from the module you happen to be editing.
+- **Learned:** The defect was created by *scope leak*, not by a wrong decision. `temperature: 0.4` was sound for a tool **decision** when TB3 introduced it. TB6 then made that same call's output user-facing on ordinary chitchat, and argued the change purely in terms of generation *count* ("exactly one generation per turn either way"). Nobody re-asked what else that call now owned. **When a call's output changes audience, re-audit every constant in it** — the original rationale may not survive the new role.
+- **Apply:** When a subsystem grows a second code path for the same job, add one test that pins prod-shaped config and asserts the observable on the path prod actually takes. `tests/backend/coordinator/test_tool_brain_sampling.py` is that test here; it was observed failing on the unchanged tree, which is the only reason it is worth anything.
+
+## 2026-09-22 — The tests asserted what we sent, never what the server accepted
+
+- **What:** Three sampler defects coexisted with a fully green suite: persona settings never reaching the prose call, `keep_alive` never sent (silently reverting `OLLAMA_KEEP_ALIVE=-1` every turn), and `min_p` believed unreachable when it in fact reaches the wire on the tool-brain path. Every existing sampler test asserted on **the dict the app built**. Not one asserted on what Ollama did with it.
+- **Learned:** Ollama has two failure modes for options and only one is loud. A **retired** option is rejected (`typical_p` → HTTP 400 "no longer supported"). An **unrecognised** option is *accepted and ignored* — HTTP 200, no error, just `level=WARN source=types.go:1048 msg="invalid option provided"` in the server log. So "configured" and "applied" are different states, and the only thing distinguishing them is a log line nobody reads. That is exactly how `min_p` could sit in a config for months doing nothing.
+- **Learned:** A dependency's **default** is a silent dependency. Ollama changed `repeat_penalty` from 1.1 to 1.0 — off — in commit `6a261db7` (2026-08-12). Nothing here referenced that value, so nothing broke, nothing was logged, and anti-repetition simply stopped existing. Measured afterwards: `repeat_penalty = 1.000`. A behavioural default you rely on but never assert is a value you do not actually control.
+- **Apply:** For anything crossing a process boundary, assert the **far side**, not the near side. `test_sampler_wire_arrival.py` does it three ways: pins the client library's serialisation contract (so a future release that starts coercing fails loudly instead of going inert), pins that no shipped card declares a retired option, and — behind `requires_ollama` — performs the live round trip with `keep_alive=0` so nothing is left pinned.
+
+## 2026-09-22 — A sentinel outlived its meaning upstream, and its tests were why nobody noticed
+
+- **What:** `repeat_last_n: -1` meant "penalise over the whole context". llama.cpp removed that meaning in PR #26524 (2026-08-04); Ollama forwards the value verbatim, so `-1` now returns **HTTP 400**. On the greet path `_complete_or_503` catches everything and re-raises as `503 "LLM service temporarily unavailable: <type>"`, so the 400 would never have been legible as a sampler fault. It had not fired only because **no session had been created since the value landed**. The next new gwen conversation would have failed its opening message.
+- **Learned:** The `-1` was not a stray value but a sentinel encoded in **four layers** — the persona card, the extractor guard (`>= -1`), the pydantic bound (`ge=-1`), and eight test assertions, one commented *"below the -1 sentinel"*. That is the hazard: **a wrong value that acquires a guard, and the guard is what stops the next person questioning it.** Green tests asserting `-1` was valid made it look deliberate and settled.
+- **Learned:** Order of operations was load-bearing and non-obvious. The plan was "fix the bypass so samplers reach the model", *then* "tune the values". Done that way, every turn would have begun returning HTTP 400 — the plumbing fix would have **armed** a latent outage. **Fix the value, then widen its reach.** When a change increases how often something runs, check what that something currently does first.
+- **Learned:** The schema could not enforce this. Cards load through `load_persona_card_lenient`, which warns and returns the raw dict regardless, so `ge=0` documents a contract it cannot hold; the only guard binding at runtime is `get_persona_sampling_overrides`. **Find the enforcement point that actually executes before choosing where to put a constraint** — a bound nothing validates against is documentation, not a guard.
+- **Apply:** When an upstream project removes a magic value, grep for it across *cards, validators, schemas and tests* — not just code. And when dropping a bad value at runtime, log it: silence is how this one survived a month.
 
 ## 2026-07-19 — A security control that was built, tested, and never wired to anything
 
