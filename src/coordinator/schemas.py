@@ -46,6 +46,12 @@ class MessageRole(StrEnum):
     # ADR-011 /sys — an in-world narrator/scene beat (not user dialogue). Rendered
     # to the model as bracketed scene direction; role-switch sites must tolerate it.
     NARRATOR = "narrator"
+    # A message resurfaced by semantic search from earlier in the session, not a
+    # recent turn. RENDER-TIME ONLY — never persisted; the stored row keeps its
+    # original user/assistant role. Without this the retrieved text arrived
+    # formatted identically to "what I said one turn ago", and the model
+    # continued it verbatim instead of treating it as background.
+    RECALLED = "recalled"
 
 
 class ProposalType(StrEnum):

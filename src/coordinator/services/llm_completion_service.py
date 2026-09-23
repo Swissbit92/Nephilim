@@ -41,6 +41,7 @@ class LLMCompletionService:
         sampling_config: Optional[SamplingConfig] = None,
         # Individual sampling params (override sampling_config if provided)
         repeat_penalty: Optional[float] = None,
+        repeat_last_n: Optional[int] = None,
         top_k: Optional[int] = None,
         top_p: Optional[float] = None,
         min_p: Optional[float] = None,
@@ -53,6 +54,9 @@ class LLMCompletionService:
             temperature: Sampling temperature (0.0-2.0)
             sampling_config: Optional SamplingConfig for preset-based configuration
             repeat_penalty: Optional repetition penalty (1.0-2.0)
+            repeat_last_n: Optional repetition-penalty lookback in tokens.
+                Ollama defaults to 64, which cannot see a repeated paragraph;
+                -1 scales the window to the full context.
             top_k: Optional Top-K sampling (0-100)
             top_p: Optional nucleus sampling threshold (0.0-1.0)
             min_p: Optional Min-P dynamic threshold (0.0-1.0)
@@ -108,6 +112,8 @@ class LLMCompletionService:
         # Individual params override sampling_config
         if repeat_penalty is not None:
             ollama_params["repeat_penalty"] = repeat_penalty
+        if repeat_last_n is not None:
+            ollama_params["repeat_last_n"] = repeat_last_n
         if top_k is not None:
             ollama_params["top_k"] = top_k
         if top_p is not None:
@@ -115,7 +121,31 @@ class LLMCompletionService:
         if min_p is not None:
             ollama_params["min_p"] = min_p
 
-        self.llm = OllamaLLM(**ollama_params)
+        # min_p cannot survive the langchain transport (ollama.Options has no
+        # such field), so a persona that sets it needs the direct HTTP client.
+        # Flag-gated; 'langchain' keeps today's behaviour exactly.
+        if get_settings().ollama.completion_backend == "http":
+            from .ollama_http import OllamaHTTPClient  # noqa: PLC0415
+
+            options = {
+                k: v for k, v in ollama_params.items()
+                if k not in ("base_url", "model", "keep_alive")
+            }
+            self.llm = OllamaHTTPClient(
+                base_url=ollama_params["base_url"],
+                model=ollama_params["model"],
+                options=options,
+                keep_alive=ollama_params.get("keep_alive"),
+            )
+        else:
+            if "min_p" in ollama_params:
+                logger.warning(
+                    "[Sampling] min_p=%s requested but the langchain transport drops it "
+                    "silently (ollama.Options has no min_p field). Set "
+                    "OLLAMA_COMPLETION_BACKEND=http to actually apply it.",
+                    ollama_params["min_p"],
+                )
+            self.llm = OllamaLLM(**ollama_params)
         self.sampling_config = sampling_config
 
         # Log sampling parameters

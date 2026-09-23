@@ -197,8 +197,11 @@ class ToolBrainService:
         messages: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
         for h in (history or []):
             hrole = (h.get("role") or "").lower()
-            if hrole == "narrator":
-                continue  # ADR-011: scene direction is not a tool-decision turn
+            if hrole in ("narrator", "recalled"):
+                # ADR-011: scene direction is not a tool-decision turn. Neither
+                # is a semantically-recalled message — it is background, and
+                # mapping it to "user" would present old text as a fresh ask.
+                continue
             role = "assistant" if hrole == "assistant" else "user"
             messages.append({"role": role, "content": h.get("content", "")})
         messages.append({"role": "user", "content": user_message})

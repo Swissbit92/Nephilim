@@ -242,6 +242,143 @@ def _get_tool_intent_block_lean(card: Dict) -> str:
     return "\n".join(["Tool guidance:"] + lines)
 
 
+_NEGATION_PREFIXES = (
+    "never ", "don't ", "dont ", "do not ", "avoid ", "refuse to ", "stop ",
+)
+
+# Ceiling for the whole <constraints> section. Context rot is measurable — more
+# input degrades recall even when the needed fact is present — so a verbose
+# persona card must not be able to buy unlimited prompt real estate.
+_CONSTRAINTS_TOKEN_BUDGET = 150
+
+# The low-depth reminder is paid on every single turn, unlike the cached block,
+# so it gets a tighter ceiling.
+_REMINDER_TOKEN_BUDGET = 100
+
+
+def _strip_negation(line: str) -> str:
+    """Turn "Never break character" into "break character".
+
+    `dont` entries are written as prohibitions, and open models violate negated
+    instructions far more often than affirmative ones. Stripping the prefix lets
+    them be re-anchored under a single affirmative stem, so the negation is
+    stated once rather than N times.
+    """
+    stripped = line.strip().rstrip(".")
+    low = stripped.lower()
+    for prefix in _NEGATION_PREFIXES:
+        if low.startswith(prefix):
+            return stripped[len(prefix):].strip()
+    return stripped
+
+
+def _clean_lines(value) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    return [s.strip().rstrip(".") for s in value if isinstance(s, str) and s.strip()]
+
+
+def _lean_constraints_block(card: Dict) -> str:
+    """Behavioural constraints the persona must actually be told about.
+
+    Flag-gated (``PERSONA_CONSTRAINTS_IN_PROMPT``, default OFF) — returns ""
+    when off, so the fields stay dead data and the prompt is byte-identical.
+    Static per-persona data, so it is safe inside the lru_cached builder.
+
+    ``boundaries.content`` is deliberately NOT rendered. Unlike ``ethics`` it is
+    a capability declaration whose entries mix polarity: most read as allowances
+    ("X allowed", "Y required"), while at least one shipped persona has an entry
+    plainly meant as a prohibition that carries no negation marker at all.
+    Emitting an ambiguous permissions list as instructions is how a card ends up
+    asserting the opposite of what its author intended.
+    """
+    if not get_settings().agent.constraints_in_prompt:
+        return ""
+
+    sections: List[str] = []
+
+    do_lines = _clean_lines(card.get("do"))
+    dont_lines = _clean_lines(card.get("dont"))
+    if do_lines:
+        sections.append("Always: " + "; ".join(do_lines) + ".")
+    if dont_lines:
+        stem = "This means never" if do_lines else "Never"
+        sections.append(f"{stem}: " + "; ".join(_strip_negation(d) for d in dont_lines) + ".")
+
+    rel = card.get("user_relationship")
+    if isinstance(rel, dict):
+        rel_lines = [
+            str(rel[k]).strip().rstrip(".")
+            for k in ("role", "dynamic", "exclusivity")
+            if isinstance(rel.get(k), str) and rel[k].strip()
+        ]
+        if rel_lines:
+            sections.append("Your bond with this person: " + ". ".join(rel_lines) + ".")
+
+    boundaries = card.get("boundaries")
+    if isinstance(boundaries, dict):
+        ethics = _clean_lines(boundaries.get("ethics"))
+        if ethics:
+            sections.append("Hold to these without exception: " + "; ".join(ethics) + ".")
+
+    policy = card.get("escalation_policy")
+    if isinstance(policy, dict):
+        decline = _clean_lines(policy.get("when_to_decline"))
+        if decline:
+            sections.append(
+                "If asked for any of these, redirect rather than comply: "
+                + "; ".join(_strip_negation(d) for d in decline)
+                + "."
+            )
+
+    if not sections:
+        return ""
+
+    # Trim from the front if the block exceeds its ceiling: do/dont are the
+    # bulkiest and the most style-adjacent, while the bond, the hard limits and
+    # the decline list are the ones a violation actually turns on.
+    while len(sections) > 1 and int(len(" ".join(sections).split()) * 1.33) > _CONSTRAINTS_TOKEN_BUDGET:
+        sections.pop(0)
+    return "\n".join(sections)
+
+
+def _constraint_reminder(card: Dict, who: str) -> str:
+    """One short line re-stating the hardest constraints, for low-depth use.
+
+    Recall is worst in the middle of a long context (arXiv:2307.03172), so a
+    rule stated only at the top of the system prompt is the least-attended part
+    of it by turn 80. Deliberately terse — this is paid on every single turn,
+    unlike the cached <constraints> block.
+    """
+    if not get_settings().agent.constraints_in_prompt:
+        return ""
+
+    bits: List[str] = []
+    rel = card.get("user_relationship")
+    if isinstance(rel, dict):
+        excl = rel.get("exclusivity")
+        if isinstance(excl, str) and excl.strip():
+            bits.append(excl.strip().rstrip("."))
+
+    policy = card.get("escalation_policy")
+    if isinstance(policy, dict):
+        decline = _clean_lines(policy.get("when_to_decline"))
+        if decline:
+            bits.append(
+                "decline or redirect: " + "; ".join(_strip_negation(d) for d in decline[:3])
+            )
+
+    if not bits:
+        return ""
+
+    # Paid on every turn, so it gets a tighter ceiling than the cached block.
+    # Exclusivity is added first and kept: it is the single line a bond
+    # violation turns on, and the decline list is the expendable elaboration.
+    while len(bits) > 1 and int(len(" ".join(bits).split()) * 1.33) > _REMINDER_TOKEN_BUDGET:
+        bits.pop()
+    return f"[{who} — hold to this: " + ". ".join(bits) + ".]"
+
+
 def _lean_voice_block(card: Dict) -> str:
     """Per-persona distinctiveness anchors from the `voice_signature` field.
 
@@ -400,8 +537,8 @@ def _lean_voice_examples_block(card: Dict, who: str) -> str:
     return header + "\n\n" + "\n\n".join(rendered)
 
 
-@lru_cache(maxsize=32)
-def _build_system_prompt_lean(selector: Optional[str]) -> str:
+@lru_cache(maxsize=64)
+def _build_system_prompt_lean(selector: Optional[str], include_examples: bool = True) -> str:
     """Build the persona system prompt (ADR-005 Phase B — the only builder).
 
     Exemplar-first / voice-last, deduplicated, positive-framed; drops the wiki
@@ -442,6 +579,13 @@ def _build_system_prompt_lean(selector: Optional[str]) -> str:
 
     parts.extend(["", "<companion>", _lean_companion_block(card), "</companion>"])
 
+    # Behavioural constraints (flag-gated, default OFF). Sits next to <companion>
+    # because it is the same class of thing — who this persona is toward this
+    # person — and well before <safety>, which is generic and shared.
+    constraints_block = _lean_constraints_block(card)
+    if constraints_block:
+        parts.extend(["", "<constraints>", constraints_block, "</constraints>"])
+
     world_block = _lean_world_block(card)
     if world_block:
         parts.extend(["", "<world>", world_block, "</world>"])
@@ -473,7 +617,7 @@ def _build_system_prompt_lean(selector: Optional[str]) -> str:
 
     # Voice-last: exemplars are the final thing the model reads before generating
     # (recency re-anchor — the highest-leverage slot for voice distinctiveness).
-    examples_block = _lean_voice_examples_block(card, who)
+    examples_block = _lean_voice_examples_block(card, who) if include_examples else ""
     if examples_block:
         parts.extend(["", "<voice_examples>", examples_block, "</voice_examples>"])
         parts.extend(["", f"Stay fully in {who}'s voice."])
@@ -490,7 +634,7 @@ def _build_system_prompt_lean(selector: Optional[str]) -> str:
 
 # ---------------- Public API ----------------
 
-def build_system_prompt(selector: Optional[str]) -> str:
+def build_system_prompt(selector: Optional[str], include_examples: bool = True) -> str:
     """Build the persona system prompt (lean builder — ADR-005 Phase B).
 
     The lean exemplar-first / voice-last builder is the only builder:
@@ -500,7 +644,20 @@ def build_system_prompt(selector: Optional[str]) -> str:
 
     Preserves a ``.cache_clear()`` attribute (callers/tests rely on it).
     """
-    return _build_system_prompt_lean(selector)
+    return _build_system_prompt_lean(selector, include_examples)
+
+
+def build_constraint_reminder(selector: Optional[str]) -> str:
+    """The one-line constraint restatement, for injection near the latest turn.
+
+    Deliberately NOT part of ``build_system_prompt``: that builder is
+    ``lru_cache``d on the persona selector, and this line is consumed at the
+    tail of the prompt where recency actually buys attention. Returns "" when
+    ``PERSONA_CONSTRAINTS_IN_PROMPT`` is off or the persona declares nothing.
+    """
+    card = resolve_persona_to_card(selector) or {}
+    who = (card.get("display_name") or card.get("key") or "you").split(" — ")[0].strip()
+    return _constraint_reminder(card, who)
 
 
 def _clear_prompt_caches() -> None:

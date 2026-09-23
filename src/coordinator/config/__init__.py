@@ -124,16 +124,23 @@ def get_persona_sampling_overrides(persona_card: dict) -> dict:
     """Get all sampling parameter overrides from a persona card.
 
     Reads model_preferences from the persona JSON and returns a dict of
-    sampling params (temperature, min_p, repeat_penalty) that should be
-    passed to the LLM client. Only includes values explicitly set in the
-    persona card; missing values are omitted so callers can apply their
-    own defaults.
+    sampling params that should be passed to the LLM client. Only includes
+    values explicitly set in the persona card; missing values are omitted so
+    callers can apply their own defaults.
+
+    ``top_k``/``top_p``/``repeat_last_n`` were declared on ``SamplingPreset``
+    but never read here, so a persona setting them had no effect whatsoever.
+    ``repeat_last_n`` matters most: Ollama defaults it to 64 tokens (~50
+    words), which is long enough to stop a sentence repeating inside one reply
+    and far too short to notice a whole paragraph being reproduced. Passing
+    ``-1`` scales the penalty window to the full context.
 
     Args:
         persona_card: Persona dictionary from JSON
 
     Returns:
-        Dict with keys like 'temperature', 'min_p', 'repeat_penalty' (only present if set)
+        Dict of sampling params; every key except ``temperature`` is present
+        only when the persona (or a global fallback) sets it.
     """
     model_prefs = persona_card.get("model_preferences", {})
     if not isinstance(model_prefs, dict):
@@ -155,10 +162,28 @@ def get_persona_sampling_overrides(persona_card: dict) -> dict:
     elif settings.ollama.min_p > 0.0:
         overrides["min_p"] = settings.ollama.min_p
 
-    # Repeat penalty
-    repeat_penalty = model_prefs.get("repeat_penalty")
+    # Repeat penalty. Accept both spellings: SamplingPreset declares the field
+    # as `repetition_penalty` while every shipped persona JSON writes
+    # `repeat_penalty` (Ollama's own name). Reading only one silently ignored
+    # the other.
+    repeat_penalty = model_prefs.get("repeat_penalty", model_prefs.get("repetition_penalty"))
     if isinstance(repeat_penalty, (int, float)) and 1.0 <= repeat_penalty <= 2.0:
         overrides["repeat_penalty"] = float(repeat_penalty)
+
+    # Repeat-penalty lookback window. -1 means "the whole context"; 0 disables.
+    repeat_last_n = model_prefs.get("repeat_last_n")
+    if isinstance(repeat_last_n, int) and not isinstance(repeat_last_n, bool) and repeat_last_n >= -1:
+        overrides["repeat_last_n"] = repeat_last_n
+
+    # Top-K
+    top_k = model_prefs.get("top_k")
+    if isinstance(top_k, int) and not isinstance(top_k, bool) and 0 <= top_k <= 100:
+        overrides["top_k"] = top_k
+
+    # Top-P (nucleus)
+    top_p = model_prefs.get("top_p")
+    if isinstance(top_p, (int, float)) and not isinstance(top_p, bool) and 0.0 <= top_p <= 1.0:
+        overrides["top_p"] = float(top_p)
 
     return overrides
 

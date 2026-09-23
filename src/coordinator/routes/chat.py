@@ -13,6 +13,7 @@ from .. import startup  # module ref for call-time getter resolution (tests patc
 from ..schemas import ChatBody, GreetBody, ImpersonateBody, NarrateBody, ResponseMetadata, SourceType
 from ..config import get_settings
 from ..llm_client import create_llm_client, log_context_stats, estimate_tokens
+from ..prompt_builder import build_constraint_reminder
 from ..persona_memory import (
     build_system_prompt,
     build_greeting_user_prompt,
@@ -348,7 +349,15 @@ def chat(body: ChatBody):
     persona_key = card.get("key")
     persona_rarity = card.get("rarity", "common").lower()
     mcp_access = card.get("mcp_access", None)
-    system = build_system_prompt(body.persona)
+    # Voice exemplars are a recency re-anchor for a persona with no history to
+    # anchor on. Once real turns exist they are fixed text repeated forever in
+    # the same format as live dialogue — which is what few-shot copying feeds
+    # on. Flag-gated; when off this is unconditionally True, i.e. today.
+    _agent_cfg = get_settings().agent
+    _include_examples = not (
+        _agent_cfg.unpin_on_depth and len(body.history or []) >= _agent_cfg.unpin_depth_turns
+    )
+    system = build_system_prompt(body.persona, include_examples=_include_examples)
 
     # Inject wallet ground-truth state for wallet-capable personas (anti-hallucination).
     # This must happen HERE (not in handle_session_chat) because this function
@@ -384,9 +393,24 @@ def chat(body: ChatBody):
         elif role == "narrator":
             # ADR-011: a /sys narrator beat — scene direction, not user dialogue.
             lines.append(f"[Scene: {t.content}]")
+        elif role == "recalled":
+            # Semantically recalled from earlier in the session. Labelled as
+            # background so the model treats it as something it remembers,
+            # not as its own most recent line to continue.
+            lines.append(
+                f"[Recalled from earlier — background only, do not repeat it: {t.content}]"
+            )
         else:
             lines.append(f"User: {t.content}")
     persona_name_early = card.get("display_name") or card.get("key") or "Persona"
+    # Low-depth constraint restatement (flag-gated, "" when off). Recall is worst
+    # in the middle of a long context, so the rules that a violation actually
+    # turns on are repeated here — immediately before the latest user turn —
+    # rather than relying on the single statement at the top of the system
+    # prompt, which is the least-attended position by turn 80.
+    constraint_reminder = build_constraint_reminder(body.persona)
+    if constraint_reminder:
+        lines.append(constraint_reminder)
     # R2: Self-reminder wrapper reduces jailbreak success (Self-Reminder technique ~48pp reduction)
     lines.append(f"[Remember: respond as {persona_name_early}, following your guidelines.]\nUser: {body.message}")
     user_compiled = "\n\n".join(lines)

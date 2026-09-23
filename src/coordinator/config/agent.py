@@ -66,6 +66,60 @@ class AgentSettings(BaseSettings):
         ),
         alias="PERSONA_FORMAT_OVERRIDE_ENABLED",
     )
+    constraints_in_prompt: bool = Field(
+        default=False,
+        description=(
+            "Render each persona's behavioural constraints — do / dont / "
+            "boundaries.ethics / user_relationship / "
+            "escalation_policy.when_to_decline — as a <constraints> block, and "
+            "re-state the hardest of them just before the latest user turn. "
+            "Default OFF = byte-identical. WHY THIS EXISTS: none of those fields "
+            "had a single reader anywhere in src/; persona_schema.py even "
+            "documents the workaround ('the lean prompt omits do/dont'). A "
+            "persona could declare exclusivity and the model was never told — "
+            "the constraint violation observed 2026-08-23. WHY NEGATIONS ARE "
+            "REFRAMED: open models violate negated instructions 77-100% of the "
+            "time versus affirmative framing (arXiv 'When Prohibitions Become "
+            "Permissions'), so the dont list is anchored to the affirmative "
+            "identity rather than emitted as a bare prohibition list. WHY "
+            "LOW-DEPTH RE-INJECTION: recall is worst in the middle of a long "
+            "context (arXiv:2307.03172), so a rule stated once at position 0 is "
+            "the least-attended part of the prompt by turn 80. Behavioral — adds "
+            "~120-180 tokens for a persona that has these fields, and this repo "
+            "has twice measured a prompt-content addition as neutral-or-negative, "
+            "so it is eval-gated before any flip. Set "
+            "PERSONA_CONSTRAINTS_IN_PROMPT=true to enable."
+        ),
+        alias="PERSONA_CONSTRAINTS_IN_PROMPT",
+    )
+    unpin_on_depth: bool = Field(
+        default=False,
+        description=(
+            "Once a session has real history, stop force-feeding it the two "
+            "permanently-pinned blocks: the 3 cached voice_examples and the "
+            "first 3 messages of the session. Default OFF = today's behaviour. "
+            "WHY: both are fixed text that reaches the model on EVERY turn "
+            "forever, formatted identically to real dialogue, which is a "
+            "standing invitation to reproduce them (arXiv:2402.09954 — few-shot "
+            "examples resembling the live context induce verbatim copying, and "
+            "the effect grows with the number of similar examples). "
+            "SillyTavern's own guidance is that example dialogues should be "
+            "evicted once real history establishes the voice. Behavioral for "
+            "any session past the threshold, so eval-gated before a flip. Set "
+            "PERSONA_UNPIN_ON_DEPTH=true to enable."
+        ),
+        alias="PERSONA_UNPIN_ON_DEPTH",
+    )
+    unpin_depth_turns: int = Field(
+        default=6,
+        ge=1,
+        description=(
+            "How many real turns count as 'the voice is established' before "
+            "voice_examples stop being injected. Only consulted when "
+            "PERSONA_UNPIN_ON_DEPTH is on."
+        ),
+        alias="PERSONA_UNPIN_DEPTH_TURNS",
+    )
 
     model_config = {
         "env_file": ".env",

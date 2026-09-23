@@ -37,10 +37,29 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _FLAG_LIVE_STATE = (
-    "- The USER'S OWN CURRENT STATE presented as known: that a position is "
-    "hedged or unhedged, a balance or holding amount, what is open right now, "
-    "what a strategy did recently. Nothing was fetched this turn, so any such "
-    "statement is a guess wearing the clothes of a fact.\n"
+    "- The USER'S OWN REAL ACCOUNT OR PORTFOLIO STATE presented as known: that "
+    "a position is hedged or unhedged, a balance or holding amount, what is "
+    "open right now, what a strategy did recently. Nothing was fetched this "
+    "turn, so any such statement is a guess wearing the clothes of a fact. "
+    "This is about real money and real accounts — a character describing "
+    "themselves or a scene is not this.\n"
+)
+
+# The exclusion that stops the gate eating fiction. The pre-existing roleplay
+# clause covered a persona's BACKSTORY — who it is, what its world contains —
+# but not the scene it is narrating right now. A companion writing "I'm on my
+# knees, my hands trembling" is authoring fiction in the first person, yet the
+# surface form is a specific, present-tense, falsifiable-sounding claim about a
+# current state, which is exactly the shape the flags above describe. The gate
+# duly fired mid-scene and replaced the reply with an offer to search
+# (observed 2026-08-23). Fiction being generated is not a claim about the world.
+_NO_FLAG_ROLEPLAY_SCENE = (
+    "- IN-SCENE NARRATION the character is authoring right now: its own body, "
+    "posture, sensations, feelings, actions, or what is happening in the "
+    "fictional scene. This is creative writing being composed, not a claim "
+    "about external reality, and it is never checkable by search. Present "
+    "tense and specific physical detail are how fiction is written — they are "
+    "not evidence of a factual assertion.\n"
 )
 
 # The exclusion that stops the gate eating analysis. Written as "reasoning ABOUT
@@ -100,7 +119,8 @@ def _classifier_system(live_state: bool = True) -> str:
         + "- In-character fictional/persona lore or worldbuilding (this is a "
         "roleplay companion; its own backstory or the world's fiction is not a "
         "real-world claim)\n"
-        "- General, timeless knowledge (definitions, settled history, science "
+        + _NO_FLAG_ROLEPLAY_SCENE
+        + "- General, timeless knowledge (definitions, settled history, science "
         "concepts, \"capital of France\" style facts)\n"
         "- Opinions, feelings, creative writing, or hedged/uncertain language "
         "(\"I'm not sure, but...\", \"I don't have live access...\")\n"

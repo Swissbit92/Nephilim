@@ -111,8 +111,8 @@ def create_llm_client(
     """Factory for LC_OllamaClient with standard settings.
 
     Centralises the 3-line construction pattern used across routes and services.
-    Reads full sampling overrides (temperature, min_p, repeat_penalty) from the
-    persona card's model_preferences field.
+    Reads full sampling overrides (temperature, min_p, repeat_penalty,
+    repeat_last_n, top_k, top_p) from the persona card's model_preferences field.
 
     Args:
         persona_card: Persona JSON dict (used for per-persona sampling overrides).
@@ -131,7 +131,10 @@ def create_llm_client(
         temperature=temp,
         mcp_client=mcp_client,
         repeat_penalty=overrides.get("repeat_penalty"),
+        repeat_last_n=overrides.get("repeat_last_n"),
         min_p=overrides.get("min_p"),
+        top_k=overrides.get("top_k"),
+        top_p=overrides.get("top_p"),
     )
 
 
@@ -154,6 +157,7 @@ class LC_OllamaClient:
         mcp_client: Optional[BraveMCPClientStdio] = None,
         sampling_config: Optional[SamplingConfig] = None,
         repeat_penalty: Optional[float] = None,
+        repeat_last_n: Optional[int] = None,
         top_k: Optional[int] = None,
         top_p: Optional[float] = None,
         min_p: Optional[float] = None,
@@ -169,6 +173,7 @@ class LC_OllamaClient:
             mcp_client: Optional Brave MCP client for web search
             sampling_config: Optional sampling configuration
             repeat_penalty: Optional repetition penalty
+            repeat_last_n: Optional repetition-penalty lookback window
             top_k: Optional Top-K sampling
             top_p: Optional nucleus sampling
             min_p: Optional Min-P dynamic threshold
@@ -190,6 +195,7 @@ class LC_OllamaClient:
             temperature=temperature,
             sampling_config=sampling_config,
             repeat_penalty=repeat_penalty,
+            repeat_last_n=repeat_last_n,
             top_k=top_k,
             top_p=top_p,
             min_p=min_p,

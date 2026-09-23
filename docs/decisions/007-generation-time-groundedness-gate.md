@@ -2,7 +2,7 @@
 title: Generation-time groundedness gate
 status: Proposed
 created: 2026-07-04
-last_reviewed_on: 2026-07-04
+last_reviewed_on: 2026-08-23
 review_in: 12 months
 applies_to: nephilim
 ---
@@ -51,3 +51,27 @@ Also folded into the same failure class (belt-and-suspenders, better routing red
 2. **Validate against `groundedness_eval_set.json`** before flipping `GROUNDEDNESS_GATE_ENABLED` in production — both the should-abstain recall AND the should-pass (false-abstention) precision must clear an explicit bar (to be set when the eval harness is built), matching how `tune_routing_threshold.py` pins the costly-class precision first.
 3. **Rollback is instant** — default-OFF flag; revert = flip off + reload. No legacy-path removal, ever, for this mechanism (it's additive-only by construction).
 4. **No global default flip until the eval clears** — same rule as every other flag in this codebase.
+
+
+---
+
+## Amendment (2026-08-23) — the exclusion missed the scene the persona is narrating
+
+**Two things this ADR asserts are no longer true of the running system, and one is a divergence rather than a change.**
+
+**1. The gate is live in production, not default OFF.** `.env:159` sets `GROUNDEDNESS_GATE_ENABLED=true` (the variable is absent from `.env.example` entirely). The acceptance gate above — "no global default flip until the eval clears" — does not appear to have been recorded as cleared anywhere in this document. Flagging the divergence rather than silently reconciling it: either the eval ran and this ADR was never updated, or the flag was flipped ahead of its own rule. Worth establishing which before the next change to this mechanism.
+
+**2. The predicted failure happened, in the form the premortem named.** *"This could fail if the classifier prompt is too aggressive and starts flagging ordinary persona chat."* Observed 2026-08-23 on the gwen persona: the gate fired mid-scene and replaced an in-character reply with `_ABSTAIN_MESSAGE`. The identical user message succeeded on retry, because the draft is sampled at the persona's temperature (0.9) while the classifier runs at 0.0 — so the classifier judged different input the second time, and the failure is intermittent rather than deterministic.
+
+The mechanism: the exclusion list covered *in-character fictional/persona lore or worldbuilding* — a persona's **backstory** and the world's fiction. It did not cover the **scene the persona is narrating right now**. First-person in-scene narration ("my hands are trembling") is specific, present-tense and falsifiable-*sounding*, which is precisely the shape both flag clauses describe; and `_FLAG_LIVE_STATE`'s "the USER'S OWN CURRENT STATE presented as known" read as covering a character describing itself.
+
+**Changes:**
+- `_NO_FLAG_ROLEPLAY_SCENE` — an explicit exclusion for in-scene narration: the character's own body, posture, sensations, actions and the surrounding fiction. This is creative writing being composed, never checkable by search; present tense and physical detail are how fiction is written, not evidence of a factual assertion.
+- `_FLAG_LIVE_STATE` scoped to **real accounts and money** ("REAL ACCOUNT OR PORTFOLIO STATE"), which is what the 2026-08-12 incident actually added it for.
+
+**Guards against over-correction** — narrowing an abstention gate is the failure mode this file's own history warns about, in both directions:
+- The 2026-08-12 catch case is regression-pinned (`test_groundedness_roleplay.py::test_real_live_state_claim_still_flagged`).
+- The `live_state=False` A/B revert path is pinned and still produces a prompt without the clause.
+- The backstory exclusion is **kept**, not replaced.
+
+**A testing gap this exposed, which matters more than the fix.** `test_routes_chat.py` pins `groundedness.gate_enabled=False` in its shared `_make_settings()` fixture. Every gate path in that suite is therefore dark, which is how a gate defect that was live in production coexisted with a fully green suite. New gate tests run with the flag explicitly ON. The general lesson: a fixture that pins a production flag to its non-production value converts an entire suite into evidence about a configuration nobody runs.

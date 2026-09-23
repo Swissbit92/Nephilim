@@ -239,8 +239,17 @@ class MemoryManager:
         if critical_count > 0:
             logger.info(f"[MemoryManager] Found {critical_count} CRITICAL messages (names, holdings)")
 
-        # Always include: first 3 messages (greetings, initial context)
-        must_include_indices.update(range(min(3, len(messages))))
+        # First 3 messages (greetings, initial context). Pinned unconditionally
+        # by default, which keeps a scripted opener in every prompt for the life
+        # of the session and re-anchors the model on it long after the
+        # conversation has moved on. Once there is real history to anchor to,
+        # those turns should compete on their own score like anything else.
+        # Flag-gated: when off, the pin is unconditional — today's behaviour.
+        from .config import get_settings  # noqa: PLC0415 — avoids a config<->client import cycle
+
+        _agent_cfg = get_settings().agent
+        if not (_agent_cfg.unpin_on_depth and len(messages) >= _agent_cfg.unpin_depth_turns):
+            must_include_indices.update(range(min(3, len(messages))))
 
         # Always include: last 10 messages (recent context)
         must_include_indices.update(range(max(0, len(messages) - 10), len(messages)))

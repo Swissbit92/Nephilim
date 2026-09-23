@@ -42,6 +42,13 @@ def _make_settings():
     # classifier LLM call in every existing no-tools/fallback test here).
     s.groundedness.gate_enabled = False
     s.groundedness.reinforcement_check_enabled = False
+    # Persona prompt flags: pin to their real defaults. A MagicMock attribute is
+    # truthy, so leaving these unset silently enables behaviour under test here —
+    # and unpin_depth_turns is compared numerically, which a MagicMock cannot
+    # satisfy at all.
+    s.agent.constraints_in_prompt = False
+    s.agent.unpin_on_depth = False
+    s.agent.unpin_depth_turns = 6
     return s
 
 

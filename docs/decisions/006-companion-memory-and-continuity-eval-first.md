@@ -2,7 +2,7 @@
 title: Companion memory and continuity (eval-first)
 status: Accepted
 created: 2026-06-27
-last_reviewed_on: 2026-07-05
+last_reviewed_on: 2026-08-23
 review_in: 12 months
 applies_to: nephilim
 ---
@@ -496,3 +496,14 @@ arXiv:2502.14975); crisis-routing red-team; audit that **no engagement-dark-patt
   privacy-first stance (emotional logs must never leave the box).
 - **Do nothing** — rejected: leaves the P1 companion vision architecturally
   unbuilt; voice alone is not a companion.
+
+
+---
+
+## Amendment (2026-08-23) — reset completeness, and a citation to re-check
+
+**Session reset now clears the memory artefacts this ADR introduced.** `DELETE /sessions/{id}/messages` previously deleted messages and emotional state only, leaving `conversation_summaries` and the in-memory FAISS index intact. Observed in production: the gwen session held 12 messages and 2 orphaned summaries, the older written 2026-07-05, and `chat_session_service._build_turn_prompt` re-injects **every** stored summary on **every** turn, ungated by `MEMORY_CONTEXT_INJECT` or any other flag. The result was a reset that reported success while the model kept reading a five-week narrative. `EpisodicMemoryRAG.clear_session()` had existed since Phase 3 with **zero callers**, so a cleared session also stayed semantically searchable for the life of the backend process.
+
+`memory_facts` rows are deliberately **left untouched** by a reset. `source_session_id` becomes a dangling pointer, which is the intended trade: facts are extracted precisely so they outlive the conversation that produced them, and this store's whole design is supersede-by-invalidation rather than delete. Clearing a chat window is not the same intent as retracting confirmed facts. Revisit only if provenance display becomes a real feature. Note `MEMORY_FACTS_ENABLED` is OFF on prod, so this has no live effect today either way.
+
+**One citation in this ADR should be re-verified before it is relied on again.** Research on 2026-08-23 reported that the "MemPalace pattern, 96.6% recall@5 on LongMemEval in two SQLite tables" citation used here to support the bi-temporal SQLite design may be inverted — the claim being that MemPalace's primary store is a vector DB, with the SQLite entity/triple layer an optional secondary, and that an independent critique found *enabling* its structuring features reduced accuracy versus plain verbatim retrieval. **This is recorded as flagged, not corrected**: it arrived from research outside the session that wrote this amendment and has not been checked against the primary source here. If it holds, the number supports "verbatim beats structuring" rather than "SQLite bi-temporal structuring is validated", which would weaken — though not by itself overturn — the reasoning in the Decision section. Check the source before citing it in either direction.

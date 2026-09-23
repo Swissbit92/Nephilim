@@ -8,6 +8,7 @@ Mocks:
 from __future__ import annotations
 
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch, call
 
@@ -230,16 +231,86 @@ class TestAddMessage:
 
 # ─── DELETE /sessions/{session_id}/messages ──────────────────────────────────
 
+@contextmanager
+def _derived_stores(*, summary_repo=_SENTINEL, note_repo=_SENTINEL, rag=_SENTINEL):
+    """Patch the three message-derived stores a reset must also clear."""
+    summary_repo = MagicMock() if summary_repo is _SENTINEL else summary_repo
+    note_repo = MagicMock() if note_repo is _SENTINEL else note_repo
+    rag = MagicMock() if rag is _SENTINEL else rag
+
+    def _getter(value):
+        def _get():
+            if isinstance(value, Exception):
+                raise value
+            return value
+        return _get
+
+    with patch("src.coordinator.startup.get_summary_repo", _getter(summary_repo)), \
+         patch("src.coordinator.startup.get_session_note_repo", _getter(note_repo)), \
+         patch("src.coordinator.startup.get_episodic_memory_rag", _getter(rag)):
+        yield summary_repo, note_repo, rag
+
+
 class TestClearSessionMessages:
     def test_clears_messages_and_emotional_state(self):
         repos = _make_repos()
         session_repo, message_repo, emo_repo = repos
-        with patch("src.coordinator.routes.sessions._get_repos", return_value=repos):
+        with patch("src.coordinator.routes.sessions._get_repos", return_value=repos), \
+             _derived_stores():
             resp = client.delete("/sessions/sess-1/messages")
         assert resp.status_code == 200
-        assert resp.json() == {"ok": True}
+        assert resp.json()["ok"] is True
         message_repo.delete_messages_by_session.assert_called_once_with("sess-1")
         emo_repo.delete.assert_called_once_with("sess-1")
+
+    def test_clears_summaries_note_and_vector_index(self):
+        """The stores derived FROM the messages must go too, or a reset leaves
+        the model reading a conversation the user believes was wiped."""
+        repos = _make_repos()
+        with patch("src.coordinator.routes.sessions._get_repos", return_value=repos), \
+             _derived_stores() as (summary_repo, note_repo, rag):
+            resp = client.delete("/sessions/sess-1/messages")
+        assert resp.status_code == 200
+        summary_repo.delete_summaries_by_session.assert_called_once_with("sess-1")
+        note_repo.clear_note.assert_called_once_with("sess-1")
+        rag.clear_session.assert_called_once_with("sess-1")
+        assert resp.json()["cleared"] == {
+            "summaries": True,
+            "note": True,
+            "vector_index": True,
+        }
+
+    def test_missing_rag_does_not_fail_the_reset(self):
+        repos = _make_repos()
+        with patch("src.coordinator.routes.sessions._get_repos", return_value=repos), \
+             _derived_stores(rag=None):
+            resp = client.delete("/sessions/sess-1/messages")
+        assert resp.status_code == 200
+        assert resp.json()["cleared"]["vector_index"] is False
+
+    def test_uninitialized_repo_does_not_fail_the_reset(self):
+        repos = _make_repos()
+        boom = RuntimeError("SummaryRepository not initialized")
+        with patch("src.coordinator.routes.sessions._get_repos", return_value=repos), \
+             _derived_stores(summary_repo=boom) as (_, note_repo, rag):
+            resp = client.delete("/sessions/sess-1/messages")
+        assert resp.status_code == 200
+        assert resp.json()["cleared"]["summaries"] is False
+        # the other stores are still cleared — one dead subsystem must not
+        # abort the whole reset
+        note_repo.clear_note.assert_called_once_with("sess-1")
+        rag.clear_session.assert_called_once_with("sess-1")
+
+    def test_reset_is_idempotent(self):
+        repos = _make_repos()
+        with patch("src.coordinator.routes.sessions._get_repos", return_value=repos), \
+             _derived_stores() as (summary_repo, note_repo, rag):
+            first = client.delete("/sessions/sess-1/messages")
+            second = client.delete("/sessions/sess-1/messages")
+        assert first.status_code == second.status_code == 200
+        assert first.json()["cleared"] == second.json()["cleared"]
+        assert summary_repo.delete_summaries_by_session.call_count == 2
+        assert rag.clear_session.call_count == 2
 
     def test_session_not_found_returns_404(self):
         repos = _make_repos(session_exists=False)

@@ -684,11 +684,21 @@ def _select_turn_history(state: ChatTurnState, deps: ChatDeps) -> None:
 
     all_context_messages = selected_messages.copy()
     if rag_relevant_messages:
+        # Mark semantically-recalled messages so they can be rendered as
+        # background rather than as dialogue. Without this they reach the model
+        # formatted byte-identically to the immediately-previous turn, and get
+        # reproduced verbatim — the repetition defect observed 2026-08-23.
+        recalled_keys = {id(m) for m in rag_relevant_messages}
         all_context_messages.extend(rag_relevant_messages)
         all_context_messages.sort(key=lambda x: x.get("index", 0))
+    else:
+        recalled_keys = set()
 
     raw_turns = [
-        ChatTurn(role=msg["role"], content=msg["content"])
+        ChatTurn(
+            role=MessageRole.RECALLED if id(msg) in recalled_keys else msg["role"],
+            content=msg["content"],
+        )
         for msg in all_context_messages
     ]
 
@@ -1101,6 +1111,22 @@ def _check_and_summarize(session_id: str, persona_key: str, deps: dict):
         summary_count = summary_repo.count_summaries(session_id)
         interval = cfg.memory.summarization_interval
         messages_summarized = summary_count * interval
+
+        # Summaries are cleared alongside messages on reset, so these two
+        # should stay consistent. A summary written concurrently with a reset
+        # can still leave the count claiming more history than the table holds
+        # — which drives the backlog negative and silently suppresses
+        # summarization. Clamping keeps start_idx in bounds; the warning is the
+        # part that matters, because the old failure was completely silent.
+        if messages_summarized > message_count:
+            logger.warning(
+                f"[Summarizer] Stale summary count for session {session_id}: "
+                f"{summary_count} summaries imply {messages_summarized} messages "
+                f"but only {message_count} exist. Summarization is suppressed until "
+                f"the session passes {messages_summarized + interval} messages."
+            )
+            messages_summarized = message_count
+
         messages_since_summary = message_count - messages_summarized
 
         if messages_since_summary >= interval:

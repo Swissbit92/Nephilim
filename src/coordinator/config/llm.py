@@ -32,6 +32,21 @@ class OllamaSettings(BaseSettings):
                     "Dynamically filters low-probability tokens based on top token confidence.",
         alias="PERSONA_MIN_P"
     )
+    completion_backend: str = Field(
+        default="langchain",
+        description=(
+            "Transport for LLMCompletionService: 'langchain' (default) or "
+            "'http' (direct Ollama /api/generate). WHY THIS EXISTS: "
+            "langchain_ollama.OllamaLLM coerces options through ollama.Options, "
+            "which has no min_p field — so min_p is dropped silently whatever is "
+            "passed, and no config change can fix it (verified against "
+            "langchain-ollama 1.0.1; langchain-ai/langchain#32744). The http "
+            "backend sends the options dict verbatim. Defaults to langchain for "
+            "one soak cycle because the HTTP path is genuinely new wire code; "
+            "set OLLAMA_COMPLETION_BACKEND=http to enable min_p."
+        ),
+        alias="OLLAMA_COMPLETION_BACKEND",
+    )
     keep_alive: str = Field(
         default="-1",
         description="How long Ollama keeps the CHAT model resident after its last request. "

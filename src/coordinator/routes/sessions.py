@@ -140,9 +140,47 @@ def add_message(session_id: str, body: AppendMessageBody):
     return {"ok": True, "message_id": message_id}
 
 
+def _clear_derived_session_state(session_id: str) -> dict[str, bool]:
+    """Clear every store that is derived from a session's messages.
+
+    Deleting the messages is not enough. The rolling summaries, the author's
+    note and the in-memory FAISS index are all built *from* those messages and
+    outlive them, so a reset that skips them leaves the model still reading a
+    conversation the user believes was wiped.
+
+    Each store is cleared independently: a subsystem that is disabled or not
+    yet initialized must not fail the reset, but it must not fail silently
+    either, so misses are logged and reported back to the caller.
+    """
+    cleared: dict[str, bool] = {}
+
+    for label, clear in (
+        ("summaries", lambda: startup.get_summary_repo().delete_summaries_by_session(session_id)),
+        ("note", lambda: startup.get_session_note_repo().clear_note(session_id)),
+    ):
+        try:
+            clear()
+            cleared[label] = True
+        except RuntimeError as exc:  # subsystem not initialized
+            cleared[label] = False
+            logger.warning(f"[Reset] Could not clear {label} for session {session_id[:8]}: {exc}")
+
+    rag = startup.get_episodic_memory_rag()
+    if rag is None:
+        cleared["vector_index"] = False
+        logger.warning(
+            f"[Reset] No episodic RAG available; vector index for {session_id[:8]} not cleared"
+        )
+    else:
+        rag.clear_session(session_id)
+        cleared["vector_index"] = True
+
+    return cleared
+
+
 @router.delete("/sessions/{session_id}/messages")
 def clear_session_messages(session_id: str):
-    """Clear all messages from a chat session (keep the session)."""
+    """Clear a session's messages and everything derived from them."""
     session_repo, message_repo, emotional_state_repo = _get_repos()
 
     # Check if session exists
@@ -156,10 +194,14 @@ def clear_session_messages(session_id: str):
     emotional_state_repo.delete(session_id)
     logger.info(f"[EmotionalState] Reset emotional state for session {session_id[:8]} (messages cleared)")
 
+    # Summaries, author's note and the vector index are derived from those
+    # messages and would otherwise survive the reset.
+    cleared = _clear_derived_session_state(session_id)
+
     # Update session updated_at timestamp
     session_repo.update_session_timestamp(session_id)
 
-    return {"ok": True}
+    return {"ok": True, "cleared": cleared}
 
 
 @router.post("/sessions/{session_id}/undo")

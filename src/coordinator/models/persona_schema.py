@@ -137,7 +137,17 @@ class SamplingPreset(BaseModel):
         default=None,
         ge=1.0,
         le=2.0,
-        description="Repetition penalty (1.0-2.0)"
+        description="Repetition penalty (1.0-2.0); persona JSON may also spell this 'repeat_penalty'"
+    )
+    repeat_last_n: Optional[int] = Field(
+        default=None,
+        ge=-1,
+        description=(
+            "How many recent tokens the repetition penalty looks back over. "
+            "Ollama's default is 64 (~50 words) — long enough to stop a sentence "
+            "repeating inside one reply, far too short to notice a whole paragraph "
+            "being reproduced. -1 scales the window to the full context; 0 disables."
+        )
     )
     top_k: Optional[int] = Field(
         default=None,
