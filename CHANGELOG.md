@@ -42,13 +42,25 @@ from "a tool was needed and withheld" — exactly the distinction this change cr
 fallback branch logged **nothing at all**. Both now log persona, intent and the offered
 tools.
 
-### Known — a live credential is exposed in the backend log
+### Fixed — the API key no longer reaches the process arguments
+
+The Brave MCP client passed the key as `-e BRAVE_API_KEY=<value>` on the `docker run`
+command line. `subprocess.TimeoutExpired.__str__` embeds the full command
+unconditionally and CPython offers no redaction hook, so one container timeout wrote the
+live key into the backend log; a `logger.debug` that joins the same command was a second
+path to it. Now a bare `-e BRAVE_API_KEY`, with the value travelling in the child's
+environment — Docker inherits it, and the value never enters argv, which closes both
+paths structurally rather than by scrubbing. Four tests pin it, all four failing against
+the previous code.
+
+### Known — the already-exposed key still needs rotating
 
 `logs/launchd-backend.err.log` contains the current `BRAVE_API_KEY`. The Brave MCP client
 passes it as `-e BRAVE_API_KEY=…` on the `docker run` command line, and on
 `TimeoutExpired` Python writes the whole command into the exception message. Gitignored, so
-never committed or pushed, but the key is live and the file is world-readable. **Rotate,
-and pass the key through the container environment instead of the command line.**
+never committed or pushed, but the key is live and the file is world-readable. The code path is
+fixed as of this release, but **the key that was already written to the log must still be
+rotated** — self-service at Brave's dashboard (API Keys → generate new, revoke old).
 
 ### Fixed — the execution layer could not enforce a tool-level allowlist either
 

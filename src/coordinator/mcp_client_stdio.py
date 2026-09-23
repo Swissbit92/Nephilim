@@ -103,9 +103,19 @@ class BraveMCPClientStdio:
             "--pids-limit=100",
             "--label=mcp.coordinator.ephemeral=true",
             "--label=mcp.coordinator.service=brave-search",
-            "-e", f"BRAVE_API_KEY={self.api_key}",
+            # Bare "-e NAME" (no "=value") — Docker inherits the value from THIS
+            # process's environment, so the key never enters argv. It used to be
+            # interpolated here, and `subprocess.TimeoutExpired.__str__` embeds the
+            # full command unconditionally (CPython has no redaction hook), so a
+            # single container timeout wrote the live key into the backend log.
+            # The debug line below joins `cmd` too, which was a second path to the
+            # same leak. Both are closed by keeping the value out of the list.
+            "-e", "BRAVE_API_KEY",
             self.image
         ]
+
+        # The value travels in the child's environment instead of its arguments.
+        child_env = {**os.environ, "BRAVE_API_KEY": self.api_key or ""}
 
         # Convert request to JSON string
         stdin_data = json.dumps(request) + "\n"
@@ -121,7 +131,8 @@ class BraveMCPClientStdio:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                env=child_env,
             )
 
             # Send request and wait for response
