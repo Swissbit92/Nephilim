@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-23
+
+First tagged release. `[0.1.0]` was recorded in this file but never tagged, so the
+repository has no prior tag to compare against; `v0.2.0` starts that history at the
+commit `main` is promoted to, not retroactively.
+
+Eighteen commits since the last promotion: the persona-context defect fixes
+(reset completeness, dropped constraints, unlabelled recall, silent samplers), a
+direct Ollama transport so `min_p` actually applies, the gwen repetition-penalty
+window, the semantic-platform concept architecture, and the CI repair that made
+this branch verifiable again.
+
 ### Fixed (2026-09-23) — CI had been red for a month: six prompt tests needed a live model
 
 The tests added by the 2026-08-23 persona-context work turned CI red the day they landed, and **never once ran there afterwards**. Every push to `dev` from 2026-08-23 to 2026-09-23 failed the backend job — **6 failed, 2222 passed** — while passing locally the entire time. The last green run was 2026-08-22. Nothing reported it: GitHub's only signal is an email per push. Found by an ecosystem-wide CI watcher (`nephilim-ecosystem/scripts/ci_watch.py`) built for exactly this.
