@@ -18,7 +18,7 @@ from langchain_ollama.llms import OllamaLLM
 from ollama._types import ResponseError
 
 from .config import get_settings
-from .ollama_utils import assert_model_available
+from .ollama_utils import assert_model_available, require_model_configured
 from .persona_loader import _load_all_cards_cached, resolve_persona_to_card
 
 # Setup logger
@@ -30,8 +30,9 @@ logger = logging.getLogger(__name__)
 def _llm() -> OllamaLLM:
     """Create Ollama LLM client for CV summary generation."""
     cfg = get_settings().ollama
-    assert_model_available(cfg.base, cfg.model)
-    return OllamaLLM(base_url=cfg.base, model=cfg.model, temperature=cfg.temperature, num_ctx=cfg.context_window, keep_alive=cfg.utility_keep_alive)
+    model = require_model_configured(cfg.model)
+    assert_model_available(cfg.base, model)
+    return OllamaLLM(base_url=cfg.base, model=model, temperature=cfg.temperature, num_ctx=cfg.context_window, keep_alive=cfg.utility_keep_alive)
 
 
 # ---------------- Token counting and truncation ----------------

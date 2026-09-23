@@ -128,4 +128,13 @@ class TestProseSampling:
         silently reverts the pin to the server default on every turn."""
         svc = _svc([_msg(content="Hi.")])
         _run(svc, GWEN, sampling_overrides={"temperature": 0.9}, prose_expected=True)
-        assert svc._client.calls[0]["keep_alive"] == get_settings().ollama.keep_alive
+        # Compare against the WIRED value, not the raw setting. keep_alive ships as
+        # the string "-1", and sending that string to Ollama is an HTTP 400 — which
+        # is the entire reason wire_keep_alive exists. Asserting against the raw
+        # setting made this test demand the exact bug it was written to prevent, so
+        # it has been failing since it was added.
+        from src.coordinator.config.llm import OllamaSettings
+
+        expected = OllamaSettings.wire_keep_alive(get_settings().ollama.keep_alive)
+        assert svc._client.calls[0]["keep_alive"] == expected
+        assert not isinstance(svc._client.calls[0]["keep_alive"], str)
