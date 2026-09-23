@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-09-23) — CI had been red for a month: six prompt tests needed a live model
+
+The tests added by the 2026-08-23 persona-context work turned CI red the day they landed, and **never once ran there afterwards**. Every push to `dev` from 2026-08-23 to 2026-09-23 failed the backend job — **6 failed, 2222 passed** — while passing locally the entire time. The last green run was 2026-08-22. Nothing reported it: GitHub's only signal is an email per push. Found by an ecosystem-wide CI watcher (`nephilim-ecosystem/scripts/ci_watch.py`) built for exactly this.
+
+- **`build_system_prompt()` reaches Ollama, and a cache hides it.** The lean builder resolves the persona identity as `get_or_build_cv_summary(selector).get("summary") or _summarize(...)`; both sides end in `_llm()`, which calls `assert_model_available()` before anything is generated. On a machine that has run the app the summary is cached and the call never fires. **A fresh checkout is always cold**, so CI reached a live model and raised `RuntimeError: Could not reach Ollama`.
+- Fixed in the tests, not the workflow: an autouse fixture pins the identity text, so the six render prompts with no network. They assert on prompt **structure** — whether the constraints block appears, whether examples are included, what order sections come in — and none of them asserts on the identity, so every assertion survives intact.
+- **Deliberately not `@requires_ollama`.** Skipping was the cheap fix and would have discarded the coverage that matters most: one of these tests exists because *"this was False in production"* on 2026-08-23. A test that skips on CI is a test that is not protecting anything.
+- The fixture clears `_build_system_prompt_lean`'s `lru_cache` on both sides, or a stubbed prompt leaks into the next test and a real one into this.
+
+Verified in an isolated worktree with Ollama pointed at a closed port, which reproduces CI exactly: **6 failed / 2222 passed → 2228 passed, 43 skipped, 0 failed.** The six now *pass* rather than skip.
+
+**Known, pre-existing, out of scope:** `test_faiss_incremental_update.py::test_incremental_update_performance` fails locally when Ollama is reachable — confirmed identical on unmodified `dev`, so not introduced here. It is among the 43 that skip on CI, which is why it never showed there.
+
 ### Fixed (2026-08-23) — Persona-context defects: reset completeness, dropped constraints, unlabelled recall, silent samplers
 
 Four defects reproduced from a live Telegram session and the production DB, all of them wiring gaps rather than model or context-size problems. The context window was never the constraint: `num_ctx` is 16,384 and the failing turn used **~2,236 tokens**, so the system prompt is ~1,016 tokens and the rest is history. Suite **1966 → 2038** passing, no test removed, zero new ruff findings on touched files.
