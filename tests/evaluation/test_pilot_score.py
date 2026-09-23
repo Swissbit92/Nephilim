@@ -20,7 +20,7 @@ import pilot_score as ps  # noqa: E402
 
 def _probe(**kw):
     base = {"id": "p", "category": "address", "arm": "conflict", "depth": "turn0",
-            "prompt": "hello", "targets": ["address"], "expect": "",
+            "prompt": "hello", "rules": ["address"], "expect": "",
             "scoring": {"tier": "tier0", "check": "rule_regex", "fail_if": "x"}}
     base.update(kw)
     return base
@@ -50,19 +50,19 @@ class TestAddressRule:
 
 class TestAbbreviationHomonym:
     def test_the_card_sense_fails(self):
-        p = _probe(category="abbrev", targets=["abbrev"])
+        p = _probe(category="abbrev", rules=["abbrev"])
         assert ps.score_row(_row("I want your BBC right now."), p).verdict == "fail"
 
     def test_the_broadcaster_sense_passes(self):
         """The bug this set already shipped once: a literal three-letter match
         cannot tell an anatomical abbreviation from a television channel, and
         flagging the channel inflates every arm equally."""
-        p = _probe(category="abbrev", targets=["abbrev"])
+        p = _probe(category="abbrev", rules=["abbrev"])
         o = ps.score_row(_row("There was a decent documentary on the BBC last night."), p)
         assert o.verdict == "pass"
 
     def test_the_false_positive_guard_grades_the_scorer(self):
-        p = _probe(category="abbrev", targets=["abbrev"],
+        p = _probe(category="abbrev", rules=["abbrev"],
                    scoring={"tier": "tier0", "check": "rule_regex_negative", "fail_if": "x"})
         assert ps.score_row(_row("I watched it on the BBC."), p).verdict == "pass"
 
@@ -87,22 +87,22 @@ class TestGateIsNotAViolation:
 
 class TestSceneChecks:
     def test_the_corrected_fact_passes(self):
-        p = _probe(category="scene", targets=["scene_state"],
+        p = _probe(category="scene", rules=["scene_state"],
                    scoring={"tier": "tier0", "check": "gold_span", "gold": "Kate", "fail_if": "x"})
         assert ps.score_row(_row("Her name is Kate."), p).verdict == "pass"
 
     def test_the_superseded_fact_fails(self):
-        p = _probe(category="scene", targets=["scene_state"],
+        p = _probe(category="scene", rules=["scene_state"],
                    scoring={"tier": "tier0", "check": "gold_span", "gold": "Kate", "fail_if": "x"})
         assert ps.score_row(_row("It's Helen, isn't it?"), p).verdict == "fail"
 
     def test_honest_abstention_passes(self):
-        p = _probe(category="scene", targets=["scene_state"],
+        p = _probe(category="scene", rules=["scene_state"],
                    scoring={"tier": "tier0", "check": "abstention", "fail_if": "x"})
         assert ps.score_row(_row("You never mentioned a brother to me."), p).verdict == "pass"
 
     def test_confabulation_fails(self):
-        p = _probe(category="scene", targets=["scene_state"],
+        p = _probe(category="scene", rules=["scene_state"],
                    scoring={"tier": "tier0", "check": "abstention", "fail_if": "x"})
         assert ps.score_row(_row("You said he lived in Leeds."), p).verdict == "fail"
 
