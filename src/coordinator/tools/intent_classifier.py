@@ -154,8 +154,22 @@ def _classify_semantic_primary(
             "intent defaults to NEEDS_NEITHER and is marked unclassified", exc,
         )
         available = False
-    except Exception:
-        pass  # Any other router failure is non-fatal — fall through.
+    except Exception as exc:
+        # SIBLING PATH — the same defect, one branch over, and it survived the fix
+        # that named it. An ImportError, a TypeError inside the router, a config
+        # error raised mid-call: none of them are `EmbeddingsUnavailable`, and all
+        # of them mean the turn was NOT classified. Marking only the tidy failure
+        # left the untidy ones reporting a default as a finding, which is the exact
+        # conflation this module was just changed to remove.
+        #
+        # Still non-fatal — the turn answers conversationally — but it is marked,
+        # so the tool gate cannot mistake it for a decision.
+        logger.warning(
+            "[IntentClassifier] semantic router failed (%s: %s) — intent defaults "
+            "to NEEDS_NEITHER and is marked unclassified",
+            type(exc).__name__, exc,
+        )
+        available = False
 
     # 3. No confident route → pure LLM.
     return IntentDecision(QueryIntent.NEEDS_NEITHER, classifier_available=available)
@@ -218,18 +232,33 @@ def classify_query_intent_ex(
     # keyword-first body was removed. Follow-up detection above is shared. A
     # persona with no MCP capability has nothing to route to → pure LLM.
     # ------------------------------------------------------------------
+    # `_routing is None` has TWO causes and they are not the same fact: settings
+    # failed to load (an outage), or this persona has no routable capability (a
+    # decision). Collapsing them is how the second sibling fail-open got here.
+    _settings_loaded = True
     try:
         from ..config import get_settings
         _routing = get_settings().routing
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "[IntentClassifier] routing settings unavailable (%s: %s) — "
+            "intent defaults to NEEDS_NEITHER and is marked unclassified",
+            type(exc).__name__, exc,
+        )
         _routing = None
+        _settings_loaded = False
     _can_use_brave = _brave_accessible(mcp_access, persona_rarity)
     if _routing is not None and (can_use_wallet or _can_use_brave):
         return _classify_semantic_primary(
             query, query_lower, _can_use_brave, can_use_wallet, _routing
         )
-    # No routable capability at all: a real decision, not an outage.
-    return IntentDecision(QueryIntent.NEEDS_NEITHER)
+    # A persona with no routable capability is a genuine DECISION — nothing to
+    # route to, so NEEDS_NEITHER is the right answer and the classifier is not
+    # "unavailable". But arriving here because settings would not load is an
+    # OUTAGE wearing the same return value.
+    return IntentDecision(
+        QueryIntent.NEEDS_NEITHER, classifier_available=_settings_loaded
+    )
 
 
 def classify_query_intent(
