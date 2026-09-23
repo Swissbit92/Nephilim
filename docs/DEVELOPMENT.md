@@ -136,7 +136,14 @@ pytest tests/integration/                # Integration tests
 pytest tests/evaluation/ -v              # RAGAS persona quality
 ```
 
-## Comprehensive Persona Test Suite (primary quality gate)
+## Comprehensive Persona Test Suite (binary checks only — NOT a quality gate)
+
+> **Its `persona_voice` score is repudiated.** [ADR-005](decisions/005-persona-architecture-simplification-eval-first.md)
+> found it to be a keyword heuristic that is Goodhart-able and *penalises* genuinely
+> distinctive voice: "Every voice number to date … is suspect." The deterministic binary
+> checks (no-leak, safety, first-person) were deliberately kept and remain valid. For what
+> replaces it, and for which published numbers must not be reused, see
+> [PERSONA_EVAL.md](PERSONA_EVAL.md).
 
 **Do NOT create new persona tests** — the suite covers all 8 personas across all MCPs and behavioral dimensions.
 

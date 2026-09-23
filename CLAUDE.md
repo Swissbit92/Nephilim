@@ -31,7 +31,13 @@ cd react-ui && PORT=3001 npm run start:dev   # --openssl-legacy-provider baked i
 pytest tests/
 OLLAMA_BASE=http://127.0.0.1:1 pytest tests/   # force headless: live tests skip
 
-# Full persona test suite (primary quality gate, ~60 min)
+# Persona quality: read docs/PERSONA_EVAL.md FIRST — it defines the three-layer split,
+# which rules are machine-checkable, the gold-set protocol, and which numbers already in
+# the docs came from repudiated instruments.
+
+# Full persona test suite (~60 min). NOT a quality gate — its persona_voice score is a
+# keyword heuristic repudiated by ADR-005 for penalising distinctive voice. Its binary
+# checks (no-leak, safety, first-person) are still sound. See docs/PERSONA_EVAL.md.
 .venv/bin/python tests/manual/comprehensive_persona_test.py
 
 # Tool-firing eval — does a tool actually fire when a turn needs one, and is it
