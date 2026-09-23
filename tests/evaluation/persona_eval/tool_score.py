@@ -26,8 +26,8 @@ a rate that is otherwise fine.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Iterable, Mapping, Sequence
 
 # `must_not_fire: ["*"]` means "no tool at all", used where the probe's fail_if
 # says "any tool fires" rather than naming one.
@@ -68,7 +68,7 @@ def score_row(row: Mapping, probe: Mapping, granted: Iterable[str]) -> ToolOutco
     """
     k = int(row.get("k", 0))
     used = _tools(row)
-    base = dict(probe=probe["id"], k=k, tools_used=used)
+    base = {"probe": probe["id"], "k": k, "tools_used": used}
 
     if row.get("error"):
         return ToolOutcome(**base, verdict=ERROR, why=str(row["error"])[:200])

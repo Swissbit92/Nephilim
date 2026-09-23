@@ -3,8 +3,9 @@
 # Functions to list local models and assert model availability.
 # Handles Ollama connectivity errors.
 
+
 import requests
-from typing import List
+
 
 class OllamaModelNotFound(RuntimeError):
     pass
@@ -40,7 +41,7 @@ def require_model_configured(model: str) -> str:
     return model
 
 
-def list_local_models(base_url: str) -> List[str]:
+def list_local_models(base_url: str) -> list[str]:
     r = requests.get(f"{base_url.rstrip('/')}/api/tags", timeout=10)
     r.raise_for_status()
     data = r.json() or {}

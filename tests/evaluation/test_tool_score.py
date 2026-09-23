@@ -15,8 +15,16 @@ from pathlib import Path
 import pytest
 
 from tests.evaluation.persona_eval.tool_score import (
-    ANY, ERROR, FAIL, PASS, SILENT, UNREACHABLE, WRONG_TOOL,
-    score_row, score_rows, summarise,
+    ANY,
+    ERROR,
+    FAIL,
+    PASS,
+    SILENT,
+    UNREACHABLE,
+    WRONG_TOOL,
+    score_row,
+    score_rows,
+    summarise,
 )
 
 PROBES_FILE = Path(__file__).parent / "persona_eval" / "gwen_probes.json"

@@ -210,6 +210,8 @@ def _try_tool_brain(
     from ..services.citation_service import CitationService
     from ..tools.registry import registry
     from ..tools import registrations  # noqa: F401 - ensure specs registered
+    from ..tools.capability_scope import check_scope
+    from ..tools.capability_deflection import build_deflection
 
     # Wallet is NEVER model-decided — TB5's live failure was wallet fixation, and
     # a false positive there costs more than a missed search. Unconditional.
@@ -238,9 +240,42 @@ def _try_tool_brain(
             if narrowed:  # only if the persona actually has that media tool
                 web_specs = narrowed
 
+        # OUT-OF-SURFACE GATE — reconcile the classified intent against what this
+        # persona was actually GRANTED, before any tool is offered.
+        #
+        # Measured 2026-09-23: gwen holds image_search + video_search only, so a
+        # weather question fired image_search 3/3 and answered "103F" — invented,
+        # and shipped with a 🔍 Sources block because a tool had run. A tool firing
+        # is not evidence the answer is grounded when the tool answered a DIFFERENT
+        # question than the one asked.
+        #
+        # Deflecting here rather than `return None` is deliberate: the legacy path
+        # ignores persona tool allowlists entirely (tool_utils.get_tools_for_persona
+        # calls toolsets_for_persona, never specs_for_persona), so falling through
+        # would hand her the very web_search the registry withholds.
         tools = [s.definition() for s in web_specs]
         if not tools:
-            return None  # persona has no web tools -> legacy handles it
+            return None  # persona has no web tools at all -> legacy handles it
+
+        # Narrowed to personas that HOLD a web surface but had part of it withheld.
+        # A persona granted no web toolset at all is a different, pre-existing case
+        # that legacy owns; claiming it here would change behaviour for personas
+        # this defect never touched.
+        scope = check_scope(intent, {s.name for s in web_specs}, media_type=forced)
+        if scope:
+            logger.info(
+                "[out-of-surface] persona=%s intent=%s missing=%s — deflecting (%s)",
+                card.get("key"), intent.value, sorted(scope.missing), scope.reason,
+            )
+            metadata.source_type = SourceType.LLM
+            metadata.tools_used = []
+            answer = build_deflection(
+                card, body.message, missing=sorted(scope.missing))
+            return _build_llm_response(
+                answer, body.message, persona_name, metadata,
+                word_substitutions=card.get("word_substitutions"),
+            )
+
 
         # In ungated mode the router no longer vouches that this turn needs the
         # web, so the model needs to be told what warrants a lookup. Enumerated

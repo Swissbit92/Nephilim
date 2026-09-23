@@ -87,11 +87,34 @@ class TestIntentScoping:
         assert "web_search" in names
 
     def test_gwen_web_subset_only(self):
+        """Her surface is the image/video subset — asserted on a MEDIA turn.
+
+        This used to be asserted on a NEEDS_WEB_SEARCH turn, which encoded the
+        defect: offering media tools for a general-lookup intent is exactly how
+        the weather question got answered with an invented forecast. That turn
+        now deflects (see test_a_web_intent_turn_deflects_instead_of_offering_media),
+        so the subset is checked where offering it is correct."""
         with patch("src.coordinator.services.citation_service.CitationService.auto_generate_citations",
                    return_value=""):
-            _, _, cap = _invoke(_grounded(), card=GWEN, intent=QueryIntent.NEEDS_WEB_SEARCH)
+            # NEEDS_WEB_SEARCH keeps the lane open (ungated mode is OFF by
+            # default, so NEEDS_NEITHER would return None before any tool is
+            # built); the media phrasing is what makes the turn legitimately
+            # servable by her surface.
+            _, _, cap = _invoke(_grounded(), card=GWEN, msg="show me a picture of that dress",
+                                intent=QueryIntent.NEEDS_WEB_SEARCH)
         names = {t["function"]["name"] for t in cap["tools"]}
-        assert names == {"image_search", "video_search"}
+        assert names <= {"image_search", "video_search"}
+        assert names, "gwen was offered no web tools at all on a media turn"
+
+    def test_a_web_intent_turn_deflects_instead_of_offering_media(self):
+        """The fix. gwen holds no general-lookup tool, so a web-intent turn must
+        not be handed her media tools to improvise with."""
+        resp, _, cap = _invoke(_grounded(), card=GWEN, msg="what's the weather tomorrow?",
+                               intent=QueryIntent.NEEDS_WEB_SEARCH)
+        assert resp is not None, "fell through to legacy, which ignores her allowlist"
+        assert "tools" not in cap, "a tool surface was built for an out-of-surface turn"
+        assert resp["metadata"]["tools_used"] == []
+        assert resp["used_search"] is False
 
 
 class TestMediaToolForcing:
