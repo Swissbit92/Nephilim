@@ -21,6 +21,7 @@ from ..persona_memory import (
 )
 from ..tool_definitions import (
     classify_query_intent,
+    classify_query_intent_ex,
     get_tools_for_query,
 )
 from ..tools.intent_classifier import QueryIntent
@@ -183,6 +184,7 @@ world's lore, opinions, creative writing, or anything the user tells you.
 def _try_tool_brain(
     *, card, system: str, body: ChatBody, history, intent,
     metadata: ResponseMetadata, persona_name: str, deps,
+    classifier_available: bool = True,
 ):
     """ADR-008 TB4/TB5: run the single-model native tool-brain loop within the
     WEB lane only, orchestrating the deterministic fallback.
@@ -218,7 +220,34 @@ def _try_tool_brain(
     if intent == QueryIntent.NEEDS_WALLET:
         return None
 
-    ungated = get_settings().tool_brain.ungated_web
+    # UNGATING REQUIRES A WORKING CLASSIFIER.
+    #
+    # `ungated_web` is a deliberate relaxation, and its justification is specific:
+    # the router was measured silently blocking genuine web queries below its 0.66
+    # threshold, so the model never saw a tool. Ungating converts an invisible
+    # routing miss into a visible model choice.
+    #
+    # That argument assumes the router RAN. When embeddings are unreachable every
+    # turn defaults to NEEDS_NEITHER, and with ungating on, each one still reached
+    # this loop and was offered the persona's tools. For gwen — image_search and
+    # video_search only — a weather question was then answered by firing
+    # image_search, with a 🔍 Sources block because a tool had run. That is the
+    # exact defect the out-of-surface guard was built to stop, arriving through
+    # the guard's blind spot: `check_scope` reads NEEDS_NEITHER as "no tool
+    # required, nothing missing", which is true of a DECISION and false of an
+    # OUTAGE.
+    #
+    # So when the classifier could not run, fall back to the gated rule — the
+    # long-standing default. NEEDS_NEITHER then offers no tools at all
+    # (`tool_utils`: "QueryIntent.NEEDS_NEITHER → empty tools list"), the persona
+    # answers conversationally, and nothing fabricates a citation.
+    #
+    # Deliberately NOT a deflection. Measured 2026-09-23: the embedding-free media
+    # regex matches NONE of the six in-surface probe turns, so deflecting on an
+    # unavailable classifier would refuse every roleplay turn for the duration of
+    # the outage — and a guard that makes the companion unusable is a guard that
+    # gets switched off.
+    ungated = get_settings().tool_brain.ungated_web and classifier_available
     if intent != QueryIntent.NEEDS_WEB_SEARCH and not ungated:
         return None
 
@@ -508,7 +537,11 @@ def chat(body: ChatBody):
             break
 
     # Use intent classification to determine which tools to inject
-    intent = classify_query_intent(body.message, persona_rarity, mcp_access=mcp_access, last_assistant_message=last_assistant_msg)
+    _intent_decision = classify_query_intent_ex(
+        body.message, persona_rarity, mcp_access=mcp_access,
+        last_assistant_message=last_assistant_msg,
+    )
+    intent = _intent_decision.intent
     # R10: Log prompt version hash for regression correlation
     logger.info(
         f"[Chat] Request received: persona={persona_key}, prompt_v={prompt_version}, "
@@ -533,6 +566,7 @@ def chat(body: ChatBody):
         tb_response = _try_tool_brain(
             card=card, system=system, body=body, history=history, intent=intent,
             metadata=metadata, persona_name=persona_name, deps=deps,
+            classifier_available=_intent_decision.classifier_available,
         )
         if tb_response is not None:
             return tb_response

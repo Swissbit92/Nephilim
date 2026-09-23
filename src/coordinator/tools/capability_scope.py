@@ -33,6 +33,23 @@ measured mitigation would instruct this persona to do the thing being fixed.
 So the decision is made in code, from two values the app already has, and the
 model is never asked to judge its own competence.
 
+WHAT THIS MODULE CANNOT SEE
+---------------------------
+It is handed an intent and trusts it. `NEEDS_NEITHER` means "no confident route,
+answer conversationally", so it is mapped to "no tool required, nothing missing" —
+correct for a DECISION, and false for an OUTAGE. When the bge-m3 router is
+unreachable every turn defaults to `NEEDS_NEITHER`, and this guard then reports
+in-surface for a turn nobody classified.
+
+That hole is closed UPSTREAM, in `routes/chat.py`, not here: `TOOL_BRAIN_UNGATED_WEB`
+now requires a working classifier, so an unclassifiable turn is never offered tools
+in the first place. It is deliberately not fixed by deflecting here — measured
+2026-09-23, the embedding-free media regex matches none of the six in-surface probe
+turns, so deflecting on an unavailable classifier would refuse every roleplay turn
+for the length of the outage, and a guard that makes the companion unusable is a
+guard that gets switched off. `IntentDecision.classifier_available` carries the
+distinction.
+
 FAIL CLOSED
 -----------
 The documented failure mode for this class of guard is fail-OPEN drift: a

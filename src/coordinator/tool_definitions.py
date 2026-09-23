@@ -15,6 +15,7 @@ from .tools.keywords import (
 from .tools.intent_classifier import (
     QueryIntent,
     classify_query_intent,
+    classify_query_intent_ex,
 )
 
 # Re-export tool generators
@@ -45,6 +46,7 @@ __all__ = [
     "SEARCH_KEYWORDS",
     "QueryIntent",
     "classify_query_intent",
+    "classify_query_intent_ex",
     "get_brave_search_tool",
     "AVAILABLE_TOOLS",
     "build_tool_system_prompt",

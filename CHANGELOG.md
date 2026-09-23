@@ -5,6 +5,26 @@ All notable changes to the NEPHILIM project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed — an unclassifiable turn was treated as a conversational one
+- **CI was red on `dev` and `main`, and the red was pointing at a live production hole.** Two tests in `test_capability_scope.py` failed with *"still reaches a tool"*. Reproduced locally by pointing `OLLAMA_BASE` at a dead port: identical failures.
+- **`route_by_embedding` returned `None` for two different things** — "ran fine, no confident route" and "could not run at all" — and said so in its own docstring. That is the **semipredicate problem**: a failure signalled with an otherwise-valid return value ([CWE-690](https://cwe.mitre.org/data/definitions/690.html)). The same shape as eeva-exec's `+0.00 funding`, where `0.0` meant both a failed API call and a real zero.
+- **It silently disarmed the out-of-surface guard.** With bge-m3 unreachable every turn defaults to `NEEDS_NEITHER`, which `capability_scope` maps to "no tool required, nothing missing" — true of a decision, false of an outage. **Production runs `TOOL_BRAIN_UNGATED_WEB=true`**, so those turns still reached the tool loop and gwen (image_search + video_search only) could answer a weather question by firing image_search, with a 🔍 Sources block because a tool had run. **That is precisely the defect the guard was built to prevent, arriving through the guard's blind spot.**
+- **The fix: ungating now requires a working classifier.** `ungated_web` is justified by a measured fact — the router silently blocked genuine web queries below its 0.66 threshold. That argument assumes the router *ran*. When it cannot, the turn reverts to the gated rule and is offered no tools (`tool_utils`: "NEEDS_NEITHER → empty tools list"). OWASP's **Fail Securely**: a check that cannot be evaluated resolves to deny.
+- **Deliberately NOT a deflection, and this was measured rather than argued.** The embedding-free media regex matches **none** of the six in-surface probe turns, so deflecting on an unavailable classifier would refuse *every* roleplay turn for the length of an outage. A guard that makes the companion unusable is a guard that gets switched off — the failure mode [GOV.UK Chat ADR-0003](https://docs.publishing.service.gov.uk/repos/govuk-chat/adr/0003-output-guardrails.html) accepted only as a deliberate, scoped trade.
+
+### Changed
+- `semantic_router.EmbeddingsUnavailable` + opt-in `raise_on_unavailable`. **Opt-in on purpose**: every pre-existing caller keeps the old `None` contract, so the change cannot reach code that was not audited for it. Only the intent classifier opts in.
+- `intent_classifier.IntentDecision(intent, classifier_available)` and `classify_query_intent_ex`. `classify_query_intent` is unchanged and still returns a bare `QueryIntent` — adding the field to the existing return type would have touched every call site to fix one. The known risk of that wrapper (dropping the signal is the convenient path) is pinned by a structural test asserting `routes/chat.py` consumes it.
+
+### Added
+- 12 tests, 0 removed (2142 → 2154 collected). The two end-to-end assertions are now marked `integration` and **skip loudly** with a stated reason when embeddings are unreachable — a test that skips silently in CI is the textbook false-confidence trap ([Google Testing Blog](https://testing.googleblog.com/2015/04/just-say-no-to-more-end-to-end-tests.html)). The contract they covered is pinned hermetically instead, so it runs everywhere.
+- **Found in passing:** `_reset_globals` in the router tests never cleared `_example_vecs_primary` — it postdates the helper. Harmless while every test built its own vectors, and not harmless the moment a test asserts the *build* fails: the cached value short-circuits the build and the assertion silently tests nothing. It caught one of these new tests doing exactly that.
+
+### Verified
+- Full backend suite **both ways**: embeddings up **2142 passed / 12 skipped**; embeddings unreachable (the CI condition) **2134 passed / 20 skipped** — 0 failed in either.
+
 ## [0.2.3] - 2026-09-24
 
 Patch: the legacy tool offer performed no persona authorization at all.

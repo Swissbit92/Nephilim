@@ -74,9 +74,17 @@ def _make_mock_model(query_vec: List[float]) -> MagicMock:
 
 
 def _reset_globals(monkeypatch):
-    """Clear module-level caches between tests."""
+    """Clear module-level caches between tests.
+
+    `_example_vecs_primary` was missing here — it postdates this helper — so a test
+    using PRIMARY mode inherited whatever an earlier test had cached. Harmless while
+    every test built its own vectors from a mock, and not harmless once a test
+    asserts the BUILD fails: the cached value short-circuits the build entirely and
+    the assertion silently tests nothing. Found exactly that way.
+    """
     monkeypatch.setattr(sr, "_centroids", None)
     monkeypatch.setattr(sr, "_embeddings_model", None)
+    monkeypatch.setattr(sr, "_example_vecs_primary", None)
 
 
 # ---------------------------------------------------------------------------
@@ -641,3 +649,59 @@ class TestPrimaryExampleCoverage:
         assert "headlines" in examples
         # Non-crypto, country-scoped news phrasing.
         assert "switzerland" in examples
+
+
+# ---------------------------------------------------------------------------
+# Tests: "could not run" is not "ran and found nothing"
+# ---------------------------------------------------------------------------
+
+class TestOutageIsDistinguishableFromNoResult:
+    """`route_by_embedding` returned None for BOTH, and said so in its own
+    docstring: "None if confidence is below threshold/margin **or embeddings are
+    unavailable**". That is the semipredicate problem — a failure signalled with
+    an otherwise-valid return value — and it silently disarmed the out-of-surface
+    guard: a turn nobody could classify became NEEDS_NEITHER, which
+    `capability_scope` reads as "no tool required, nothing missing".
+
+    The opt-in exception keeps every existing caller on the old contract; only the
+    intent classifier asks for the distinction.
+    """
+
+    def test_no_embeddings_model_raises_when_the_caller_asks(self, monkeypatch):
+        _reset_globals(monkeypatch)
+        monkeypatch.setattr(sr, "_get_embeddings_model", lambda: None)
+        with pytest.raises(sr.EmbeddingsUnavailable):
+            sr.route_by_embedding(
+                "anything", can_use_brave=True, raise_on_unavailable=True
+            )
+
+    def test_the_old_contract_is_untouched_by_default(self, monkeypatch):
+        """Every pre-existing caller keeps None. The flag is opt-in precisely so
+        this change cannot reach code that was not audited for it."""
+        _reset_globals(monkeypatch)
+        monkeypatch.setattr(sr, "_get_embeddings_model", lambda: None)
+        assert sr.route_by_embedding("anything", can_use_brave=True) is None
+
+    def test_unbuildable_example_vectors_raise_when_the_caller_asks(self, monkeypatch):
+        """The CI case: the model exists, embedding the example phrases fails."""
+        _reset_globals(monkeypatch)
+        model = MagicMock()
+        model.embed_documents.side_effect = RuntimeError("connection refused")
+        monkeypatch.setattr(sr, "_get_embeddings_model", lambda: model)
+        with pytest.raises(sr.EmbeddingsUnavailable):
+            sr.route_by_embedding(
+                "anything", can_use_brave=True,
+                drop_llm_only_centroid=True, raise_on_unavailable=True,
+            )
+
+    def test_low_confidence_still_returns_none_not_an_exception(self, monkeypatch):
+        """The half that must NOT change. An outage is exceptional; 'ran fine, no
+        confident route' is the ordinary answer and stays in-band."""
+        _reset_globals(monkeypatch)
+        model = _make_mock_model(VEC_LLM_ONLY)
+        monkeypatch.setattr(sr, "_get_embeddings_model", lambda: model)
+        result = sr.route_by_embedding(
+            "something unrelated", can_use_brave=True,
+            threshold=0.99, raise_on_unavailable=True,
+        )
+        assert result is None
