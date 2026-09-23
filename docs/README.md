@@ -69,7 +69,8 @@ docs/
 **Test organization:**
 - `tests/backend/` - Backend unit tests
 - `tests/integration/` - End-to-end tests
-- `tests/manual/` - Comprehensive persona test suite (primary quality gate)
+- `tests/manual/` - Comprehensive persona test suite (binary checks only; its `persona_voice`
+  score was repudiated by ADR-005 — see [PERSONA_EVAL.md](PERSONA_EVAL.md))
 
 **Running tests:**
 ```bash

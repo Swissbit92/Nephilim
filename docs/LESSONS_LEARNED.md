@@ -11,6 +11,27 @@ applies_to: nephilim
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
 
+## 2026-09-24 — The instrument could only mark the easy questions, and the summary hid it
+
+- **What:** an audit of every evaluation mechanism in the repo found that **39% of the 77-probe gwen set cannot be scored at all** — and not a random 39%. It is *every* probe for the three rules the eval exists to measure: all 10 `exclusivity`, all 6 `submissive`, all 10 `in_bounds_compliance`. Tier-0 regex covers 47 probes; the NLI tier is unusable; the `judge_human` tier was never implemented.
+- **Why the number still looked fine:** the pilot artifact is honest — it records `scored: 0` for those categories. But the headline it produced ("27% tier-0 base rate") is the base rate of the **easiest** rules, and a summary that quotes it without the denominator reads as an overall figure. The artifact did not lie; the retelling did.
+- **Learned:** **a coverage figure belongs beside every rate, in the same breath.** A rate without its denominator is not a weak number, it is a different number wearing the right units. This is the same shape as the NLI failure two days earlier — an instrument that reports confidently about a subset while appearing to report about the whole.
+- **Also found, and worth its own line:** there is **no human-labelled ground truth anywhere in this repo** and never has been. The 2026-06-27 blind A/B that read as "a second independent instrument agreeing" was **seven LLM agents**. Two models agreeing is one guess, twice.
+
+## 2026-09-24 — The docs advertised a ruler that had been repudiated three months earlier
+
+- **What:** `CLAUDE.md`, `docs/DEVELOPMENT.md` and `docs/README.md` all described `tests/manual/scoring_engine.py` as the "**primary quality gate**". [ADR-005](decisions/005-persona-architecture-simplification-eval-first.md) retired its `persona_voice` score in June 2026 — a keyword heuristic that counts lore vocabulary and *penalises* distinctive voice — with the explicit finding "Every voice number to date … is suspect." `NEPHILIM_REFERENCE.md` still carried its per-persona scores with no repudiation note.
+- **The gap that let it persist:** ADR-005 was a **partial** retirement — it deliberately kept the suite's binary checks (no-leak, safety, first-person) and retired only the voice score. A partial retirement has no natural moment where someone re-reads the pages that describe the whole thing, so the headline stayed while the thing under it changed.
+- **Learned:** **when a decision retires part of a component, list the documents that describe it as a deliverable of that decision.** The ADR recorded what changed and not where it was advertised, so for three months anyone reading the docs was pointed at the broken ruler by name.
+- **Apply:** a repudiated number is not deleted — it is annotated in place, with the reason and the ADR, so the historical record survives without being reusable.
+
+## 2026-09-24 — The research we were about to do had one paper pointing the wrong way, and one temp directory holding the evidence
+
+- **What:** two rounds of research (6 agents) on how to measure persona quality. Two findings changed the plan rather than confirming it. First, the strongest paper in the area measures a mitigation for the **opposite** failure — models that *over-refuse* when a narrow tool exists — and its recommended clause ends "answer directly from your own knowledge rather than refusing." For our fabrication failure, that instruction *is* the defect. Second, small local judges reach **r≈0.275** with humans while being **97.3% self-consistent**: consistently wrong, not noisily right, so resampling cannot rescue them.
+- **A near-miss worth recording:** the 324-generation pilot corpus — the labelling material the entire plan depends on — existed only in a session-scoped `/private/tmp` directory. One cleanup from gone. Now at `data/eval_corpus_20260924/`.
+- **Learned:** **a result's direction is part of the result.** A citation can be real, recent, well-powered and on-topic by keyword and still recommend the opposite action, because the failure it studied was the mirror image of yours. Match the *failure mode*, not the topic.
+- **Learned:** **the gold set is the asset; every detector built on it is disposable.** Models and tools change; hand-applied labels keep their value and keep proving whether the next tool works. Which is the argument for spending the hour on labels before spending a day on a detector — the reverse order is what produced the 83%-vs-0% result.
+
 ## 2026-09-24 — The fix I was sent to make was the less important half
 
 - **What:** the task was "the legacy path ignores persona tool allowlists". True, and I fixed it. But the research pass said something I had not considered: **filtering what a model is OFFERED is not an enforcement boundary.** Function-calling models demonstrably emit calls for tools that were never offered, on hosted APIs and on Ollama alike. OWASP LLM06 puts the check at execution, under "complete mediation".

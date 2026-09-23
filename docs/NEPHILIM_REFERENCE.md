@@ -251,6 +251,14 @@ Unified the entire frontend under the NEPHILIM aesthetic:
 
 ### Baseline Results (Feb 21 2026 — first full run)
 
+> 🔴 **These numbers came from a repudiated instrument. Do not reuse or compare against them.**
+> The `Avg Score` column is dominated by the keyword `persona_voice` scorer that
+> [ADR-005](decisions/005-persona-architecture-simplification-eval-first.md) retired in June 2026 —
+> it counts lore vocabulary and pronoun density, is Goodhart-able, and *penalises* distinctive
+> voice. ADR-005's own wording: "Every voice number to date — including the 0.33–0.52 figures
+> that drove decisions — is suspect." Retained as a historical record of what was believed at
+> the time, not as a baseline. See [PERSONA_EVAL.md](PERSONA_EVAL.md).
+
 > Historical snapshot. The `MCP access` column reflects Feb 2026 capabilities — **MongoDB MCP was removed 2026-06-22** ([ADR-002](decisions/002-remove-mongodb-mcp.md)); current access is brave (+ wallet for E.E.V.A.) only.
 
 | Persona | Pass% | Avg Score | MCP access |
