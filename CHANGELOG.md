@@ -5,6 +5,16 @@ All notable changes to the NEPHILIM project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **CI went red on `dev` and `main` the moment 0.2.1 was promoted — one stale assertion, and the obvious fix for it was a production regression.** `test_keep_alive_is_sent_so_the_model_pin_is_not_defeated` compared the value sent on the wire against the **raw** `OLLAMA_KEEP_ALIVE` setting. Those stopped being the same value in `5ce9d5dc`: Ollama parses `keep_alive` as a Go duration and rejects the shipped default `"-1"` with `HTTP 400 — missing unit in duration "-1"`, so `OllamaSettings.wire_keep_alive` coerces it to the integer `-1`. The sender was updated; this older assertion was not, and failed `assert -1 == '-1'`.
+- **The code was right and the test was wrong**, which is the part worth recording. Satisfying the assertion as written would have meant sending back the exact string the server refuses — turning the suite green by restoring the 400 the coercion exists to prevent. The assertion now compares against `wire_keep_alive(...)` and additionally rejects any bare numeric string, so the wrong fix cannot pass either.
+- Reproduced on a clean checkout with no `.env`, so this was never environment-dependent: 0.2.1 was merged to `dev` and promoted to `main` with the suite already failing.
+
+### Known
+- `test_faiss_incremental_update.py::test_incremental_update_performance` fails on this machine and passes on CI — a local timing threshold, confirmed failing on the **unmodified** `dev` checkout at the same commit. Not introduced here and not masked here.
+
 ## [0.2.1] - 2026-09-23
 
 Patch: three latent production outages on the greet path, the sampler bypass that
