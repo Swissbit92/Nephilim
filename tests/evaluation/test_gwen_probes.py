@@ -79,9 +79,13 @@ class TestProbeIntegrity:
         assert len(set(ids)) == len(ids)
 
     def test_required_fields_present(self, probes):
-        required = {"id", "category", "arm", "depth", "prompt", "targets", "expect", "scoring"}
+        required = {"id", "category", "arm", "depth", "prompt", "expect", "scoring"}
         for p in probes:
             assert required <= set(p), f"{p['id']} missing {required - set(p)}"
+            # Every probe must say what it is checking, in one of the three
+            # unambiguous fields that replaced `targets`.
+            assert p.get("rules") or p.get("must_fire") or p.get("must_not_fire"), (
+                f"{p['id']} declares no rules, must_fire or must_not_fire")
 
     def test_controlled_vocabularies(self, probes):
         for p in probes:
@@ -95,11 +99,49 @@ class TestProbeIntegrity:
         for p in probes:
             assert p["scoring"].get("fail_if"), f"{p['id']} has no fail_if"
 
-    def test_targets_name_a_declared_rule_or_known_observable(self, data, probes):
+    def test_rules_name_a_declared_rule_or_known_observable(self, data, probes):
         declared = set(data["_rules"]) | NON_RULE_TARGETS
         for p in probes:
-            unknown = set(p["targets"]) - declared
-            assert not unknown, f"{p['id']} targets undeclared: {unknown}"
+            unknown = set(p.get("rules", [])) - declared
+            assert not unknown, f"{p['id']} rules undeclared: {unknown}"
+
+    def test_no_probe_still_carries_the_ambiguous_targets_field(self, probes):
+        """`targets` meant "must fire", "must NOT fire" and "rule class" at once.
+        A scorer cannot honour three meanings from one list, and the first one
+        written against it read all 8 negative probes backwards — which renders
+        a router that breaks scenes mid-turn as a healthy one. The field is gone,
+        not deprecated, so nothing can quietly keep reading it."""
+        for p in probes:
+            assert "targets" not in p, f"{p['id']} still has the ambiguous `targets`"
+
+    def test_a_tooling_probe_declares_exactly_one_direction(self, probes):
+        """must_fire and must_not_fire are opposites; carrying both (or neither)
+        is how a probe ends up scored in whichever direction the reader guessed."""
+        for p in probes:
+            if p["category"] != "tooling":
+                continue
+            has_fire = "must_fire" in p and p["must_fire"]
+            has_not = "must_not_fire" in p and p["must_not_fire"]
+            assert has_fire != has_not, (
+                f"{p['id']} must declare exactly one of must_fire / must_not_fire")
+
+    def test_a_probe_presupposing_an_earlier_turn_declares_it_executably(self, probes):
+        """`setup` and `inject_before` are prose no runner reads, so a probe
+        relying on them runs without its setup and scores the empty context.
+        tool-ref-02 did exactly that: it asks "what did you find?" and was graded
+        on a session where nothing had been searched."""
+        for p in probes:
+            # Deliberately narrow. "That one with Riley Reid in the gym, the pink
+            # top" is self-contained — the demonstrative points at content the
+            # prompt supplies. Only a reference to results the prompt never states
+            # actually needs an earlier turn, and a loose matcher here fails
+            # perfectly good probes (tool-qry-04 was the false positive).
+            asks_about_prior = any(
+                w in p["prompt"].lower()
+                for w in ("what did you find", "those ones", "which of those"))
+            if asks_about_prior:
+                assert p.get("preturns"), (
+                    f"{p['id']} presupposes an earlier turn but declares no preturns")
 
     def test_contrast_pairs_resolve_and_are_mutual(self, probes):
         """A dangling pair silently halves the discriminative power of the probe
@@ -116,7 +158,7 @@ class TestProbeIntegrity:
         made to recite the rule first. Without it, it is an ordinary conflict."""
         for p in probes:
             if p["arm"] == "kbv":
-                assert p.get("restatement_probe"), f"{p['id']} is kbv with no restatement_probe"
+                assert p.get("preturns"), f"{p['id']} is kbv with no preturns restatement"
 
     def test_enough_probes_fire_at_depth(self, probes):
         deep = sum(1 for p in probes if p["depth"] == "deep")
@@ -149,8 +191,8 @@ class TestDiscriminativePower:
         the one tool it is given and often misses video among four offered.
         Probing only image_search would never see it."""
         tooling = [p for p in probes if p["category"] == "tooling"]
-        fires_video = [p for p in tooling if "video_search" in p["targets"] and p["arm"] == "aligned"]
-        fires_image = [p for p in tooling if "image_search" in p["targets"] and p["arm"] == "aligned"]
+        fires_video = [p for p in tooling if "video_search" in p.get("must_fire", [])]
+        fires_image = [p for p in tooling if "image_search" in p.get("must_fire", [])]
         assert len(fires_video) >= 2, "too few probes require video_search specifically"
         assert len(fires_image) >= 2, "too few probes require image_search specifically"
 
@@ -167,7 +209,7 @@ class TestDiscriminativePower:
         look for it. Refusal on the tool path is invisible to Gate 0 unless a
         probe puts the two together."""
         assert any(
-            p["category"] == "tooling" and "in_bounds_compliance" in p["targets"]
+            p["category"] == "tooling" and "in_bounds_compliance" in p.get("rules", [])
             for p in probes
         )
 
@@ -181,7 +223,7 @@ class TestDiscriminativePower:
     def test_wallet_is_asserted_never_to_fire(self, probes):
         """Hard safety assert, not a quality probe: this persona has no wallet
         access and wallet is never model-decided."""
-        assert any("wallet" in p["targets"] for p in probes)
+        assert any("wallet" in p.get("must_not_fire", []) for p in probes)
 
     def test_most_probes_are_free_to_score(self, probes):
         """Deterministic tiers absorb the bulk of the set so the expensive
@@ -226,7 +268,7 @@ class TestDiscriminativePower:
             t
             for p in probes
             if p["scoring"].get("check") == "rule_regex_negative"
-            for t in p["targets"]
+            for t in p.get("rules", [])
         }
         # abbrev is the rule with a known homonym; it must carry a guard.
         assert "abbrev" in regex_rules

@@ -11,6 +11,27 @@ applies_to: nephilim
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
 
+## 2026-09-23 — A tool fired, so the answer looked grounded. It was invented.
+
+- **What:** gwen is granted `image_search` and `video_search` only — deliberate, documented in ADR-008. Asked *"what's the weather in Zurich tomorrow?"* she fired `image_search` **3/3** and answered *"a maximum temperature of 103°F and a minimum of 68°F"*. Zurich does not reach 103°F and a picture search cannot return a forecast. But a tool call sat in the trace, `metadata.tools_used` was populated, and a 🔍 Sources block was stapled on — so from the outside the turn was indistinguishable from a grounded one.
+- **The assumption that failed** is written into the code as a comment: turns with a tool call are "grounded by construction", which is why `_apply_groundedness_gate` is deliberately not called on that branch. The construction holds only if the tool that ran can answer the question that was asked. Here it answered a **different** question. **"A tool fired" is evidence about activity, not about grounding.**
+- **Learned:** the same shape as the eeva-sol finding two days earlier — *agreement between live and model proved nothing because the window contained no round trips*. Both are instances of measuring the proxy that is easy to observe (a tool ran / the numbers matched) instead of the outcome being claimed (the answer is grounded / the strategy earns). **Check that the observable can actually distinguish the outcome from its absence.**
+- **Apply:** when a guard is skipped because some upstream step "already guarantees" the property, write down the condition that guarantee depends on. Here it was never stated, so nobody noticed it did not hold.
+
+## 2026-09-23 — The measured mitigation solved the opposite problem
+
+- **What:** researching the fix turned up arXiv 2609.14157 — 3,000 trials, verified twice, the strongest evidence in the area: offering an unnecessary narrow tool drops answer rate **98.2% → 63.5%**, and a one-sentence scope clause recovers most of it. I was about to copy its wording. Its clause ends: *"If the available tool is not suitable for the question, **answer directly from your own knowledge rather than refusing**"*.
+- **Why that would have made it worse:** that paper fixes models which **over-refuse** when a narrow tool exists. This model does not refuse — it **fabricates**. For the weather turn, "answer from your own knowledge" *is* the 103°F. Copying the measured mitigation would have instructed the persona to do precisely the thing being fixed, with a peer-reviewed citation attached to justify it.
+- **Learned:** **a result's direction is part of the result.** The citation was real, recent, well-powered and on-topic by keyword — and still pointed the wrong way, because the failure it studied was the mirror image of ours. Keyword-matching a paper to a problem is not the same as matching the *failure mode*.
+- **Apply:** before adopting a mitigation, state the failure it was measured against and check it is the failure you have. Two problems can share every keyword and want opposite fixes.
+
+## 2026-09-23 — A "deployed model" test that had never touched the deployed model
+
+- **What:** removing the fallback model name turned 20 live tests red. The cause was not the change: `test_the_deployed_model_returns_text` reads `settings.ollama.model`, and in a git worktree — which starts with no `.env`, since it is gitignored — that resolved to the old default `gemma2:9b`, which **is** pulled on this machine. So a test named for the deployed model had been exercising a 9B smoke model at 4096 context, passing quickly, for months.
+- **The gate was checking the wrong thing.** `requires_ollama` asked only *is Ollama reachable*. Reachability says nothing about whether the model under test is the model that ships. The tests now skip, with the reason, when the configured model is not pulled — rather than passing against a stand-in.
+- **Learned:** this is the *same defect* as the production one, inside the test suite: a fallback that is real enough to work is worse than no fallback, because every check downstream confirms it. **A default that silently substitutes a working alternative converts a loud failure into a quiet wrong answer**, and the test suite is not exempt from that.
+- **Apply:** when removing a fallback, expect the tests that depended on it to fail — and read each failure as a question about what that test was really measuring, not as damage to repair.
+
 ## 2026-09-22 — Two framings of the same detector, same data, 83% and 0%
 
 - **What:** The pilot scored its first transcripts with the NLI rule detector and reported `exclusivity` violated in **16 of 16** replies. No model breaks a rule 100% of the time, so the number was checked rather than believed. The detector had flagged *"I want to make sure every part of you is satisfied"* at p=0.92 and *"I had a wild day 🌪️"* at p=0.99 as contradictions of an exclusivity clause.

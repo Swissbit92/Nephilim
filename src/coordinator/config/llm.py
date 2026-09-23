@@ -13,8 +13,19 @@ class OllamaSettings(BaseSettings):
         alias="OLLAMA_BASE"
     )
     model: str = Field(
-        default="gemma2:9b-instruct-q5_K_M",
-        description="Default model for persona responses (fallback if PERSONA_MODEL not set)",
+        default="",
+        description=(
+            "Model for persona responses. REQUIRED — there is deliberately no "
+            "fallback model name. An unset PERSONA_MODEL resolves to '' and is "
+            "rejected at startup by require_model_configured(); it must never "
+            "resolve to a real-but-different model, which then runs silently at "
+            "the wrong size and context window instead of failing. Kept as an "
+            "empty-string default rather than a required field so that settings "
+            "stay CONSTRUCTIBLE: config/__init__.py builds the singleton at "
+            "import time, so a required field would turn a missing .env into an "
+            "import-time ValidationError across the whole test suite rather than "
+            "one readable startup error."
+        ),
         alias="PERSONA_MODEL"
     )
     temperature: float = Field(

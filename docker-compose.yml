@@ -48,7 +48,10 @@ services:
       # macOS: point at native Ollama (Metal) via host.docker.internal. For an
       # all-Docker Linux deployment, set OLLAMA_BASE=http://ollama:11434.
       OLLAMA_BASE: ${OLLAMA_BASE:-http://host.docker.internal:11434}
-      PERSONA_MODEL: ${PERSONA_MODEL:-gemma2:9b-instruct-q5_K_M}
+      # `:?` not `:-` — a shell-level fallback here would silently reintroduce the
+      # wrong-model bug one layer above the application, which has deliberately
+      # removed its own default. Compose fails to start with this message instead.
+      PERSONA_MODEL: ${PERSONA_MODEL:?PERSONA_MODEL must be set (no fallback model — see config/llm.py)}
       PERSONA_TEMPERATURE: ${PERSONA_TEMPERATURE:-0.9}
 
       # Server configuration

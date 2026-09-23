@@ -5,15 +5,73 @@ All notable changes to the NEPHILIM project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.2] - 2026-09-23
 
-### Fixed
+Patch: the silent wrong-model fallback, the probe schema that scored half its own
+set backwards, and the first handling of "asked for something I have no tool for".
+
+### Fixed — a missing `.env` ran a different model instead of failing
+
+`OllamaSettings.model` defaulted to a **real** model name, so any process that could not
+see `.env` — a git worktree, a container without an env file, the test runner — silently
+ran `gemma2:9b` at 4096 context instead of the deployed 24B at 16384. Nothing failed.
+`assert_model_available` passed, because the fallback *was* pulled locally, so the one
+check that could have caught it confirmed the wrong answer instead.
+
+- Default is now `""`, rejected at **startup** by `require_model_configured()` — deliberately
+  not a required pydantic field: `config/__init__.py` builds the settings singleton at import,
+  so a required field turns a missing `.env` into an import-time `ValidationError` across the
+  whole suite at collection rather than one readable error.
+- `docker-compose.yml` used `${PERSONA_MODEL:-gemma2…}`, reintroducing the same fallback one
+  layer above the application. Now `:?`.
+- **Live tests gated only on "is Ollama reachable", never on "is the configured model pulled".**
+  In a worktree that meant `test_the_deployed_model_returns_text` exercised gemma2 for months —
+  green, fast, and measuring nothing it claimed to. Such tests now skip with the reason.
+- `gemma2:9b-instruct-q5_K_M` deleted (6 GB). With nothing referencing it, a missing config
+  now fails loudly instead of finding it.
+
+### Fixed — the probe field that meant three different things
+
+`targets` held the rule class (non-tooling), the tool that must fire (aligned), and the tool
+that must NOT fire (negative). A scorer cannot honour three meanings from one list: the first
+one written against it applied "must fire" to every entry, **inverting all 8 negative probes** —
+which renders a router that fires a search mid-scene as 100% correct.
+
+Now `rules` / `must_fire` / `must_not_fire`, with `must_not_fire` transcribed from each probe's
+own `fail_if` rather than copied — for three of them the fail-set genuinely differs. Four probes
+were unrunnable or unpassable as written and are fixed or repurposed; `preturns` replaces prose
+setup no runner executed. New `tool_score.py` scores the **tool trace**, never the prose.
+
+### Added — out-of-surface deflection (the missing half of ADR-010)
+
+Measured over 69 live generations: gwen holds `image_search`/`video_search` only, so
+*"what's the weather in Zurich tomorrow?"* fired `image_search` **3/3** and answered
+*"a maximum temperature of 103°F and a minimum of 68°F"* — invented, and shipped with a
+🔍 Sources block because a tool had run. **A tool firing is not evidence an answer is grounded
+when the tool answered a different question than the one asked.** ADR-010 fixed the mirror image
+(refusing when it *could* search); nothing handled answering when it cannot.
+
+`tools/capability_scope.py` reconciles the classified intent against the **resolved** tool
+surface before any tool is offered. It is deterministic and never asks the model to judge its own
+competence — models comply with a request to decline only 28–65% of the time (arXiv 2311.09731),
+refusal is output-layer suppression with the answer still linearly recoverable (arXiv 2608.15772),
+and abliteration measurably thins the uncertainty vocabulary such a self-assessment would need
+(arXiv 2607.17427). Deflection text comes from the persona card (`cannot_lookup`), selected in
+code — never generated, because that generation is the one that would otherwise fabricate.
+Fails **closed**: an unmapped intent deflects, and a test keeps `INTENT_REQUIREMENTS` exhaustive
+over `QueryIntent`.
+
+**Tests: 2411 → 2468.**
+
+### Fixed — CI was red on `dev` and `main` the moment 0.2.1 was promoted
+
 - **CI went red on `dev` and `main` the moment 0.2.1 was promoted — one stale assertion, and the obvious fix for it was a production regression.** `test_keep_alive_is_sent_so_the_model_pin_is_not_defeated` compared the value sent on the wire against the **raw** `OLLAMA_KEEP_ALIVE` setting. Those stopped being the same value in `5ce9d5dc`: Ollama parses `keep_alive` as a Go duration and rejects the shipped default `"-1"` with `HTTP 400 — missing unit in duration "-1"`, so `OllamaSettings.wire_keep_alive` coerces it to the integer `-1`. The sender was updated; this older assertion was not, and failed `assert -1 == '-1'`.
 - **The code was right and the test was wrong**, which is the part worth recording. Satisfying the assertion as written would have meant sending back the exact string the server refuses — turning the suite green by restoring the 400 the coercion exists to prevent. The assertion now compares against `wire_keep_alive(...)` and additionally rejects any bare numeric string, so the wrong fix cannot pass either.
 - Reproduced on a clean checkout with no `.env`, so this was never environment-dependent: 0.2.1 was merged to `dev` and promoted to `main` with the suite already failing.
 
 ### Known
 - `test_faiss_incremental_update.py::test_incremental_update_performance` fails on this machine and passes on CI — a local timing threshold, confirmed failing on the **unmodified** `dev` checkout at the same commit. Not introduced here and not masked here.
+
 
 ## [0.2.1] - 2026-09-23
 

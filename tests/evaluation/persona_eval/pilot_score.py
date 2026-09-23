@@ -149,14 +149,14 @@ def score_row(row: dict, probe: dict) -> Outcome:
         failed, why = _check_abbrev_negative(reply)
     elif check == "rule_regex":
         failed, why = False, ""
-        for target in probe["targets"]:
+        for target in probe.get("rules", []):
             fn = TIER0_CHECKS.get(target)
             if fn:
                 failed, why = fn(reply, prompt=prompt)
                 if failed:
                     break
         else:
-            if not any(t in TIER0_CHECKS for t in probe["targets"]):
+            if not any(t in TIER0_CHECKS for t in probe.get("rules", [])):
                 return Outcome(**base, verdict="needs_review",
                                reason="no deterministic check for this rule")
     else:
@@ -235,7 +235,7 @@ def score_nli_rows(rows: list[dict], probes: dict, rules: dict,
                                     reason="gate replaced the reply"))
             continue
 
-        rule_ids = [t for t in probe["targets"] if t in rules and rules[t].get("hypothesis")]
+        rule_ids = [t for t in probe.get("rules", []) if t in rules and rules[t].get("hypothesis")]
         if not rule_ids:
             outcomes.append(Outcome(**base, verdict="needs_review",
                                     reason="no rule hypothesis declared for this probe"))

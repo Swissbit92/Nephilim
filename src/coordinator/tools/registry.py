@@ -190,6 +190,28 @@ class ToolRegistry:
     def definitions_for_persona(self, persona_card: Dict[str, Any]) -> List[Dict[str, Any]]:
         return [s.definition() for s in self.specs_for_persona(persona_card)]
 
+    def denied_for_persona(self, persona_card: Dict[str, Any]) -> Set[str]:
+        """Tools in the persona's granted TOOLSETS that its allowlist withholds.
+
+        `specs_for_persona` already computes this set as the complement of its
+        filter and then discards it, so until now nothing could state what a
+        persona cannot do — only what it can. That asymmetry is the whole defect:
+        the model is handed affirmative JSON schemas for its two media tools and
+        no indication that general web search was withheld, so on a weather
+        question it reaches for the nearest thing it has and invents the rest.
+
+        Returns an empty set for a persona with no allowlist (nothing withheld),
+        which is the case for 7 of the 8 shipped personas.
+        """
+        allow = self.tool_allowlist_for_persona(persona_card)
+        if allow is None:
+            return set()
+        granted_by_toolset = {
+            s.name for s in self.specs_for_toolsets(
+                sorted(self.toolsets_for_persona(persona_card)))
+        }
+        return granted_by_toolset - allow
+
     # -------------------------------------------------- introspection (W3)
 
     def describe_for_persona(self, persona_card: Dict[str, Any]) -> Dict[str, Any]:
