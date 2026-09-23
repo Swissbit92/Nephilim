@@ -5,6 +5,76 @@ All notable changes to the NEPHILIM project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-09-24
+
+Patch: the legacy tool offer performed no persona authorization at all.
+
+### Fixed — `get_tools_for_query` trusted its caller instead of checking
+
+It returned `brave_web_search` on any web intent and the whole wallet toolset on any
+wallet intent, with **no persona check of its own**. Two consequences, both measured:
+
+- A persona-card `tools` allowlist was invisible to it, so gwen — scoped to image/video
+  search by ADR-008 — was handed `brave_web_search` on the legacy path. Her scoping only
+  ever held on the tool-brain path.
+- Forced to `NEEDS_WALLET`, it handed a persona whose `mcp_access` is only
+  `["brave_search"]` **all seven wallet tools**. Not reachable in production — `chat.py`
+  classifies intent using the persona's own `mcp_access`, so that intent cannot arise for
+  her — but the function had no defence, and the caller-side check is skipped whenever
+  `precomputed_intent` is passed, which `chat.py` always does.
+
+The offer now resolves through `registry.specs_for_persona`, and the wallet branch
+requires the `wallet` toolset. `routes/chat.py` passes `persona_card=card`; without the
+full card there is no `tools` key to honour, so the **degraded mode gates on toolsets** —
+strictly more restrictive than before, never less. An optional authorization argument must
+not default to skipping the check.
+
+**Withholding, not substituting.** A restricted persona gets `[]`, never her media tools:
+the legacy force-search path can only execute `brave_web_search` (`tool_calling_service`
+keys on that literal name), so offering the others routes the turn into a branch that
+cannot run them.
+
+### Added — observability on the two silent legacy branches
+
+Measured over 1093 live turns: Branch B (`if not tools`) took 644 of them and logged a
+fixed string with no persona or intent, so it could not distinguish "no tool was needed"
+from "a tool was needed and withheld" — exactly the distinction this change creates. The
+fallback branch logged **nothing at all**. Both now log persona, intent and the offered
+tools.
+
+### Known — a live credential is exposed in the backend log
+
+`logs/launchd-backend.err.log` contains the current `BRAVE_API_KEY`. The Brave MCP client
+passes it as `-e BRAVE_API_KEY=…` on the `docker run` command line, and on
+`TimeoutExpired` Python writes the whole command into the exception message. Gitignored, so
+never committed or pushed, but the key is live and the file is world-readable. **Rotate,
+and pass the key through the container environment instead of the command line.**
+
+### Fixed — the execution layer could not enforce a tool-level allowlist either
+
+Research during this change surfaced the bigger half: **filtering what the model is
+OFFERED is not an enforcement boundary.** Function-calling models emit calls for tools
+they were never offered — reported on hosted APIs and on Ollama alike — so the offer is a
+hint. OWASP LLM06 (Excessive Agency) puts the real check at execution, under "complete
+mediation".
+
+The ADR-004 interceptor checked `mcp_access` only, i.e. TOOLSET granularity, so it would
+have permitted gwen to execute `web_search`: both it and her granted `image_search` live
+in the `web` toolset. `validate()` now takes the persona card and re-resolves through the
+**same** `registry.specs_for_persona` the offering layer uses — deliberately one source, so
+the two layers cannot drift into disagreeing about what a persona holds. A test asserts
+that for every shipped persona, everything offered would also be permitted.
+
+### Fixed — `None` meant "unrestricted" on the ambiguous path
+
+With no card *and* no `mcp_access` there is nothing to authorize against, and the code fell
+through to the legacy rarity fallback — handing any rare/epic/legendary persona a web tool
+on the strength of a cosmetic field. `None` now means "grants unknown", which denies.
+
+**Tests: 2468 → 2490.** 14 of the first 16 new tests fail against the unfixed source — the
+suite was green while the hole was open because nothing exercised this function against a
+restricted persona.
+
 ## [0.2.2] - 2026-09-23
 
 Patch: the silent wrong-model fallback, the probe schema that scored half its own

@@ -275,7 +275,10 @@ class ToolBrainService:
                     name = _get(fn, "name", "")
                     args = _get(fn, "arguments", {}) or {}
 
-                    res = self.interceptor.validate(name, args, persona_key, mcp_access, source="agent")
+                    res = self.interceptor.validate(
+                    name, args, persona_key, mcp_access, source="agent",
+                    persona_card=persona_card,
+                )
                     trace.append({"tool": name, "allowed": res.allowed,
                                   "requires_hitl": res.requires_hitl,
                                   "blocked": res.blocked_category})

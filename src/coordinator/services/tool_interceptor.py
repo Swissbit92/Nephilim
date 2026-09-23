@@ -172,8 +172,21 @@ class ToolCallInterceptor:
         persona_key: str,
         mcp_access: Optional[List[str]],
         source: str = "agent",
+        persona_card: Optional[Dict[str, Any]] = None,
     ) -> InterceptResult:
-        """Validate a proposed tool call. Never raises; returns an InterceptResult."""
+        """Validate a proposed tool call. Never raises; returns an InterceptResult.
+
+        `persona_card` enables TOOL-level enforcement. Without it this check is
+        toolset-level only (`mcp_access`), which cannot see a card's `tools`
+        allowlist — so a persona scoped to image/video search would still be
+        allowed to execute `web_search`, because both live in the `web` toolset.
+
+        That gap mattered: filtering what the model is OFFERED is not an
+        enforcement boundary. Function-calling models demonstrably emit calls for
+        tools that were never offered, on hosted APIs and on Ollama alike, so the
+        offer is a hint and this is the point of complete mediation
+        (OWASP LLM06, Excessive Agency).
+        """
         arguments = arguments or {}
         mcp_access = mcp_access or []
 
@@ -212,6 +225,24 @@ class ToolCallInterceptor:
                 ),
                 blocked_category=CAT_MCP,
             )
+
+        # 3b. Per-persona TOOL allowlist re-enforcement. Resolved from the SAME
+        #     registry method the offering layer uses (specs_for_persona), so the
+        #     two layers cannot drift into disagreeing about what a persona holds.
+        if persona_card is not None:
+            from ..tools.registry import registry
+
+            granted = {s.name for s in registry.specs_for_persona(persona_card)}
+            if granted and tool_name not in granted:
+                return InterceptResult(
+                    allowed=False,
+                    reason=(
+                        f"persona '{persona_key}' is not granted '{tool_name}' "
+                        f"(granted: {sorted(granted)})"
+                    ),
+                    blast_radius=policy.blast_radius,
+                    blocked_category=CAT_MCP,
+                )
 
         # 4. Argument-level allowlist (gated by AGENTIC_ARGUMENT_ALLOWLIST).
         if self._enforce_arguments():

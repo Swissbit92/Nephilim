@@ -26,7 +26,7 @@ Quick hits:
 .venv/bin/python -m uvicorn src.coordinator.server:app --port 8000
 cd react-ui && PORT=3001 npm run start:dev   # --openssl-legacy-provider baked into the script (needed on any Node 17+)
 
-# Backend tests (~2,470; gate --cov-fail-under=60). Live tests
+# Backend tests (~2,490; gate --cov-fail-under=60). Live tests
 # auto-skip when Ollama/Brave/Docker are unreachable (tests/conftest.py).
 pytest tests/
 OLLAMA_BASE=http://127.0.0.1:1 pytest tests/   # force headless: live tests skip

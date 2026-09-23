@@ -518,7 +518,9 @@ def chat(body: ChatBody):
 
     # Get tools based on intent (reuse the intent already classified above —
     # avoids a redundant second embedding round-trip under semantic routing).
-    tools = get_tools_for_query(body.message, persona_key, persona_rarity, mcp_access=mcp_access, precomputed_intent=intent)
+    # `persona_card=card` is what makes the card's `tools` allowlist reachable —
+    # without it the callee rebuilds a card from scalars that has no `tools` key.
+    tools = get_tools_for_query(body.message, persona_key, persona_rarity, mcp_access=mcp_access, precomputed_intent=intent, persona_card=card)
     tool_names = [t["function"]["name"] for t in tools] if tools else []
     logger.info(f"[Tools] Injecting {len(tools)} tool(s): {tool_names}")
 
@@ -555,7 +557,9 @@ def chat(body: ChatBody):
 
     if not tools:
         # No tools needed - regular LLM completion
-        logger.info("No tools needed, using regular completion")
+        logger.info(
+            "No tools needed, using regular completion "
+            f"(persona={persona_key} intent={intent.value})")
         answer = _complete_or_503(card, system, user_compiled, log_context=f"[Chat] {persona_key} no-tools:")
         answer = _apply_groundedness_gate(card, body.message, answer, metadata)
         return _build_llm_response(answer, body.message, persona_name, metadata, word_substitutions=card.get("word_substitutions"))
@@ -582,6 +586,13 @@ def chat(body: ChatBody):
         # Fallback to regular completion (tools were offered but none were
         # brave_web_search — still no tool actually executes this turn, so the
         # same groundedness gap applies as the no-tools branch above).
+        # Unreachable as of 2026-09-24 and logged anyway: it was silent, so if a
+        # future change to the offer starts routing turns here they would vanish
+        # from the logs rather than show up as a regression.
+        logger.info(
+            f"[Chat] fallback completion — {len(tools)} tool(s) offered, none executable "
+            f"(persona={persona_key} intent={intent.value} "
+            f"tools={[t.get('function', {}).get('name') for t in tools]})")
         answer = _complete_or_503(card, system, user_compiled, log_context=f"[Chat] {persona_key} fallback:")
         answer = _apply_groundedness_gate(card, body.message, answer, metadata)
         return _build_llm_response(answer, body.message, persona_name, metadata, word_substitutions=card.get("word_substitutions"))
