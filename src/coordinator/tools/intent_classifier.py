@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import logging
 import re
+from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional
 
@@ -11,6 +13,8 @@ from .keywords import (
     EXPLICIT_SEARCH_COMMANDS,
     WALLET_FASTPATH,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # Negation detection: action verbs prefixed with "not"/"don't" reverse intent.
@@ -71,16 +75,35 @@ def _brave_accessible(mcp_access: Optional[List[str]], persona_rarity: str) -> b
     return persona_rarity.lower() in {"rare", "epic", "legendary"}
 
 
+@dataclass(frozen=True)
+class IntentDecision:
+    """An intent, plus whether the classifier was actually able to decide it.
+
+    `NEEDS_NEITHER` means "no confident route — answer conversationally". It was
+    ALSO what came back when the embedding service could not be reached at all,
+    and downstream had no way to tell those apart. `capability_scope` reads
+    `NEEDS_NEITHER` as "no tool is required, nothing is missing", so an outage
+    silently satisfied the out-of-surface guard.
+
+    `classifier_available=False` says: this intent is a DEFAULT, not a finding.
+    """
+
+    intent: QueryIntent
+    classifier_available: bool = True
+
+
 def _classify_semantic_primary(
     query: str,
     query_lower: str,
     can_use_brave: bool,
     can_use_wallet: bool,
     routing,
-) -> QueryIntent:
+) -> IntentDecision:
     """Semantic-PRIMARY intent classification (flag-ON path).
 
     Order: high-precision keyword fast-path → bge-m3 semantic router → NEEDS_NEITHER.
+    Returns an `IntentDecision` so a caller can tell a routing DECISION from a
+    routing OUTAGE — see that class.
     Follow-up detection is handled by the caller before this runs. Deliberately does
     NOT fall back to the fuzzy SEARCH_KEYWORDS/WALLET_KEYWORDS lists — the whole point
     is to route ambiguous queries by intent similarity, not keyword presence. A miss
@@ -89,18 +112,25 @@ def _classify_semantic_primary(
     # 1. Keyword fast-path — high-precision, zero-latency, no embed round-trip.
     if can_use_wallet and any(kw in query_lower for kw in WALLET_FASTPATH):
         if not _NEGATED_ACTION.search(query_lower):
-            return QueryIntent.NEEDS_WALLET
+            return IntentDecision(QueryIntent.NEEDS_WALLET)
     if can_use_brave and any(kw in query_lower for kw in EXPLICIT_SEARCH_COMMANDS):
-        return QueryIntent.NEEDS_WEB_SEARCH
+        return IntentDecision(QueryIntent.NEEDS_WEB_SEARCH)
     # Colloquial media-find ("find me images", "show me a video") — precise
     # verb+media-noun rule, so bare "find me" RP never matches (see _MEDIA_SEARCH).
     if can_use_brave and _MEDIA_SEARCH.search(query_lower):
-        return QueryIntent.NEEDS_WEB_SEARCH
+        return IntentDecision(QueryIntent.NEEDS_WEB_SEARCH)
 
     # 2. Semantic router — the primary decision.
+    #
+    # `raise_on_unavailable=True` is the whole point: the router used to answer
+    # "could not run" and "ran, found nothing" with the same `None`, so an outage
+    # arrived here indistinguishable from a verdict and fell through to the safe
+    # default. The default is only safe when it was actually CHOSEN.
+    available = True
     try:
-        from .semantic_router import route_by_embedding
+        from .semantic_router import EmbeddingsUnavailable, route_by_embedding
         semantic_intent = route_by_embedding(
+            raise_on_unavailable=True,
             query=query,
             can_use_brave=can_use_brave,
             can_use_mongodb=False,
@@ -112,17 +142,26 @@ def _classify_semantic_primary(
         if semantic_intent == "wallet":
             # Negation guard applies to semantic wallet results too.
             if not _NEGATED_ACTION.search(query_lower):
-                return QueryIntent.NEEDS_WALLET
+                return IntentDecision(QueryIntent.NEEDS_WALLET)
         elif semantic_intent == "web_search":
-            return QueryIntent.NEEDS_WEB_SEARCH
+            return IntentDecision(QueryIntent.NEEDS_WEB_SEARCH)
+    except EmbeddingsUnavailable as exc:
+        # The router could not run. Still non-fatal — the turn gets NEEDS_NEITHER
+        # and answers conversationally, exactly as before — but it is now MARKED,
+        # so the out-of-surface guard is not handed a default dressed as a finding.
+        logger.warning(
+            "[IntentClassifier] semantic router unavailable (%s) — "
+            "intent defaults to NEEDS_NEITHER and is marked unclassified", exc,
+        )
+        available = False
     except Exception:
-        pass  # Semantic router failure is non-fatal — fall through.
+        pass  # Any other router failure is non-fatal — fall through.
 
     # 3. No confident route → pure LLM.
-    return QueryIntent.NEEDS_NEITHER
+    return IntentDecision(QueryIntent.NEEDS_NEITHER, classifier_available=available)
 
 
-def classify_query_intent(
+def classify_query_intent_ex(
     query: str,
     persona_rarity: str,
     mcp_access: Optional[List[str]] = None,
@@ -143,7 +182,9 @@ def classify_query_intent(
                     affirmative, we route to NEEDS_WALLET for continuity.
 
     Returns:
-        QueryIntent enum indicating which MCP(s) to use
+        IntentDecision — the intent, plus whether the classifier could actually
+        run. See `IntentDecision`; `classify_query_intent` returns just the intent
+        for the callers that do not need the distinction.
     """
     query_lower = query.lower()
 
@@ -166,7 +207,9 @@ def classify_query_intent(
         is_short_affirmative = any(query_stripped == a or query_stripped.startswith(a + " ") for a in _AFFIRMATIVES)
         last_was_wallet = any(kw in last_lower for kw in _WALLET_CONTEXT_KEYWORDS)
         if is_short_affirmative and last_was_wallet:
-            return QueryIntent.NEEDS_WALLET
+            # A deterministic, embedding-free decision — the classifier was not
+            # needed, so it counts as available.
+            return IntentDecision(QueryIntent.NEEDS_WALLET)
 
     # ------------------------------------------------------------------
     # Semantic router is the primary (and only) intent classifier.
@@ -185,4 +228,23 @@ def classify_query_intent(
         return _classify_semantic_primary(
             query, query_lower, _can_use_brave, can_use_wallet, _routing
         )
-    return QueryIntent.NEEDS_NEITHER
+    # No routable capability at all: a real decision, not an outage.
+    return IntentDecision(QueryIntent.NEEDS_NEITHER)
+
+
+def classify_query_intent(
+    query: str,
+    persona_rarity: str,
+    mcp_access: Optional[List[str]] = None,
+    last_assistant_message: Optional[str] = None,
+) -> QueryIntent:
+    """Back-compat wrapper: the intent alone.
+
+    Every pre-existing caller keeps its exact contract. Only the out-of-surface
+    guard needs to know whether the classifier could run, and it calls
+    `classify_query_intent_ex`. Adding the field to this return type instead would
+    have touched every call site to fix one.
+    """
+    return classify_query_intent_ex(
+        query, persona_rarity, mcp_access, last_assistant_message
+    ).intent

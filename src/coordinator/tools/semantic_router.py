@@ -284,6 +284,30 @@ def _ensure_example_vecs_primary(emb_model) -> Optional[Dict[str, List[List[floa
         return None
 
 
+class EmbeddingsUnavailable(RuntimeError):
+    """The router could not run at all — as distinct from running and finding no route.
+
+    `route_by_embedding` returned `None` for BOTH cases, and its own docstring said
+    so: "None if confidence is below threshold/margin **or embeddings are
+    unavailable**". One sentinel, two meanings, and the caller could not tell an
+    answer from an outage.
+
+    That conflation silently disarmed the out-of-surface guard. A turn nobody could
+    classify became `NEEDS_NEITHER` — "no confident route, answer conversationally"
+    — which `capability_scope` maps to "no tool is required, nothing is missing".
+    With `TOOL_BRAIN_UNGATED_WEB=true` (production) that turn still reaches the tool
+    brain, so gwen was offered her media tools for a weather question: the exact
+    defect the guard was built to prevent, reached through the guard's own blind
+    spot.
+
+    Same shape as this ecosystem's most-repeated defect — `0.0` meaning both "a
+    failed API call" and "genuinely zero" in eeva-exec's funding reader.
+
+    Raised only when a caller passes `raise_on_unavailable=True`, so existing
+    callers and their tests keep the old `None` contract unchanged.
+    """
+
+
 def route_by_embedding(
     query: str,
     can_use_brave: bool,
@@ -292,6 +316,7 @@ def route_by_embedding(
     threshold: float = _CONFIDENCE_THRESHOLD,
     margin: float = 0.0,
     drop_llm_only_centroid: bool = False,
+    raise_on_unavailable: bool = False,
 ) -> Optional[str]:
     """Attempt to classify query intent via embedding similarity.
 
@@ -312,12 +337,23 @@ def route_by_embedding(
             sets, with llm_only as pure fall-through. Defaults to False → legacy mean
             centroids (incl. llm_only). The name is kept for call-site compatibility.
 
+        raise_on_unavailable: When True, raise `EmbeddingsUnavailable` instead of
+            returning None in the cases where the router could not RUN (no
+            embeddings model, example vectors unbuildable, query embedding
+            failed). Low confidence still returns None. Defaults to False so
+            every existing caller keeps the old contract.
+
     Returns:
-        Intent label ("wallet", "web_search", "llm_only") or None if
-        confidence is below threshold/margin or embeddings are unavailable.
+        Intent label ("wallet", "web_search", "llm_only"), or None when the router
+        ran and found no confident route. Whether "could not run" also returns
+        None is controlled by `raise_on_unavailable` — see that argument. Do not
+        re-merge the two: a caller that cannot tell an outage from an answer is
+        how the out-of-surface guard came to be silently disarmed.
     """
     emb_model = _get_embeddings_model()
     if emb_model is None:
+        if raise_on_unavailable:
+            raise EmbeddingsUnavailable("no embeddings model")
         return None
 
     # Scoring source depends on mode:
@@ -329,6 +365,9 @@ def route_by_embedding(
         else _ensure_centroids(emb_model)
     )
     if not source:
+        # Example vectors / centroids could not be built — an outage, not a verdict.
+        if raise_on_unavailable:
+            raise EmbeddingsUnavailable("example vectors unavailable")
         return None
 
     try:
@@ -341,6 +380,8 @@ def route_by_embedding(
         query_vec = emb_model.embed_query(safe_query)
     except Exception as e:
         logger.debug(f"[SemanticRouter] Query embedding failed: {e}")
+        if raise_on_unavailable:
+            raise EmbeddingsUnavailable(f"query embedding failed: {e}") from e
         return None
 
     # Filter to only intents this persona can actually use

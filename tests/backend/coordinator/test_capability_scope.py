@@ -33,6 +33,31 @@ from src.coordinator.tools.capability_scope import (
 from src.coordinator.tools.intent_classifier import QueryIntent, media_search_type
 from src.coordinator.tools.registry import registry
 
+_SKIP_REASON = (
+    "the bge-m3 embedding service is unreachable, so every turn defaults to "
+    "NEEDS_NEITHER — this end-to-end assertion would be testing the outage, not "
+    "the code. The contract it covers is pinned hermetically in "
+    "TestTheMeasuredDefect and TestAnUnclassifiableTurnIsNotAConversationalOne."
+)
+
+
+def _embeddings_reachable() -> bool:
+    """Ask the classifier itself, rather than probing a URL.
+
+    Anything else would be a second, drifting definition of "available" — and the
+    whole defect being fixed here is two code paths disagreeing about what an
+    absent answer means.
+    """
+    from src.coordinator.tools.intent_classifier import classify_query_intent_ex
+
+    try:
+        return classify_query_intent_ex(
+            "what is the weather tomorrow", "common", ["brave_search"]
+        ).classifier_available
+    except Exception:
+        return False
+
+
 GWEN = json.loads((Path(__file__).parents[3] / "personas" / "gwen.json").read_text())
 GWEN_SURFACE = {"image_search", "video_search"}
 FULL_SURFACE = {"web_search", "image_search", "video_search", "news_search", "fetch_url"}
@@ -79,9 +104,17 @@ class TestItDoesNotFireOnTheWorkingPath:
         "Show me how much you missed me.",
         "What's a reverse cowgirl actually called in the industry?",
     ])
+    @pytest.mark.integration
+    @pytest.mark.skipif(not _embeddings_reachable(), reason=_SKIP_REASON)
     def test_the_probe_turns_that_currently_PASS_stay_in_surface(self, prompt):
         """Measured on the real classifier, not asserted from memory: every one of
-        these classified `llm`, and none may start deflecting."""
+        these classified `llm`, and none may start deflecting.
+
+        This assertion is `not out_of_surface`, so it PASSES when the classifier is
+        dead and everything defaults to NEEDS_NEITHER. It cannot detect the outage
+        it would be affected by, which is why it must skip loudly rather than run
+        against a degraded classifier and report green.
+        """
         intent = classify(prompt)
         v = check_scope(intent, GWEN_SURFACE, media_type=media_search_type(prompt))
         assert not v.out_of_surface, f"{prompt!r} would now wrongly deflect"
@@ -90,8 +123,25 @@ class TestItDoesNotFireOnTheWorkingPath:
         "What's the weather in Zurich tomorrow?",
         "Has anything happened with bitcoin this week?",
     ])
+    @pytest.mark.integration
+    @pytest.mark.skipif(not _embeddings_reachable(), reason=_SKIP_REASON)
     def test_the_two_fabricating_turns_ARE_caught(self, prompt):
+        """END-TO-END, and therefore dependent on a live embedding service.
+
+        It failed in CI for that reason alone: no Ollama there, so both prompts
+        default to NEEDS_NEITHER and the guard correctly reports nothing missing.
+        The guard was never wrong — its INPUT was, and the contract it implements
+        is pinned hermetically in `TestTheMeasuredDefect`, which runs everywhere.
+
+        Kept as an explicitly-marked integration test rather than deleted: it is the
+        only thing that checks these real prompts actually reach NEEDS_WEB_SEARCH.
+        Skipping is visible and reasoned — a test that skips silently in CI is the
+        textbook false-confidence trap (Google Testing Blog, hermetic environments).
+        """
         intent = classify(prompt)
+        assert intent == QueryIntent.NEEDS_WEB_SEARCH, (
+            f"{prompt!r} classified {intent.name}, so the guard never gets a chance"
+        )
         v = check_scope(intent, GWEN_SURFACE, media_type=media_search_type(prompt))
         assert v.out_of_surface, f"{prompt!r} still reaches a tool"
 
@@ -183,3 +233,68 @@ class TestDeflection:
             assert not re.search(r"\bGwen (is|was|has|does|feels)\b", line)
             assert not re.search(r"\bBBC\b", line)
             assert "debbie" not in line.lower()
+
+
+class TestAnUnclassifiableTurnIsNotAConversationalOne:
+    """Hermetic. These run everywhere, including CI with no Ollama — which is the
+    point: the end-to-end assertions above cannot, and something must still pin
+    the contract.
+
+    `NEEDS_NEITHER` carried two meanings: "the router ran and found no confident
+    route" (answer conversationally) and "the router could not run at all".
+    `capability_scope` maps it to "no tool required, nothing missing" — true of
+    the first, false of the second. `IntentDecision.classifier_available` splits
+    them.
+    """
+
+    def test_an_outage_is_marked_unavailable(self, monkeypatch):
+        from src.coordinator.tools import intent_classifier as ic
+        from src.coordinator.tools.semantic_router import EmbeddingsUnavailable
+
+        def _down(**kwargs):
+            raise EmbeddingsUnavailable("connection refused")
+
+        monkeypatch.setattr(
+            "src.coordinator.tools.semantic_router.route_by_embedding", _down
+        )
+        d = ic.classify_query_intent_ex(
+            "what's the weather in Zurich tomorrow?", "common", ["brave_search"]
+        )
+        assert d.intent == QueryIntent.NEEDS_NEITHER
+        assert d.classifier_available is False, (
+            "an outage is reporting itself as a routing decision"
+        )
+
+    def test_a_genuine_no_route_is_marked_available(self, monkeypatch):
+        """The distinction only means something if the OTHER case stays clean."""
+        from src.coordinator.tools import intent_classifier as ic
+
+        monkeypatch.setattr(
+            "src.coordinator.tools.semantic_router.route_by_embedding",
+            lambda **kwargs: None,
+        )
+        d = ic.classify_query_intent_ex(
+            "tell me a story about the sea", "common", ["brave_search"]
+        )
+        assert d.intent == QueryIntent.NEEDS_NEITHER
+        assert d.classifier_available is True
+
+    def test_the_back_compat_wrapper_returns_a_bare_intent(self):
+        """It exists so ~every pre-existing caller is untouched — and that is also
+        its risk: dropping the availability signal is the convenient path, which
+        would reintroduce the conflation one level up. Pinned, not assumed."""
+        from src.coordinator.tools.intent_classifier import classify_query_intent
+
+        assert isinstance(classify_query_intent("hello", "common"), QueryIntent)
+
+    def test_the_tool_brain_route_consumes_the_availability_signal(self):
+        """Structural guard for the same risk.
+
+        The fix only works if `routes/chat.py` calls the `_ex` variant and passes
+        the flag on. Reverting to the bare wrapper would be a one-word edit that
+        no behavioural test in this file would notice, because the guard would
+        still look correct — it would simply never be told.
+        """
+        src = (Path(__file__).parents[3] / "src" / "coordinator" / "routes" / "chat.py").read_text()
+        assert "classify_query_intent_ex(" in src
+        assert "classifier_available=_intent_decision.classifier_available" in src
