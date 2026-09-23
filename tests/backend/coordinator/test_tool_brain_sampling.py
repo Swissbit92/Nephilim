@@ -125,7 +125,23 @@ class TestProseSampling:
     def test_keep_alive_is_sent_so_the_model_pin_is_not_defeated(self):
         """``OLLAMA_KEEP_ALIVE=-1`` pins the 24B indefinitely, but Ollama applies
         keep_alive per request, last-one-wins. A tool-brain call that omits it
-        silently reverts the pin to the server default on every turn."""
+        silently reverts the pin to the server default on every turn.
+
+        Compared against the WIRE form, not the raw setting. Those stopped being
+        the same value in ``5ce9d5dc``: Ollama parses keep_alive as a Go duration
+        and rejects the shipped default ``"-1"`` with an HTTP 400, so
+        ``wire_keep_alive`` coerces it to the integer ``-1``. This assertion kept
+        comparing against the raw string and went red on the merge.
+
+        Asserting the raw setting here would be worse than a red suite — it would
+        demand the code send back the exact value the server refuses, so making
+        the test pass would reintroduce the 400 the coercion exists to prevent.
+        See ``test_keep_alive_wire.py`` for the measured contract.
+        """
         svc = _svc([_msg(content="Hi.")])
         _run(svc, GWEN, sampling_overrides={"temperature": 0.9}, prose_expected=True)
-        assert svc._client.calls[0]["keep_alive"] == get_settings().ollama.keep_alive
+        ollama = get_settings().ollama
+        sent = svc._client.calls[0]["keep_alive"]
+        assert sent == type(ollama).wire_keep_alive(ollama.keep_alive)
+        # The regression itself: a bare numeric string is an HTTP 400 on arrival.
+        assert not (isinstance(sent, str) and sent.lstrip("-").isdigit())
