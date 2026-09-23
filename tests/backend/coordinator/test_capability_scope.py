@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -298,3 +299,56 @@ class TestAnUnclassifiableTurnIsNotAConversationalOne:
         src = (Path(__file__).parents[3] / "src" / "coordinator" / "routes" / "chat.py").read_text()
         assert "classify_query_intent_ex(" in src
         assert "classifier_available=_intent_decision.classifier_available" in src
+
+
+class TestEverySiblingPathAlsoFailsClosed:
+    """The first fix marked only the tidy failure — and two untidy ones survived it.
+
+    Found by a security review of the commit that introduced the distinction, which
+    is the lesson landing on this file from the inside: a shape fixed only where it
+    was noticed spreads to every branch that returns the same value. `NEEDS_NEITHER`
+    is reachable four ways; three of them are outages and one is a real decision.
+    """
+
+    def test_a_router_error_that_is_not_EmbeddingsUnavailable_still_marks_unavailable(self):
+        """An ImportError or a TypeError inside the router means the turn was not
+        classified, exactly as a connection failure does."""
+        from src.coordinator.tools import intent_classifier as ic
+
+        with patch(
+            "src.coordinator.tools.semantic_router.route_by_embedding",
+            side_effect=TypeError("a bug, not an outage — same consequence"),
+        ):
+            d = ic.classify_query_intent_ex(
+                "what's the weather in Zurich tomorrow?", "common", ["brave_search"]
+            )
+        assert d.intent == QueryIntent.NEEDS_NEITHER
+        assert d.classifier_available is False
+
+    def test_settings_that_will_not_load_mark_unavailable(self):
+        """`_routing is None` had two causes — config outage, and no capability —
+        and only one of them is a decision."""
+        from src.coordinator.tools import intent_classifier as ic
+
+        with patch(
+            "src.coordinator.config.get_settings",
+            side_effect=RuntimeError("config unavailable"),
+        ):
+            d = ic.classify_query_intent_ex(
+                "what's the weather in Zurich tomorrow?", "common", ["brave_search"]
+            )
+        assert d.intent == QueryIntent.NEEDS_NEITHER
+        assert d.classifier_available is False
+
+    def test_a_persona_with_no_routable_capability_is_a_DECISION_not_an_outage(self):
+        """The half that must NOT be swept up.
+
+        Marking this unavailable would disable ungated tools for every persona that
+        holds no MCP access — a fail-closed so broad it stops being a guard and
+        starts being an outage of its own.
+        """
+        from src.coordinator.tools import intent_classifier as ic
+
+        d = ic.classify_query_intent_ex("anything at all", "common", [])
+        assert d.intent == QueryIntent.NEEDS_NEITHER
+        assert d.classifier_available is True
