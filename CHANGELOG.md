@@ -5,7 +5,11 @@ All notable changes to the NEPHILIM project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.1] - 2026-09-23
+
+Patch: three latent production outages on the greet path, the sampler bypass that
+made the 2026-08-23 repetition fix inert, a guard stopping tests writing to the
+production database, and the persona-eval harness with its first pilot.
 
 ### Added (2026-09-23) — Persona-eval harness, and the pilot that measured it
 
