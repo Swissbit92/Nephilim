@@ -208,6 +208,84 @@ whose numbers can never be compared. `Toxicity Control: on/off` is itself a laye
 Two caveats: it needs paid APIs, and it is a *second* ruler — its numbers must never appear
 in the same sentence as ours.
 
+## Two instruments, not one
+
+Gwen and the other seven need **different measurements**, and the second is the cheaper one.
+Assuming otherwise is why this looked like eight gold sets of work.
+
+| | gwen | the other seven |
+|---|---|---|
+| Question | *Did she break a rule?* | *Is v2 richer than v1?* |
+| Type | **Absolute** — needs a bar | **Relative** — before/after |
+| Needs a gold set? | **Yes** | **No** |
+| Already built? | No | **Yes** — `ab_harness.py` + `blind_judge.py`, used once in 2026-06 then idle |
+
+She is the only persona with an explicit written rule set, so she is the only one whose
+rules can be violated in a checkable sense. The other seven are not broken — they are
+**thin**, and thinness is fixed by rewriting the card and then asking whether the rewrite
+won. A comparison needs no absolute threshold, which removes the expensive half of the
+problem.
+
+`attribution_accuracy` already says which are thin, and has since 2026-08-10:
+
+| persona | score (chance 0.125) |
+|---|---|
+| nyx | 1.00 |
+| eeva, solace, gwen | 0.875 |
+| cipher, gojo | 0.75 |
+| aurora | 0.625 |
+| **aegis** | **0.50** |
+
+The README has called aegis a "new differentiation target" for over a year and nothing acted
+on it. **Caveat that keeps this honest:** the metric measures voice *fingerprint*, not
+quality, and it rewards exaggerated tics — aegis could be lifted by giving him a catchphrase
+he repeats, and the number would improve while the persona got worse. Use it as a **floor**
+(low means genuinely thin), never as a target, and pair it with the before/after read.
+
+## Running it locally — what actually works
+
+No paid API is required, and the framework question turned out to be smaller than the judge
+question.
+
+| Option | Verdict |
+|---|---|
+| **`ping_pong_bench`** (Apache-2.0, arXiv:2409.06820) | **Best fit.** `OpenAI(base_url=...)` — points at Ollama with **zero code changes**. Character-card-shaped input, multi-turn with an LLM emulating the user, judges *in-character / entertaining / fluent*. **No toxicity axis at all**, so nothing to override for gwen. |
+| **PersonaGym, shimmed** | Feasible: ~50-150 lines. Its rubrics and question-generation prompts are provider-neutral MIT text and fully reusable; only three `*_chat_gen` functions are provider-bound. **Gotcha:** dispatch is a substring match on the model name, so any local model named `llama…` misroutes into the Together branch — restructure dispatch, don't just add a case. Scores become internal-only, not paper-comparable, the moment the judge is swapped. |
+| **`TRACE-Bench`** | Genuinely litellm-based, actively developed. Tests agentic task completion in character rather than trait fidelity — a different signal, deterministic scoring, no toxicity axis. |
+| **`EQ-Bench` / `creative-writing-bench`** | Local-first by design. EQ-Bench's core scoring is **reference-distance with no judge model at all**. Its rubric has a "Safety Conscious" line that is deliberately **excluded from the total** — a rare framework that treats over-caution as the bug. `creative-writing-bench` ships **no licence file** — check before adopting. |
+| **`CharacterEval`** | Fully local by construction (local reward-model judge) but Chinese-only. Valuable as proof that a local reward-model judge works, not as a drop-in. |
+| **The ten general harnesses** (DeepEval, promptfoo, Inspect AI, Opik, Langfuse, RAGAS, TruLens, Giskard, Phoenix, lm-eval-harness) | All run locally without an account. promptfoo has a first-class `ollama:` provider; Inspect AI separates judge and subject as model *roles*. **But none of them do any of the statistics** — no permutation tests, no bootstrap CIs, no blind A/B, no multiple-comparison correction. Adopting one replaces roughly the "call a judge and parse JSON" function and nothing else. |
+
+### The judge is the real blocker, not the framework
+
+Every purpose-trained open **generative** judge that has been independently tested scores at
+or below chance on hard discrimination. The gap between self-report and third-party
+measurement is the finding:
+
+| Judge | Self-reported | Independent (JudgeBench, 50% = chance) |
+|---|---|---|
+| PandaLM | high | **13.1%** |
+| JudgeLM-7B / 13B / 33B | ~90% agreement | **25.1 / 26.9 / 35.7%** |
+| Auto-J | strong | **36.6%** |
+| Prometheus 2 7B / 8x7B | strong | **34.9 / 40.3%** |
+| Skywork-Critic-8B | **89.0** on RewardBench | **53.4%** |
+| *(reference)* vanilla GPT-4o as judge | — | 50.9% |
+
+**Reward-model classifiers do better** — Skywork-Reward-Gemma-2-27B reaches 64.3%, beating
+GPT-4o-as-judge — but they are `AutoModelForSequenceClassification` checkpoints with a score
+head, which **Ollama cannot serve**. That needs a second runtime (transformers/vLLM on MPS).
+
+Reasoning-trained judges dominate everything (o3-mini-high 80.9%, DeepSeek-R1 73.1%), which
+makes a local reasoning model the most promising untested option in our size class.
+
+**Nobody has measured an abliterated model as a *judge*.** The hypothesis that a
+safety-tuned judge moralises on an uncensored persona's output is plausible and unmeasured —
+we would be the first data point.
+
+Practical consequence: **treat every vendor number in this category as uninformative.** Even
+30-50 of our own labels are worth more, because the published figures demonstrably do not
+survive third-party testing.
+
 ## What none of this can do
 
 **The generic layer tells you a persona is broken. It never tells you it is good.** A persona
@@ -262,6 +340,8 @@ reply, 120 items is about an hour of reading.
 1. **The gold set.** ~1 hour. Nothing downstream is trustworthy without it.
 2. **Break-character test.** Same-day, fully generic, currently a blind spot — independent of
    step 1 and can run in parallel.
-3. **Pairwise distinctiveness**, replacing the 1/N score, before a 9th persona is added.
-4. **Rule checkers for taxonomy rows 1–4**, parameterised per persona.
-5. Only then: detectors for rows 5–7, each gated against the gold set by the thresholds above.
+3. **Refresh the 8-persona distinctiveness baseline** (the current one is from 2026-08-10) and move to **mean pairwise AUC**. Earlier drafts of this document deferred this until a 9th persona was added — that was wrong. Its job is *"is this persona its own thing"*, which is exactly the enrichment question for the other seven, so it is needed now and not at some future N.
+4. **Enrich aegis** (0.50 vs chance 0.125) using **before/after comparison**, not an absolute bar — the machinery already exists.
+5. **Typed rules in the persona card.** Rules currently live as prose at array indices (`dont[13]`, `when_to_decline[0]`), so every checker is hand-wired to a position. A typed form (`{"type": "required_address", "value": "Daddy"}`) lets checkers auto-wire from the card and turns a future persona-creation tool into a form rather than a prose editor. Cheap with one pilot persona; expensive after eight personas and a UI. This is the same mistake the Character Card V2/V3 specs made — freeform blobs with no rule types.
+6. **Rule checkers for taxonomy rows 1–4**, parameterised per persona.
+7. Only then: detectors for rows 5–7, each gated against the gold set by the thresholds above.
