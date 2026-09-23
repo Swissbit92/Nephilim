@@ -25,6 +25,44 @@ from src.coordinator import prompt_builder as pb
 from src.coordinator.config import get_settings
 
 
+# The persona identity is the only part of the prompt that needs a model, and
+# none of these tests assert on it.
+_STUB_IDENTITY = "A stubbed identity brief. Not asserted on by any test here."
+
+
+@pytest.fixture(autouse=True)
+def _identity_without_a_live_model(monkeypatch):
+    """Render prompts without reaching Ollama.
+
+    `_build_system_prompt_lean` resolves the identity as
+    ``get_or_build_cv_summary(selector).get("summary") or _summarize(...)``, and
+    both sides of that `or` end in a live model call via `_llm()`, which asserts
+    the model is reachable before anything is generated.
+
+    A cache hides this on any machine that has run the app. On a fresh checkout
+    the cache is always cold, so CI reached a live Ollama and these tests failed
+    on every run from 2026-08-23 — 6 failed, 2222 passed — for a month, while
+    passing locally the whole time.
+
+    They assert on prompt STRUCTURE: whether the constraints block appears,
+    whether examples are included, what order the sections come in. Pinning the
+    identity text keeps every one of those assertions intact and removes the
+    network. Skipping them instead (`@requires_ollama`) would have been cheaper
+    and would have discarded the coverage that matters most — one of these tests
+    exists because its assertion was False in production.
+
+    The cache is cleared on both sides: `_build_system_prompt_lean` is
+    `lru_cache`d on the selector alone, so a stubbed prompt would otherwise leak
+    into the next test and a real one into this.
+    """
+    monkeypatch.setattr(
+        pb, "get_or_build_cv_summary", lambda selector: {"summary": _STUB_IDENTITY}
+    )
+    pb._build_system_prompt_lean.cache_clear()
+    yield
+    pb._build_system_prompt_lean.cache_clear()
+
+
 @contextmanager
 def constraints(enabled: bool):
     """Toggle the flag and clear the prompt cache on both sides.

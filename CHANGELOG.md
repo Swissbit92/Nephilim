@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-09-23) — Persona-eval harness, and the pilot that measured it
+
+324 generations against the deployed model through a scratch backend on its own database; production untouched. Two arms at k=3 over 54 probes (23 tooling probes skipped — they need a Brave key). **0 errors, 0 empty replies, 2% gate-intercepted.**
+
+- **Verbatim self-repetition fell 40.7% → 5.6%** between the pre-fix sampler config (temp 0.4, `repeat_penalty` 1.0 = off, `repeat_last_n` 64) and the fixed one (temp 0.9, `min_p` 0.05, `repeat_penalty` 1.05, `repeat_last_n` 384). Median CrossRep-4 20.5% → 3.8%; longest shared span 46 → 27 tokens. Measured with stdlib n-gram metrics — no model, no thresholds, nothing to calibrate. **Stated honestly: the arms differ in three settings at once, so this is the bundle effect — what shipped versus what was there — and cannot attribute the gain to any single component.**
+- **The 77-probe set works.** Tier-0 base rate 27% (fixed) / 34% (pre-fix), inside the 30–50% band the power analysis requires, so no rewrite is needed. Weakest-held rule is the required form of address at 46–61% failure, corroborating that 10 of 30 ordinary prefix replies dropped it. The forbidden abbreviation held perfectly at 0% across 48 generations.
+- **The NLI rule detector does NOT work, and no figure from it may be quoted.** The reference arm — questions the rule is irrelevant to — failed at **91%** against conflict's 93%, and it scored *"I had a wild day 🌪️"* as a 0.99 contradiction of an exclusivity clause. Re-framing the hypothesis from "contradicts the rule" to "entails the violation" moved conflict from **83% to 0% on identical replies**. Two defensible framings, one dataset, opposite conclusions: an uncalibrated detector does not produce a weak number, it produces an arbitrary one. `reference_arm_check()` now prints beside every headline figure so this cannot go unnoticed again.
+- **`keep_alive` was broken on the wire.** `OLLAMA_KEEP_ALIVE` defaults to the string `"-1"`, which Ollama rejects (`time: missing unit in duration "-1"`, HTTP 400). Measured: `-1` as an integer works, `"-1s"` works, `"10m"` works, `"-1"` does not. The legacy path had carried this since it was written — on the greet, the same never-exercised path that hid the `repeat_last_n` sentinel. Fixed at source with `wire_keep_alive()`.
+- **New guard: the live backend is not a test fixture.** Eleven test modules reach `localhost:8000`, four through an `EVAL_BASE_URL` that defaulted to production. A full-suite run wrote 476 messages across 108 sessions into the production database before this was caught. `conftest.py` now refuses any HTTP request to a production backend port, failing loudly rather than skipping.
+- New modules: `transport_preflight.py`, `pilot_score.py`, `repetition_metrics.py`, `rule_detector.py`, `pilot_prefix.py`, `gwen_probes.json` (77 probes), and baseline `baselines/pilot_20260923.json`.
+
 ### Fixed (2026-09-22) — The samplers never reached the model: a latent 503, a bypassed prose path, and anti-repetition switched off at the server
 
 Three defects, all on the path gwen's turns actually take, none of which any existing test could have caught: every sampler test in the repo asserted on the dict the app *built* and never on what the server *did* with it. Suite **2273 → 2288**, zero new ruff findings on touched files, full-suite failure-set diff against the branch point empty.
@@ -17,6 +28,31 @@ Three defects, all on the path gwen's turns actually take, none of which any exi
 - **Anti-repetition was disabled at the server, not merely mistuned.** Ollama changed `repeat_penalty`'s default from 1.1 to 1.0 — off — in commit `6a261db7` (2026-08-12), reasoning that an always-on penalty distorts output that legitimately repeats and that "the remedy is a per-model parameter". Measured here beforehand: `repeat_last_n = 64, repeat_penalty = 1.000, dry_multiplier = 0.000`. That is **not** the original cause (the symptom predates 2026-08-12) but it is why nothing was damping it. gwen now declares `min_p 0.05`, `repeat_penalty 1.05`, `repeat_last_n 384`; `temperature` stays at 0.9, her declared voice, because no evidence was found to move it. 1.05 rather than 1.1 because the penalty applies to *prompt* tokens too, flat and undecayed (`llama_sampler_penalties_apply`), so a heavier one also punishes her pinned voice exemplars; the DRY paper's composability table (arXiv:2608.22761, Table 15) measures a light 1.05 as the best stacked setting. **384 is chosen, not derived** — no benchmark pins it, and it is flagged as inferred wherever it appears.
 - **Corrects the 2026-08-23 entry below on `min_p`.** That entry says `min_p` cannot apply without `OLLAMA_COMPLETION_BACKEND=http`. True of the **legacy** path — `langchain_ollama` coerces options through `ollama._types.Options`, which has no `min_p` field, and that gap stays pinned. But the tool brain passes a plain dict to `Client.chat`, and `ChatRequest.options` accepts a `Mapping` without coercing, so **on the path gwen's turns actually take, `min_p` reaches the wire**. Verified end to end against the running server.
 - **New: `test_sampler_wire_arrival.py` asserts what the server accepted, not what the app sent** — the gap every prior sampler regression here slipped through. Ollama makes the difference observable two ways and both are used: an unrecognised option is accepted and ignored with `level=WARN source=types.go:1048 msg="invalid option provided"` (HTTP 200, no error — the silent-failure mode), while a *retired* option is rejected outright (`typical_p` → 400 "no longer supported", confirmed live). Includes a `requires_ollama` round trip with `keep_alive=0` so nothing is left pinned.
+
+## [0.2.0] - 2026-09-23
+
+First tagged release. `[0.1.0]` was recorded in this file but never tagged, so the
+repository has no prior tag to compare against; `v0.2.0` starts that history at the
+commit `main` is promoted to, not retroactively.
+
+Eighteen commits since the last promotion: the persona-context defect fixes
+(reset completeness, dropped constraints, unlabelled recall, silent samplers), a
+direct Ollama transport so `min_p` actually applies, the gwen repetition-penalty
+window, the semantic-platform concept architecture, and the CI repair that made
+this branch verifiable again.
+
+### Fixed (2026-09-23) — CI had been red for a month: six prompt tests needed a live model
+
+The tests added by the 2026-08-23 persona-context work turned CI red the day they landed, and **never once ran there afterwards**. Every push to `dev` from 2026-08-23 to 2026-09-23 failed the backend job — **6 failed, 2222 passed** — while passing locally the entire time. The last green run was 2026-08-22. Nothing reported it: GitHub's only signal is an email per push. Found by an ecosystem-wide CI watcher (`nephilim-ecosystem/scripts/ci_watch.py`) built for exactly this.
+
+- **`build_system_prompt()` reaches Ollama, and a cache hides it.** The lean builder resolves the persona identity as `get_or_build_cv_summary(selector).get("summary") or _summarize(...)`; both sides end in `_llm()`, which calls `assert_model_available()` before anything is generated. On a machine that has run the app the summary is cached and the call never fires. **A fresh checkout is always cold**, so CI reached a live model and raised `RuntimeError: Could not reach Ollama`.
+- Fixed in the tests, not the workflow: an autouse fixture pins the identity text, so the six render prompts with no network. They assert on prompt **structure** — whether the constraints block appears, whether examples are included, what order sections come in — and none of them asserts on the identity, so every assertion survives intact.
+- **Deliberately not `@requires_ollama`.** Skipping was the cheap fix and would have discarded the coverage that matters most: one of these tests exists because *"this was False in production"* on 2026-08-23. A test that skips on CI is a test that is not protecting anything.
+- The fixture clears `_build_system_prompt_lean`'s `lru_cache` on both sides, or a stubbed prompt leaks into the next test and a real one into this.
+
+Verified in an isolated worktree with Ollama pointed at a closed port, which reproduces CI exactly: **6 failed / 2222 passed → 2228 passed, 43 skipped, 0 failed.** The six now *pass* rather than skip.
+
+**Known, pre-existing, out of scope:** `test_faiss_incremental_update.py::test_incremental_update_performance` fails locally when Ollama is reachable — confirmed identical on unmodified `dev`, so not introduced here. It is among the 43 that skip on CI, which is why it never showed there.
 
 ### Fixed (2026-08-23) — Persona-context defects: reset completeness, dropped constraints, unlabelled recall, silent samplers
 
