@@ -11,6 +11,19 @@ applies_to: nephilim
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
 
+## 2026-09-24 — The fix I was sent to make was the less important half
+
+- **What:** the task was "the legacy path ignores persona tool allowlists". True, and I fixed it. But the research pass said something I had not considered: **filtering what a model is OFFERED is not an enforcement boundary.** Function-calling models demonstrably emit calls for tools that were never offered, on hosted APIs and on Ollama alike. OWASP LLM06 puts the check at execution, under "complete mediation".
+- **So I checked the execution layer, and it had the same hole one level deeper.** The ADR-004 interceptor re-enforced `mcp_access` — *toolset* granularity. gwen is granted `image_search` and denied `web_search`, and both live in the `web` toolset, so the interceptor would have permitted the call it exists to stop. Offering-layer filtering was the only thing holding, and it was the layer that cannot hold.
+- **Learned:** when a defect is framed as "component X forgot to check", ask what happens if the check is bypassed rather than forgotten. The offered list is advisory; the executor is authoritative. Fixing only the advisory layer produces a system that looks enforced.
+- **Learned, second-order:** both layers now resolve through the *same* `specs_for_persona`. Two independently maintained answers to "what may this persona do" is how they drift into disagreeing, and a test now asserts offered ⊆ permitted for every shipped persona so the drift fails the build rather than production.
+
+## 2026-09-24 — A green suite over an open hole
+
+- **What:** the allowlist bypass survived 2468 passing tests. Not because a test was wrong — because **no test exercised `get_tools_for_query` against a persona whose card restricts her tools**. The function had no authorization of its own at all, and nothing asked it to.
+- **The tell I nearly missed:** after writing the fix the suite went from 2419 to 2419 passing. Zero tests changed behaviour. That should be alarming for a change to an authorization path, and it is easy to read as "no regressions" instead of "no coverage". I then ran the new tests against the unfixed source: **14 of 16 failed.** That is the number that means the tests are real.
+- **Learned:** a test written after the fix has never been red, and a suite that stays green across a behaviour change is evidence of absence, not absence of evidence. Run new tests against the *old* code before trusting them — the same discipline the predictions ledger applies to checks, for the same reason.
+
 ## 2026-09-23 — A tool fired, so the answer looked grounded. It was invented.
 
 - **What:** gwen is granted `image_search` and `video_search` only — deliberate, documented in ADR-008. Asked *"what's the weather in Zurich tomorrow?"* she fired `image_search` **3/3** and answered *"a maximum temperature of 103°F and a minimum of 68°F"*. Zurich does not reach 103°F and a picture search cannot return a forecast. But a tool call sat in the trace, `metadata.tools_used` was populated, and a 🔍 Sources block was stapled on — so from the outside the turn was indistinguishable from a grounded one.
