@@ -19,11 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `intent_classifier.IntentDecision(intent, classifier_available)` and `classify_query_intent_ex`. `classify_query_intent` is unchanged and still returns a bare `QueryIntent` — adding the field to the existing return type would have touched every call site to fix one. The known risk of that wrapper (dropping the signal is the convenient path) is pinned by a structural test asserting `routes/chat.py` consumes it.
 
 ### Added
-- 12 tests, 0 removed (2142 → 2154 collected). The two end-to-end assertions are now marked `integration` and **skip loudly** with a stated reason when embeddings are unreachable — a test that skips silently in CI is the textbook false-confidence trap ([Google Testing Blog](https://testing.googleblog.com/2015/04/just-say-no-to-more-end-to-end-tests.html)). The contract they covered is pinned hermetically instead, so it runs everywhere.
+- 15 tests, 0 removed (2142 → 2157 collected). The two end-to-end assertions are now marked `integration` and **skip loudly** with a stated reason when embeddings are unreachable — a test that skips silently in CI is the textbook false-confidence trap ([Google Testing Blog](https://testing.googleblog.com/2015/04/just-say-no-to-more-end-to-end-tests.html)). The contract they covered is pinned hermetically instead, so it runs everywhere.
 - **Found in passing:** `_reset_globals` in the router tests never cleared `_example_vecs_primary` — it postdates the helper. Harmless while every test built its own vectors, and not harmless the moment a test asserts the *build* fails: the cached value short-circuits the build and the assertion silently tests nothing. It caught one of these new tests doing exactly that.
 
+### Fixed — the two sibling paths the first fix missed
+- **A security review of that commit found the same defect twice more, in branches the fix had just walked past.** `NEEDS_NEITHER` is reachable four ways; three are outages and one is a real decision, and only the tidiest outage had been marked.
+  - `except Exception: pass` around the router caught everything that was **not** `EmbeddingsUnavailable` — an ImportError, a TypeError inside the router, a config error raised mid-call — and returned `classifier_available=True`. All of them mean the turn was not classified.
+  - `_routing is None` had **two** causes: settings failed to load (an outage) and the persona has no routable capability (a decision). The comment written one commit earlier asserted it was always the latter.
+- Both now mark the turn unclassified and log it. **A persona with no routable capability deliberately still reports available** — sweeping that in would disable ungated tools for every persona holding no MCP access, which is a fail-closed broad enough to be an outage of its own.
+- This is the shape lesson landing from the inside: a defect fixed only where it was noticed spreads to every branch returning the same value. +3 tests pinning all three paths.
+
 ### Verified
-- Full backend suite **both ways**: embeddings up **2142 passed / 12 skipped**; embeddings unreachable (the CI condition) **2134 passed / 20 skipped** — 0 failed in either.
+- Full backend suite **both ways**: embeddings up **2145 passed / 12 skipped**; embeddings unreachable (the CI condition) **2137 passed / 20 skipped** — 0 failed in either.
 
 ## [0.2.3] - 2026-09-24
 
