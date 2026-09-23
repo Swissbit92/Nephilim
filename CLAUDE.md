@@ -26,7 +26,7 @@ Quick hits:
 .venv/bin/python -m uvicorn src.coordinator.server:app --port 8000
 cd react-ui && PORT=3001 npm run start:dev   # --openssl-legacy-provider baked into the script (needed on any Node 17+)
 
-# Backend tests (~2,290; gate --cov-fail-under=60). Live tests
+# Backend tests (~2,490; gate --cov-fail-under=60). Live tests
 # auto-skip when Ollama/Brave/Docker are unreachable (tests/conftest.py).
 pytest tests/
 OLLAMA_BASE=http://127.0.0.1:1 pytest tests/   # force headless: live tests skip
@@ -70,7 +70,7 @@ repositories/                  # SQLite data access — ALL extend BaseRepositor
                                #   session, message, summary, emotional_state, seeker_progression,
                                #   user_profile, user (OAuth), trade_proposal, wallet, wallet_flow (guided-creation state)
 models/                        # persona_schema.py, sampling_presets.py, mcp_models.py
-tools/                         # intent_classifier.py, synthesis_prompts.py, keywords.py, tool_generators.py, tool_utils.py, result_filters.py (image junk denylist)
+tools/                         # intent_classifier.py, synthesis_prompts.py, keywords.py, tool_generators.py, tool_utils.py, result_filters.py (image junk denylist), capability_scope.py + capability_deflection.py (out-of-surface guard)
 ```
 
 **Key files:**

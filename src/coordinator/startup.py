@@ -84,7 +84,7 @@ from .di.services import (  # noqa: F401 - re-exported for startup.get_X()/init_
     init_phase3_memory,
     prewarm_session_indexes,
 )
-from .ollama_utils import assert_model_available
+from .ollama_utils import assert_model_available, require_model_configured
 from .persona_memory import _load_all_cards_cached, ensure_all_summaries_serialized
 
 logger = logging.getLogger(__name__)
@@ -156,10 +156,13 @@ def initialize_all():
     """Run all initialization routines."""
     logger.info("Initializing FastAPI server...")
 
-    # Check Ollama
+    # Check Ollama. require_model_configured runs FIRST: assert_model_available
+    # would pass happily on a fallback model that happens to be pulled locally,
+    # which is precisely the silent-wrong-model case we refuse to boot into.
     try:
-        assert_model_available(get_settings().ollama.base, get_settings().ollama.model)
-        logger.info("Model check passed.")
+        _model = require_model_configured(get_settings().ollama.model)
+        assert_model_available(get_settings().ollama.base, _model)
+        logger.info(f"Model check passed: {_model}")
     except Exception as e:
         logger.error(f"Model check failed: {e}")
         raise

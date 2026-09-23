@@ -177,11 +177,11 @@ def get_tools_for_query(
     persona_rarity: str,
     mcp_access: Optional[List[str]] = None,
     precomputed_intent: Optional[QueryIntent] = None,
+    persona_card: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Layer 2: Dynamic tool injection based on query intent.
-
-    This is the recommended approach - only inject relevant tools for the specific query.
+    Layer 2: Dynamic tool injection based on query intent, filtered by what the
+    persona is actually GRANTED.
 
     Args:
         query: User query string
@@ -196,25 +196,65 @@ def get_tools_for_query(
                     classify internally (backward compatible). Passing it also fixes
                     a latent bug: this internal call omitted ``last_assistant_message``,
                     so a short wallet follow-up ("yes") built an empty tool list here.
+        persona_card: The FULL persona card. Required for the card's ``tools``
+                    allowlist to be honoured — a card reconstructed from the three
+                    scalars above has no ``tools`` key, so the allowlist is invisible
+                    to it. Omitting this degrades to toolset-level gating, never to
+                    no gating.
 
     Returns:
-        List of tool definitions relevant to this specific query
+        Tool definitions for this query that the persona is actually granted.
+
+    This function used to do NO persona authorization at all. It returned
+    ``brave_web_search`` on any web intent and the whole wallet toolset on any
+    wallet intent, trusting that its one caller had already checked the grants
+    while classifying intent. Measured 2026-09-24: forced to ``NEEDS_WALLET``, it
+    handed a persona whose ``mcp_access`` is only ``["brave_search"]`` all seven
+    wallet tools. Not reachable in production — ``routes/chat.py`` classifies with
+    the persona's ``mcp_access``, so that intent cannot arise for her — but the
+    function had no defence of its own, and "one caller happens to check first" is
+    a single point of failure, not an authorization model.
+
+    It also meant a persona-card ``tools`` allowlist was honoured only on the
+    ADR-008 tool-brain path: gwen is scoped to image/video search (ADR-008) and
+    the legacy path handed her ``brave_web_search`` anyway.
     """
     if precomputed_intent is not None:
         intent = precomputed_intent
     else:
         intent = classify_query_intent(query, persona_rarity, mcp_access=mcp_access)
 
-    # ADR-009 R2/W2: legacy intent-gated offer. NEEDS_WEB_SEARCH offers only the
-    # legacy-executable brave_web_search (the force-search path can't execute the
-    # new generic web tools yet — those arrive with the ADR-008 tool brain).
-    # NEEDS_WALLET offers the full wallet toolset (byte-identical to legacy).
+    from .capability_scope import GENERAL_LOOKUP_TOOLS
     from .registry import registry
     from . import registrations  # noqa: F401 - ensure builtins registered
 
+    # Fall back to a card built from the scalars when the caller passes none. That
+    # still resolves toolsets, so the degraded mode is *toolset-level* gating —
+    # strictly more restrictive than the previous behaviour of none at all. An
+    # optional authorization argument must never default to skipping the check.
+    card = persona_card
+    if card is None:
+        if mcp_access is None:
+            # Nothing to authorize against: no card AND no mcp_access. Deny rather
+            # than fall through to the legacy rarity fallback, which would hand a
+            # rare/epic/legendary persona `brave_web_search` on the strength of a
+            # rarity string alone. `None` means "grants unknown", never "unrestricted".
+            return []
+        card = {"key": persona_key, "rarity": persona_rarity, "mcp_access": mcp_access}
+
     if intent == QueryIntent.NEEDS_WEB_SEARCH:
-        return [registry.get("brave_web_search").definition()]
+        # Resolve through specs_for_persona so the card's `tools` allowlist applies.
+        # The offer stays narrowed to brave_web_search: it is the only web tool the
+        # legacy force-search path can execute (tool_calling_service keys on that
+        # literal name), so returning the persona's other web tools would route the
+        # turn into chat.py's `else` branch, which cannot run them and logs nothing.
+        granted = {s.name for s in registry.specs_for_persona(card)}
+        if granted & GENERAL_LOOKUP_TOOLS:
+            return [registry.get("brave_web_search").definition()]
+        return []
     if intent == QueryIntent.NEEDS_WALLET:
-        return registry.definitions_for_toolsets(["wallet"])
+        if "wallet" in registry.toolsets_for_persona(card):
+            return registry.definitions_for_toolsets(["wallet"])
+        return []
     # QueryIntent.NEEDS_NEITHER → empty tools list
     return []

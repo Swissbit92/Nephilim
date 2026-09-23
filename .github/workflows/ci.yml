@@ -42,6 +42,10 @@ jobs:
         env:
           # Point Ollama at a closed port so requires_ollama tests skip fast.
           OLLAMA_BASE: http://127.0.0.1:1
+          # PERSONA_MODEL has no fallback default (config/llm.py) and .env is
+          # gitignored, so a fresh checkout has no other source. conftest.py also
+          # sets it; naming it here keeps CI honest if that ever moves.
+          PERSONA_MODEL: ci-test-model
         # test_selective_context_inject is temporarily ignored: it is
         # order-dependent / non-hermetic (leaks get_settings()+embedder state,
         # reaches a live embedder on a fresh checkout) and is coupled to the

@@ -1,4 +1,5 @@
 """Shared pytest fixtures and configuration for MCP Coordinator tests."""
+import json
 import os
 import sys
 import tempfile
@@ -14,6 +15,17 @@ sys.path.insert(0, str(project_root / "src"))
 sys.path.insert(0, str(project_root))
 
 # This allows imports like: from coordinator.server import app
+
+# PERSONA_MODEL has no fallback default (see config/llm.py): unset resolves to ""
+# and startup refuses to boot. The suite must therefore supply one itself — CI has
+# no .env, and `_hermetic_settings` below nulls `env_file` on every settings class,
+# so field defaults are the ONLY other source and this field no longer has a usable
+# one. `setdefault` so a real shell/CI value still wins.
+#
+# This MUST sit above _ENV_SNAPSHOT. Set after the snapshot, the key would count as
+# "injected during collection" and `_hermetic_settings` would delete it again at
+# fixture setup — the fix would silently undo itself.
+os.environ.setdefault("PERSONA_MODEL", "test-model")
 
 # Snapshot of the REAL process environment, taken at conftest import — i.e. before
 # pytest collects (imports) any test module. Two integration modules call
@@ -118,14 +130,13 @@ def _hermetic_settings():
         fn.cache_clear()
 
 
-@pytest.fixture(scope="session")
-def test_env():
-    """Set up test environment variables."""
-    os.environ.setdefault("OLLAMA_BASE", "http://localhost:11434")
-    os.environ.setdefault("PERSONA_MODEL", "test-model")
-    os.environ.setdefault("PERSONA_TEMPERATURE", "0.7")
-    os.environ.setdefault("COORD_PORT", "8000")
-    return os.environ
+# NOTE: a `test_env` fixture used to live here, setting PERSONA_MODEL and friends.
+# No test ever requested it (not autouse, zero references repo-wide), so it never
+# ran — the suite passed only because every field still had a default. It was
+# removed rather than wired up: the env it claimed to set is now set at module
+# scope above, before _ENV_SNAPSHOT, which is the only place that survives
+# _hermetic_settings. Keeping a dead fixture that *looks* like it configures the
+# environment is how the next person concludes the environment is configured.
 
 
 # ============================================================================
@@ -289,6 +300,36 @@ def _ollama_reachable() -> bool:
         return False
 
 
+def _configured_model_pulled() -> bool:
+    """Is the model the suite would actually USE present in Ollama?
+
+    Reachability alone is not enough to run a live test, and assuming it was hid
+    a real defect: in a git worktree (no `.env`, since it is gitignored)
+    PERSONA_MODEL was unset, so `st.ollama.model` fell back to the old default
+    `gemma2:9b-instruct-q5_K_M` — which IS pulled on this machine. So
+    `test_the_deployed_model_returns_text` passed for months while exercising a
+    9B smoke model at 4096 context instead of the deployed 24B. Green, fast, and
+    measuring nothing it claimed to measure.
+
+    With the fallback default removed, that test would instead fail on a
+    placeholder name. Neither outcome is wanted: a live test whose model is not
+    actually available should SKIP and say so, not pass against a stand-in and
+    not fail as if the code were broken.
+    """
+    from urllib.request import urlopen
+
+    model = os.getenv("PERSONA_MODEL", "").strip()
+    if not model:
+        return False
+    base = os.getenv("OLLAMA_BASE", "http://127.0.0.1:11434").rstrip("/")
+    try:
+        with urlopen(f"{base}/api/tags", timeout=2) as r:
+            names = {m.get("name") for m in (json.load(r) or {}).get("models", [])}
+    except Exception:
+        return False
+    return model in names
+
+
 def _docker_available() -> bool:
     """True if the docker CLI is on PATH and the daemon answers."""
     import shutil
@@ -312,10 +353,20 @@ def pytest_collection_modifyitems(config, items):
     key, no Docker) instead of hanging on live calls.
     """
     # Compute resource availability once per session.
-    skip_ollama = (
-        None if _ollama_reachable()
-        else pytest.mark.skip(reason="Ollama not reachable (set OLLAMA_BASE / start `ollama serve`)")
-    )
+    # Two separate reasons a live test cannot run, reported separately — "Ollama
+    # is down" and "the configured model is not pulled" have different fixes, and
+    # collapsing them sends people to restart a service that is already running.
+    if not _ollama_reachable():
+        skip_ollama = pytest.mark.skip(
+            reason="Ollama not reachable (set OLLAMA_BASE / start `ollama serve`)")
+    elif not _configured_model_pulled():
+        skip_ollama = pytest.mark.skip(
+            reason=(
+                f"PERSONA_MODEL={os.getenv('PERSONA_MODEL', '') or '(unset)'!r} is not "
+                "pulled in Ollama — skipping rather than testing a stand-in model. "
+                "Set PERSONA_MODEL to a pulled model (`ollama list`) to run live tests."))
+    else:
+        skip_ollama = None
     skip_api_key = (
         None if os.getenv("BRAVE_API_KEY", "").strip()
         else pytest.mark.skip(reason="BRAVE_API_KEY not set")

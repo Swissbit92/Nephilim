@@ -210,6 +210,8 @@ def _try_tool_brain(
     from ..services.citation_service import CitationService
     from ..tools.registry import registry
     from ..tools import registrations  # noqa: F401 - ensure specs registered
+    from ..tools.capability_scope import check_scope
+    from ..tools.capability_deflection import build_deflection
 
     # Wallet is NEVER model-decided — TB5's live failure was wallet fixation, and
     # a false positive there costs more than a missed search. Unconditional.
@@ -238,9 +240,42 @@ def _try_tool_brain(
             if narrowed:  # only if the persona actually has that media tool
                 web_specs = narrowed
 
+        # OUT-OF-SURFACE GATE — reconcile the classified intent against what this
+        # persona was actually GRANTED, before any tool is offered.
+        #
+        # Measured 2026-09-23: gwen holds image_search + video_search only, so a
+        # weather question fired image_search 3/3 and answered "103F" — invented,
+        # and shipped with a 🔍 Sources block because a tool had run. A tool firing
+        # is not evidence the answer is grounded when the tool answered a DIFFERENT
+        # question than the one asked.
+        #
+        # Deflecting here rather than `return None` is deliberate: the legacy path
+        # ignores persona tool allowlists entirely (tool_utils.get_tools_for_persona
+        # calls toolsets_for_persona, never specs_for_persona), so falling through
+        # would hand her the very web_search the registry withholds.
         tools = [s.definition() for s in web_specs]
         if not tools:
-            return None  # persona has no web tools -> legacy handles it
+            return None  # persona has no web tools at all -> legacy handles it
+
+        # Narrowed to personas that HOLD a web surface but had part of it withheld.
+        # A persona granted no web toolset at all is a different, pre-existing case
+        # that legacy owns; claiming it here would change behaviour for personas
+        # this defect never touched.
+        scope = check_scope(intent, {s.name for s in web_specs}, media_type=forced)
+        if scope:
+            logger.info(
+                "[out-of-surface] persona=%s intent=%s missing=%s — deflecting (%s)",
+                card.get("key"), intent.value, sorted(scope.missing), scope.reason,
+            )
+            metadata.source_type = SourceType.LLM
+            metadata.tools_used = []
+            answer = build_deflection(
+                card, body.message, missing=sorted(scope.missing))
+            return _build_llm_response(
+                answer, body.message, persona_name, metadata,
+                word_substitutions=card.get("word_substitutions"),
+            )
+
 
         # In ungated mode the router no longer vouches that this turn needs the
         # web, so the model needs to be told what warrants a lookup. Enumerated
@@ -483,7 +518,9 @@ def chat(body: ChatBody):
 
     # Get tools based on intent (reuse the intent already classified above —
     # avoids a redundant second embedding round-trip under semantic routing).
-    tools = get_tools_for_query(body.message, persona_key, persona_rarity, mcp_access=mcp_access, precomputed_intent=intent)
+    # `persona_card=card` is what makes the card's `tools` allowlist reachable —
+    # without it the callee rebuilds a card from scalars that has no `tools` key.
+    tools = get_tools_for_query(body.message, persona_key, persona_rarity, mcp_access=mcp_access, precomputed_intent=intent, persona_card=card)
     tool_names = [t["function"]["name"] for t in tools] if tools else []
     logger.info(f"[Tools] Injecting {len(tools)} tool(s): {tool_names}")
 
@@ -520,7 +557,9 @@ def chat(body: ChatBody):
 
     if not tools:
         # No tools needed - regular LLM completion
-        logger.info("No tools needed, using regular completion")
+        logger.info(
+            "No tools needed, using regular completion "
+            f"(persona={persona_key} intent={intent.value})")
         answer = _complete_or_503(card, system, user_compiled, log_context=f"[Chat] {persona_key} no-tools:")
         answer = _apply_groundedness_gate(card, body.message, answer, metadata)
         return _build_llm_response(answer, body.message, persona_name, metadata, word_substitutions=card.get("word_substitutions"))
@@ -547,6 +586,13 @@ def chat(body: ChatBody):
         # Fallback to regular completion (tools were offered but none were
         # brave_web_search — still no tool actually executes this turn, so the
         # same groundedness gap applies as the no-tools branch above).
+        # Unreachable as of 2026-09-24 and logged anyway: it was silent, so if a
+        # future change to the offer starts routing turns here they would vanish
+        # from the logs rather than show up as a regression.
+        logger.info(
+            f"[Chat] fallback completion — {len(tools)} tool(s) offered, none executable "
+            f"(persona={persona_key} intent={intent.value} "
+            f"tools={[t.get('function', {}).get('name') for t in tools]})")
         answer = _complete_or_503(card, system, user_compiled, log_context=f"[Chat] {persona_key} fallback:")
         answer = _apply_groundedness_gate(card, body.message, answer, metadata)
         return _build_llm_response(answer, body.message, persona_name, metadata, word_substitutions=card.get("word_substitutions"))
