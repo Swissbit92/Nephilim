@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 from .. import startup  # module ref for call-time getter resolution (tests patch
                         # src.coordinator.startup.get_* to neutralize deps); cycle-free.
 from ..schemas import ChatBody, GreetBody, ImpersonateBody, NarrateBody, ResponseMetadata, SourceType
-from ..config import get_settings
+from ..config import get_settings, get_persona_sampling_overrides
 from ..llm_client import create_llm_client, log_context_stats, estimate_tokens
 from ..prompt_builder import build_constraint_reminder
 from ..persona_memory import (
@@ -253,8 +253,20 @@ def _try_tool_brain(
 
         svc = ToolBrainService(interceptor=ToolCallInterceptor())
         hist = [{"role": t.role, "content": t.content} for t in history]
+        # The persona's declared samplers are resolved HERE, not inside the
+        # service: get_persona_sampling_overrides reads the module-level settings
+        # singleton frozen at import, so resolving it deeper would be invisible
+        # to any caller that set the environment and cleared the cache.
+        #
+        # `prose_expected` is true on the ungated path, where ADR-008 TB6 makes
+        # the model's own answer user-facing on ordinary chitchat and the tool
+        # schema is a fallback rather than the point. When the router actually
+        # asked for a web search the first call is a tool DECISION and keeps the
+        # deliberate low temperature — persona voice has no business in tool JSON.
         result = svc.run(persona_card=card, system_prompt=tb_system,
-                         user_message=body.message, history=hist, tools=tools)
+                         user_message=body.message, history=hist, tools=tools,
+                         sampling_overrides=get_persona_sampling_overrides(card),
+                         prose_expected=(intent != QueryIntent.NEEDS_WEB_SEARCH))
 
         if result.status in (ST_HITL, ST_DELEGATE_WALLET):
             # Wallet stays entirely on the existing propose->confirm / read flow.

@@ -134,7 +134,7 @@ class ToolBrainService:
     _PREFILL_OPENING = "Here's what I found for you — "
 
     def _synthesize_with_refusal_retry(
-        self, client, model, messages, opts, content: str
+        self, client, model, messages, opts, content: str, *, keep_alive=None
     ) -> tuple[str, bool]:
         """If `content` (a completed synthesis) is a spurious refusal, run ONE
         bounded prefill-steered retry (synthesis only, no tools). Returns
@@ -152,7 +152,7 @@ class ToolBrainService:
         ]
         try:
             resp = client.chat(model=model, messages=retry_messages,
-                               stream=False, options=opts)
+                               stream=False, keep_alive=keep_alive, options=opts)
             continuation = (_get(_get(resp, "message", {}), "content", "") or "").strip()
         except Exception as e:  # noqa: BLE001 - never break the turn
             logger.warning(f"[ToolBrain] refusal retry failed ({e}); keeping original")
@@ -175,10 +175,31 @@ class ToolBrainService:
         user_message: str,
         history: Optional[List[Dict[str, str]]] = None,
         tools: List[Dict[str, Any]],
+        sampling_overrides: Optional[Dict[str, Any]] = None,
+        prose_expected: bool = False,
     ) -> ToolBrainResult:
         """Run the native tool-calling loop for one turn. Never raises — any
         Ollama/executor error degrades to a silent result so the caller can fall
-        back to the legacy path."""
+        back to the legacy path.
+
+        ``sampling_overrides`` carries the persona's declared sampler settings
+        (see ``get_persona_sampling_overrides``). They are applied to the calls
+        that produce user-facing prose, never to a tool *decision*: persona voice
+        in tool-argument JSON is not wanted, so the deliberate low temperature
+        survives wherever the model is choosing a tool.
+
+        The caller resolves them rather than this service reading the card
+        itself, because ``get_persona_sampling_overrides`` reads the module-level
+        settings singleton frozen at import — resolving here would be invisible
+        to any test that sets the environment and clears the cache.
+
+        ``prose_expected`` is the caller's knowledge that this turn is
+        overwhelmingly likely to be chitchat (ADR-008 TB6's ungated path, where
+        the tool schema is a fallback rather than the point). It selects prose
+        sampling for the first call. Note this keeps exactly one generation per
+        turn, which TB6 costed explicitly at ~16 tok/s — do NOT "fix" this by
+        deciding at a low temperature and regenerating the prose afterwards.
+        """
         from ..config import get_settings
         from ..tools.registry import registry, TOOLSET_MCP_ALIASES
         from ..tools.tool_utils import format_search_results_for_llm
@@ -186,8 +207,16 @@ class ToolBrainService:
         st = get_settings()
         model = st.ollama.model
         max_iter = st.tool_brain.max_iterations
-        opts = {"temperature": 0.4, "num_predict": st.ollama.max_output_tokens,
-                "num_ctx": st.ollama.context_window}
+        # Ollama applies keep_alive per request, last-one-wins, so a call that
+        # omits it silently reverts OLLAMA_KEEP_ALIVE=-1 to the server default.
+        # It must be coerced: Ollama parses this as a Go duration and rejects a
+        # bare numeric string ("-1" -> HTTP 400 'missing unit in duration'),
+        # which surfaces here as a 503 naming neither the field nor the cause.
+        keep_alive = type(st.ollama).wire_keep_alive(st.ollama.keep_alive)
+        decision_opts = {"temperature": 0.4, "num_predict": st.ollama.max_output_tokens,
+                         "num_ctx": st.ollama.context_window}
+        prose_opts = {**decision_opts, **(sampling_overrides or {})}
+        opts = prose_opts if prose_expected else decision_opts
         client = self._client_or_default()
 
         persona_key = persona_card.get("key", "")
@@ -212,8 +241,12 @@ class ToolBrainService:
 
         try:
             for iteration in range(max_iter):
+                # Iteration 0 may be a tool decision or the whole reply, so it
+                # follows the caller's expectation. Anything later runs after
+                # tool results and is in-voice synthesis — always prose.
                 resp = client.chat(model=model, messages=messages, tools=tools,
-                                   stream=False, options=opts)
+                                   stream=False, keep_alive=keep_alive,
+                                   options=(opts if iteration == 0 else prose_opts))
                 msg = _get(resp, "message", {})
                 tcs = _get(msg, "tool_calls", None) or []
                 content = (_get(msg, "content", "") or "").strip()
@@ -227,7 +260,8 @@ class ToolBrainService:
                     refused = False
                     if used_search:
                         content, refused = self._synthesize_with_refusal_retry(
-                            client, model, messages, opts, content)
+                            client, model, messages, prose_opts, content,
+                            keep_alive=keep_alive)
                     return ToolBrainResult(
                         status=ST_ANSWERED, answer=content, tool_trace=trace,
                         used_search=used_search, search_results=search_results,
@@ -279,12 +313,15 @@ class ToolBrainService:
                     messages.append({"role": "tool", "content": formatted})
 
             # Iteration budget exhausted — force a final synthesis without tools.
-            resp = client.chat(model=model, messages=messages, stream=False, options=opts)
+            # This is prose by definition: no tools are offered.
+            resp = client.chat(model=model, messages=messages, stream=False,
+                               keep_alive=keep_alive, options=prose_opts)
             fcontent = (_get(_get(resp, "message", {}), "content", "") or "").strip()
             refused = False
             if used_search:
                 fcontent, refused = self._synthesize_with_refusal_retry(
-                    client, model, messages, opts, fcontent)
+                    client, model, messages, prose_opts, fcontent,
+                    keep_alive=keep_alive)
             return ToolBrainResult(status=ST_ANSWERED, answer=fcontent, tool_trace=trace,
                                    used_search=used_search, search_results=search_results,
                                    refused=refused)

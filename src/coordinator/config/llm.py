@@ -66,6 +66,41 @@ class OllamaSettings(BaseSettings):
                     "52GB box with 162k pageouts. Set '-1' only if you genuinely want both warm.",
         alias="OLLAMA_UTILITY_KEEP_ALIVE",
     )
+    @staticmethod
+    def wire_keep_alive(value: str | int | None) -> str | int | None:
+        """Coerce a keep_alive setting into something Ollama will accept.
+
+        Ollama parses this as a Go duration, so a BARE NUMERIC STRING is
+        rejected outright::
+
+            keep_alive="-1"   -> HTTP 400  time: missing unit in duration "-1"
+            keep_alive=-1     -> OK        (integer seconds; negative = forever)
+            keep_alive="-1s"  -> OK
+            keep_alive="10m"  -> OK
+
+        Verified against the running Ollama on 2026-09-22.
+
+        The default for this field is the string ``"-1"``, which is therefore
+        invalid on the wire. It went unnoticed because the path that sent it —
+        the legacy completion path — only runs for a persona with no tools, or
+        for a session's opening greeting, and no new session had been created
+        since 2026-08-23. The same dormancy hid the retired ``repeat_last_n``
+        sentinel: two unrelated 400s on one never-exercised path, both surfacing
+        as "LLM service temporarily unavailable", which names neither.
+
+        Numeric strings become ints; anything with a unit passes through; None
+        is left alone so the caller can omit the field entirely.
+        """
+        if value is None:
+            return None
+        if isinstance(value, int):
+            return value
+        text = str(value).strip()
+        try:
+            return int(text)
+        except ValueError:
+            return text
+
     context_window: int = Field(
         default=4096,
         ge=512,

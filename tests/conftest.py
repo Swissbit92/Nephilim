@@ -1,10 +1,11 @@
 """Shared pytest fixtures and configuration for MCP Coordinator tests."""
-import sys
 import os
+import sys
 import tempfile
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
+
 import pytest
 
 # Add src to path for all tests
@@ -344,3 +345,91 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip_api_key)
         if skip_docker is not None and "requires_docker" in item.keywords:
             item.add_marker(skip_docker)
+
+
+# ─── the live backend is not a test fixture ──────────────────────────────────
+#
+# On 2026-09-22 a full-suite run wrote **476 messages across 108 sessions** into
+# the production database. Nothing was corrupted and no existing row changed,
+# but the store went from 232 sessions to 340 — and since only 3 of them were
+# ever real conversations, it buried the organic signal under scripted eval
+# traffic.
+#
+# The cause is mundane and was sitting in plain sight: eleven test modules reach
+# `localhost:8000`, four through an `EVAL_BASE_URL` that DEFAULTS to production
+# and seven with the URL hardcoded. `requires_ollama` gates whether such a test
+# RUNS; it says nothing about what the test TOUCHES. So the suite was one
+# reachable backend away from writing to prod, and on a machine where the
+# backend is always up under launchd, that is every run.
+#
+# Fixing the eleven call sites would not stop the twelfth. The guard belongs at
+# the transport, where a test cannot route around it: any HTTP request to a
+# production backend port fails loudly, with the reason, unless the operator has
+# explicitly opted in for that session.
+#
+# Deliberately NOT a skip. A skip would hide the mistake; this makes writing to
+# production an error the author has to read.
+
+PROD_BACKEND_PORTS = {8000}
+_ALLOW_PROD_ENV = "NEPHILIM_ALLOW_PROD_BACKEND"
+
+
+def _is_prod_backend(url: str) -> bool:
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url if "://" in url else f"http://{url}")
+    except Exception:  # noqa: BLE001 - a guard never breaks the run it guards
+        return False
+    if parsed.hostname not in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+        return False
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    return port in PROD_BACKEND_PORTS
+
+
+def _prod_backend_error(url: str) -> RuntimeError:
+    return RuntimeError(
+        f"Test tried to reach the PRODUCTION backend at {url}.\n"
+        f"The live coordinator writes to data/chats.db — a test that talks to it "
+        f"creates real sessions and real messages in the companion's store.\n"
+        f"Point it at a scratch instance instead (EVAL_BASE_URL=http://127.0.0.1:8001 "
+        f"with its own COORDINATOR_DB_PATH), or set {_ALLOW_PROD_ENV}=1 if you "
+        f"genuinely mean to write to production."
+    )
+
+
+@pytest.fixture(autouse=True)
+def _block_production_backend(monkeypatch):
+    """Fail any test that opens an HTTP connection to a production backend port."""
+    if os.environ.get(_ALLOW_PROD_ENV) == "1":
+        return
+
+    import urllib.request
+
+    real_urlopen = urllib.request.urlopen
+
+    def guarded_urlopen(url, *args, **kwargs):
+        target = url.full_url if hasattr(url, "full_url") else str(url)
+        if _is_prod_backend(target):
+            raise _prod_backend_error(target)
+        return real_urlopen(url, *args, **kwargs)
+
+    monkeypatch.setattr(urllib.request, "urlopen", guarded_urlopen)
+
+    try:
+        import httpx
+    except ImportError:
+        return
+
+    for cls, name in ((httpx.Client, "request"), (httpx.AsyncClient, "request")):
+        real = getattr(cls, name)
+
+        def make_guard(real_method):
+            def guarded(self, method, url, *args, **kwargs):
+                if _is_prod_backend(str(url)):
+                    raise _prod_backend_error(str(url))
+                return real_method(self, method, url, *args, **kwargs)
+
+            return guarded
+
+        monkeypatch.setattr(cls, name, make_guard(real))
