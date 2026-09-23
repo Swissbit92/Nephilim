@@ -23,7 +23,9 @@
   "emoji": "🥵💦🍆♠️",
   "model_preferences": {
     "temperature": 0.9,
-    "repeat_last_n": -1
+    "min_p": 0.05,
+    "repeat_penalty": 1.05,
+    "repeat_last_n": 384
   },
   "word_substitutions": {
     "shaft": "cock"

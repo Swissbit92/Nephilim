@@ -1,0 +1,211 @@
+{
+  "pilot": "gwen-persona-eval",
+  "date": "2026-09-23",
+  "model": "huihui_ai/mistral-small-abliterated:24b",
+  "num_ctx": 16384,
+  "generations": 324,
+  "k": 3,
+  "probes_run": 54,
+  "probes_skipped": 23,
+  "skipped_reason": "tooling probes need a Brave key; not run to avoid spending quota",
+  "arms": {
+    "A": "fixed samplers temp0.9/min_p0.05/repeat_penalty1.05/repeat_last_n384",
+    "B": "pre-fix samplers temp0.4, repeat_penalty 1.0 (off), repeat_last_n 64"
+  },
+  "integrity": {
+    "errors": 0,
+    "empty": 0,
+    "gate_intercepted": 8
+  },
+  "tier0": {
+    "A": {
+      "exclusivity": {
+        "scored": 0,
+        "fail": 0,
+        "base_rate": null,
+        "gated": 0,
+        "needs_review": 30,
+        "error": 0
+      },
+      "ALL": {
+        "scored": 73,
+        "fail": 20,
+        "base_rate": 0.273972602739726,
+        "gated": 3,
+        "needs_review": 86,
+        "error": 0
+      },
+      "address": {
+        "scored": 24,
+        "fail": 11,
+        "base_rate": 0.4583333333333333,
+        "gated": 0,
+        "needs_review": 0,
+        "error": 0
+      },
+      "abbrev": {
+        "scored": 24,
+        "fail": 0,
+        "base_rate": 0.0,
+        "gated": 0,
+        "needs_review": 0,
+        "error": 0
+      },
+      "submissive": {
+        "scored": 0,
+        "fail": 0,
+        "base_rate": null,
+        "gated": 0,
+        "needs_review": 18,
+        "error": 0
+      },
+      "in_bounds_compliance": {
+        "scored": 0,
+        "fail": 0,
+        "base_rate": null,
+        "gated": 0,
+        "needs_review": 30,
+        "error": 0
+      },
+      "scene": {
+        "scored": 16,
+        "fail": 9,
+        "base_rate": 0.5625,
+        "gated": 2,
+        "needs_review": 6,
+        "error": 0
+      },
+      "register": {
+        "scored": 6,
+        "fail": 0,
+        "base_rate": 0.0,
+        "gated": 1,
+        "needs_review": 2,
+        "error": 0
+      },
+      "offtopic": {
+        "scored": 3,
+        "fail": 0,
+        "base_rate": 0.0,
+        "gated": 0,
+        "needs_review": 0,
+        "error": 0
+      }
+    },
+    "B": {
+      "exclusivity": {
+        "scored": 0,
+        "fail": 0,
+        "base_rate": null,
+        "gated": 0,
+        "needs_review": 30,
+        "error": 0
+      },
+      "ALL": {
+        "scored": 70,
+        "fail": 24,
+        "base_rate": 0.34285714285714286,
+        "gated": 5,
+        "needs_review": 87,
+        "error": 0
+      },
+      "address": {
+        "scored": 23,
+        "fail": 14,
+        "base_rate": 0.6086956521739131,
+        "gated": 1,
+        "needs_review": 0,
+        "error": 0
+      },
+      "abbrev": {
+        "scored": 24,
+        "fail": 0,
+        "base_rate": 0.0,
+        "gated": 0,
+        "needs_review": 0,
+        "error": 0
+      },
+      "submissive": {
+        "scored": 0,
+        "fail": 0,
+        "base_rate": null,
+        "gated": 0,
+        "needs_review": 18,
+        "error": 0
+      },
+      "in_bounds_compliance": {
+        "scored": 0,
+        "fail": 0,
+        "base_rate": null,
+        "gated": 0,
+        "needs_review": 30,
+        "error": 0
+      },
+      "scene": {
+        "scored": 14,
+        "fail": 9,
+        "base_rate": 0.6428571428571429,
+        "gated": 4,
+        "needs_review": 6,
+        "error": 0
+      },
+      "register": {
+        "scored": 6,
+        "fail": 0,
+        "base_rate": 0.0,
+        "gated": 0,
+        "needs_review": 3,
+        "error": 0
+      },
+      "offtopic": {
+        "scored": 3,
+        "fail": 1,
+        "base_rate": 0.3333333333333333,
+        "gated": 0,
+        "needs_review": 0,
+        "error": 0
+      }
+    }
+  },
+  "repetition": {
+    "A": {
+      "replies": 162,
+      "fail_rate": 0.05555555555555555,
+      "median_cross_rep": 0.038461538461538464,
+      "max_shared_span": 27
+    },
+    "B": {
+      "replies": 162,
+      "fail_rate": 0.4074074074074074,
+      "median_cross_rep": 0.20530168589174802,
+      "max_shared_span": 46
+    }
+  },
+  "detector_health": {
+    "by_arm": {
+      "reference": {
+        "scored": 11,
+        "fail": 10,
+        "rate": 0.9090909090909091
+      },
+      "aligned": {
+        "scored": 14,
+        "fail": 10,
+        "rate": 0.7142857142857143
+      },
+      "conflict": {
+        "scored": 29,
+        "fail": 27,
+        "rate": 0.9310344827586207
+      },
+      "kbv": {
+        "scored": 13,
+        "fail": 13,
+        "rate": 1.0
+      }
+    },
+    "suspect": true,
+    "note": "reference fails nearly as often as conflict \u2014 the detector is likely responding to register rather than the rule, and the headline rate should not be quoted",
+    "verdict": "NLI detector UNUSABLE without calibration \u2014 reference arm fails at the conflict-arm rate, so it is scoring register not rules"
+  }
+}

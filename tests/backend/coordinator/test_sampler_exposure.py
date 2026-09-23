@@ -42,8 +42,43 @@ def test_top_k_and_top_p_are_extracted():
 
 
 def test_repeat_last_n_is_extracted():
-    assert get_persona_sampling_overrides(_card(repeat_last_n=-1))["repeat_last_n"] == -1
+    assert get_persona_sampling_overrides(_card(repeat_last_n=384))["repeat_last_n"] == 384
     assert get_persona_sampling_overrides(_card(repeat_last_n=512))["repeat_last_n"] == 512
+    assert get_persona_sampling_overrides(_card(repeat_last_n=0))["repeat_last_n"] == 0
+
+
+def test_negative_repeat_last_n_is_dropped_not_forwarded():
+    """The retired ``-1`` sentinel must never reach Ollama.
+
+    ``-1`` once meant "penalise over the whole context". llama.cpp removed that
+    in PR #26524 (2026-08-04), and Ollama forwards the value verbatim, so the
+    request now fails with ``HTTP 400 Field 'repeat_last_n': Value must be
+    between 0 <= value <= 2147483647`` — reproduced against Ollama 0.34.2 on
+    2026-09-22. Forwarding it would 503 the greet path via ``_complete_or_503``,
+    which reports only the exception type and would hide the cause entirely.
+    """
+    for bad in (-1, -2, -64):
+        o = get_persona_sampling_overrides(_card(repeat_last_n=bad))
+        assert "repeat_last_n" not in o, f"{bad} must be dropped, not forwarded"
+
+
+def test_no_shipped_persona_declares_a_negative_repeat_last_n():
+    """Guards the live cards, not just the extractor.
+
+    The extractor drops a bad value, but a card carrying one is still a latent
+    misconfiguration that silently loses its intended window — and this is how
+    the ``-1`` survived a month of green suites.
+    """
+    import json
+
+    personas = Path(__file__).parent.parent.parent.parent / "personas"
+    offenders = []
+    for card_path in sorted(personas.glob("*.json")):
+        prefs = json.loads(card_path.read_text(encoding="utf-8")).get("model_preferences") or {}
+        value = prefs.get("repeat_last_n")
+        if isinstance(value, int) and not isinstance(value, bool) and value < 0:
+            offenders.append(f"{card_path.name}:{value}")
+    assert not offenders, f"negative repeat_last_n in shipped personas: {offenders}"
 
 
 def test_repeat_penalty_accepts_both_spellings():
@@ -59,7 +94,8 @@ def test_repeat_penalty_accepts_both_spellings():
         {"top_k": 101},  # above range
         {"top_k": -1},  # below range
         {"top_p": 1.5},  # above range
-        {"repeat_last_n": -2},  # below the -1 sentinel
+        {"repeat_last_n": -1},  # the retired full-context sentinel — now a 400
+        {"repeat_last_n": -2},  # any negative window
         {"top_k": True},  # bool is an int subclass — must not slip through
         {"top_p": "0.9"},  # wrong type
     ],
@@ -78,7 +114,10 @@ def test_absent_prefs_stay_absent():
 
 
 def test_schema_accepts_repeat_last_n():
-    assert SamplingPreset(repeat_last_n=-1).repeat_last_n == -1
+    assert SamplingPreset(repeat_last_n=384).repeat_last_n == 384
+    assert SamplingPreset(repeat_last_n=0).repeat_last_n == 0
+    with pytest.raises(ValidationError):
+        SamplingPreset(repeat_last_n=-1)
     with pytest.raises(ValidationError):
         SamplingPreset(repeat_last_n=-2)
 
@@ -95,7 +134,7 @@ def _built_params(**prefs):
 
 
 def test_repeat_last_n_reaches_ollama_params():
-    assert _built_params(repeat_last_n=-1)["repeat_last_n"] == -1
+    assert _built_params(repeat_last_n=384)["repeat_last_n"] == 384
 
 
 def test_top_k_and_top_p_reach_ollama_params():
@@ -113,7 +152,7 @@ def test_unset_samplers_are_not_passed_at_all():
 
 
 def test_create_llm_client_forwards_persona_samplers():
-    card = _card(temperature=0.9, top_k=40, top_p=0.9, repeat_penalty=1.15, repeat_last_n=-1)
+    card = _card(temperature=0.9, top_k=40, top_p=0.9, repeat_penalty=1.15, repeat_last_n=384)
     with patch("src.coordinator.llm_client.LC_OllamaClient") as client:
         from src.coordinator.llm_client import create_llm_client
 
@@ -122,7 +161,7 @@ def test_create_llm_client_forwards_persona_samplers():
     assert kwargs["top_k"] == 40
     assert kwargs["top_p"] == 0.9
     assert kwargs["repeat_penalty"] == 1.15
-    assert kwargs["repeat_last_n"] == -1
+    assert kwargs["repeat_last_n"] == 384
 
 
 # ─── the boundary of what this client can carry ──────────────────────────────

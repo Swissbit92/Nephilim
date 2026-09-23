@@ -132,8 +132,22 @@ def get_persona_sampling_overrides(persona_card: dict) -> dict:
     but never read here, so a persona setting them had no effect whatsoever.
     ``repeat_last_n`` matters most: Ollama defaults it to 64 tokens (~50
     words), which is long enough to stop a sentence repeating inside one reply
-    and far too short to notice a whole paragraph being reproduced. Passing
-    ``-1`` scales the penalty window to the full context.
+    and far too short to notice a whole paragraph being reproduced.
+
+    **``-1`` is no longer a valid value and is rejected here.** It used to mean
+    "scale the window to the full context", and llama.cpp removed that meaning
+    in PR #26524 (2026-08-04) because back-end sampling constructs samplers
+    before the context length is resolved. Ollama forwards the value verbatim,
+    so ``-1`` now returns ``HTTP 400 Field 'repeat_last_n': Value must be
+    between 0 <= value <= 2147483647`` — verified against Ollama 0.34.2 on
+    2026-09-22. A negative value is dropped (Ollama's own default applies)
+    rather than raised, so a stale card degrades instead of 503-ing a live
+    turn; the drop is logged because silence is how the sentinel survived.
+
+    A full-context window was never the right ask anyway: ``repeat_penalty``
+    is applied to prompt tokens as well as generated ones, flat, with no
+    positional decay (llama.cpp ``llama_sampler_penalties_apply``), so a large
+    window penalises the persona's own pinned voice exemplars forever.
 
     Args:
         persona_card: Persona dictionary from JSON
@@ -170,10 +184,22 @@ def get_persona_sampling_overrides(persona_card: dict) -> dict:
     if isinstance(repeat_penalty, (int, float)) and 1.0 <= repeat_penalty <= 2.0:
         overrides["repeat_penalty"] = float(repeat_penalty)
 
-    # Repeat-penalty lookback window. -1 means "the whole context"; 0 disables.
+    # Repeat-penalty lookback window, in tokens. 0 disables the penalty.
+    # Negative values (the retired -1 "full context" sentinel) are rejected by
+    # the backend with HTTP 400, so drop them loudly and let Ollama's default
+    # stand rather than passing a value that cannot generate.
     repeat_last_n = model_prefs.get("repeat_last_n")
-    if isinstance(repeat_last_n, int) and not isinstance(repeat_last_n, bool) and repeat_last_n >= -1:
-        overrides["repeat_last_n"] = repeat_last_n
+    if isinstance(repeat_last_n, int) and not isinstance(repeat_last_n, bool):
+        if repeat_last_n >= 0:
+            overrides["repeat_last_n"] = repeat_last_n
+        else:
+            logger.warning(
+                "Persona %r sets repeat_last_n=%d; negative values were removed from "
+                "llama.cpp in PR #26524 and now return HTTP 400. Dropping it — Ollama's "
+                "default (64) applies. Set a positive token window instead.",
+                persona_card.get("key", "<unknown>"),
+                repeat_last_n,
+            )
 
     # Top-K
     top_k = model_prefs.get("top_k")
