@@ -33,13 +33,14 @@ def _settings(*, enabled=True, ungated=False):
     return s
 
 
-def _call(intent, *, ungated):
+def _call(intent, *, ungated, classifier_available=True):
     """Invoke _try_tool_brain far enough to observe the gate decision."""
     with patch.object(chat_mod, "get_settings", return_value=_settings(ungated=ungated)):
         return chat_mod._try_tool_brain(
             card={"key": "eeva"}, system="sys", body=MagicMock(message="hi"),
             history=[], intent=intent, metadata=MagicMock(),
             persona_name="EEVA", deps={},
+            classifier_available=classifier_available,
         )
 
 
@@ -137,3 +138,78 @@ def test_guidance_carries_no_voice_language():
     g = chat_mod._SEARCH_TRIGGER_GUIDANCE.lower()
     for banned in ("persona", "in character", "your voice", "roleplay"):
         assert banned not in g
+
+
+# --- ungating requires a working classifier ----------------------------------
+
+
+def _reached_tool_lookup(intent, *, ungated, classifier_available):
+    """Did execution get past the intent gate as far as the registry lookup?
+
+    Same signal the ungated tests above use: with a card granting no web tools the
+    call returns None either way, so the RETURN VALUE cannot distinguish "stopped
+    at the gate" from "passed the gate and found nothing". Whether the registry was
+    consulted can.
+    """
+    with patch.object(chat_mod, "get_settings", return_value=_settings(ungated=ungated)), \
+            patch("coordinator.tools.registry.registry.specs_for_persona") as specs:
+        specs.return_value = []
+        chat_mod._try_tool_brain(
+            card={"key": "eeva"}, system="sys", body=MagicMock(message="hi"),
+            history=[], intent=intent, metadata=MagicMock(),
+            persona_name="EEVA", deps={},
+            classifier_available=classifier_available,
+        )
+        return specs.called
+
+
+def test_ungating_requires_a_working_classifier():
+    """The hole this closes, and it was live: TOOL_BRAIN_UNGATED_WEB=true in prod.
+
+    `ungated_web` is justified by a measured fact — the router silently blocked
+    genuine web queries below its 0.66 threshold, so the model never saw a tool.
+    That argument assumes the router RAN. When bge-m3 is unreachable every turn
+    defaults to NEEDS_NEITHER, and ungating then carried each one into the tool
+    loop, where gwen (image_search + video_search only) answered a weather question
+    by firing image_search — with a Sources block, because a tool had run.
+
+    `check_scope` could not stop it: it reads NEEDS_NEITHER as "no tool required,
+    nothing missing", which is true of a DECISION and false of an OUTAGE.
+
+    So an unclassifiable turn reverts to the gated rule — OWASP's "fail securely":
+    a check that cannot be evaluated resolves to deny, never to allow.
+    """
+    assert not _reached_tool_lookup(
+        QueryIntent.NEEDS_NEITHER, ungated=True, classifier_available=False
+    ), "an unclassifiable turn was still offered the persona's tools"
+
+
+def test_a_classified_conversational_turn_still_proceeds_when_ungated():
+    """The other half — this must NOT become a blanket refusal.
+
+    Measured 2026-09-23: the embedding-free media regex matches none of the six
+    in-surface probe turns, so treating every unclassifiable turn as out-of-surface
+    would deflect all roleplay for the length of an outage. A guard that makes the
+    companion unusable is one that gets switched off (cf. GOV.UK Chat ADR-0003,
+    which accepted guardrail friction only as a deliberate, scoped trade). The
+    fail-closed action here is "offer no tools" — the long-standing gated default —
+    never "refuse to answer".
+    """
+    assert _reached_tool_lookup(
+        QueryIntent.NEEDS_NEITHER, ungated=True, classifier_available=True
+    ), "ungating regressed for turns the classifier DID decide"
+
+
+def test_a_web_intent_is_unaffected_by_classifier_availability():
+    """NEEDS_WEB_SEARCH never depended on the ungating relaxation, so it must not
+    acquire a dependency on classifier health."""
+    assert _reached_tool_lookup(
+        QueryIntent.NEEDS_WEB_SEARCH, ungated=True, classifier_available=False
+    )
+
+
+def test_wallet_stays_denied_regardless():
+    """TB5's non-negotiable invariant, re-pinned across the new axis."""
+    assert not _reached_tool_lookup(
+        QueryIntent.NEEDS_WALLET, ungated=True, classifier_available=False
+    )
