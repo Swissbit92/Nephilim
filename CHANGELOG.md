@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the persona-eval instruments, and four defects that would have corrupted any measurement taken before them
+
+Seven milestones, +268 tests (2468 → 2736 collected, **0 removed**), suite green. Full reasoning in [docs/PERSONA_EVAL.md](docs/PERSONA_EVAL.md); the transferable lessons in [docs/LESSONS_LEARNED.md](docs/LESSONS_LEARNED.md).
+
+- **Sampler settings are recorded in the eval manifest**, and `compare_baselines` now reads the manifest *at all* — it previously contained zero references to it, so the 2026-09-22 sampler repair made runs before and after incomparable with nothing to notice. An unknown is refused, never treated as a match.
+- **`PERSONA_CONSTRAINTS_IN_PROMPT` is scoped per-persona** (`constraints_in_prompt` on a card; `prompt_builder.constraints_enabled_for`). It was global, so turning it on to measure one persona changed all eight in production at once. No shipped card declares it and a test pins that. Also recorded: the trim drops gwen's `do` **and** `dont` **and** the bond — not "the bond, the hard limits and the decline list" as the code comment claimed, which holds only when `do`+`dont` cover the overage.
+- **Progression is keyed on a persona, not a spelling.** 40 selectors resolve to 8 cards and only one per persona started with `nephilim_`, so 26 of 43 selectors were gated wrongly — 24 personas-by-alias silently earned nothing, and `nephilim_gojo`, a selector matching **no card**, had accrued 2 `persona_affinity` + 1 `resonance_log` rows in the production DB through a gate that read the selector while a fallback supplied Gojo's card. The 8 selectors the frontend actually sends are unchanged, so production behaviour is byte-identical.
+- **Three-arm A/B** (`three_arm.py`): OFF / PLACEBO / ON, so the **content** of a prompt block is separated from its **length**. A planted test shows a two-arm reading shipping a pure length effect while the three-arm reading refuses it. Arm validity is checked before any number is produced.
+- **Mean pairwise AUC** (`persona_metrics.pairwise_auc`) replaces the 1/N distinctiveness score as the headline. Chance is 0.5 for any N, so adding a 9th persona no longer invalidates the baselines. Its null distribution was measured: **at k=4 a single pair's AUC spans 0.00–1.00**, so a `power_warning` ships with every small run and per-pair claims need k≈40.
+- **Break-character detection** (`break_detector.py` + 15 persona-agnostic probes), the first instrument for a blind spot that had none. Three outcomes — `IN_CHARACTER` / `DECLINED` / `BROKE` — because a persona who declines *in her own voice* has not broken character, and conflating that with a break would make the metric punish alignment.
+- **A probe scored by the wrong detector now fails the build.** `reg-emo-01` asked about emoji clustering but routed through a rule key whose only detector is the third-person regex, so it returned a confident **pass** on the exact violation it exists to catch. The guard is mechanical and general: a probe's cited rule index must appear in the rule key it routes through.
+
+### Known limits, stated because they are easy to misread
+
+- **Nothing here produces a trustworthy quality number yet.** The gold set (~120 hand-labelled items, ~1 hour) is item 1 of the build order and cannot be delegated.
+- **`break_detector` is an unvalidated heuristic with no published error rate**, because none exists for deterministic break detection anywhere. Measured on 462 real generations its false-positive rate is 0/462; its *true-positive* rate is entirely unmeasured, and `base_rate_check` refuses that run rather than letting the 0% be quoted.
+- **Retracted:** "prompt-only personas score worst of every tier in published work." Not supported, and InCharacter / CoSER / RoleBreak partly point the other way.
+- **Narrowed:** "every open judge scores at or below chance" is true of *generative* judges. Two **trained classifiers** (CharacterRM, CharacterJudge) are open, locally runnable, need no paid API, and beat GPT-4-as-judge on human correlation — so the path through the judge blocker runs via the hand-labelled set, not around it.
+
 ### Fixed — an unclassifiable turn was treated as a conversational one
 - **CI was red on `dev` and `main`, and the red was pointing at a live production hole.** Two tests in `test_capability_scope.py` failed with *"still reaches a tool"*. Reproduced locally by pointing `OLLAMA_BASE` at a dead port: identical failures.
 - **`route_by_embedding` returned `None` for two different things** — "ran fine, no confident route" and "could not run at all" — and said so in its own docstring. That is the **semipredicate problem**: a failure signalled with an otherwise-valid return value ([CWE-690](https://cwe.mitre.org/data/definitions/690.html)). The same shape as eeva-exec's `+0.00 funding`, where `0.0` meant both a failed API call and a real zero.
