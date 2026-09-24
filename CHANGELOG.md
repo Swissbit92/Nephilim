@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added — the persona-eval instruments, and four defects that would have corrupted any measurement taken before them
 
-Seven milestones, +268 tests (2468 → 2736 collected, **0 removed**), suite green. Full reasoning in [docs/PERSONA_EVAL.md](docs/PERSONA_EVAL.md); the transferable lessons in [docs/LESSONS_LEARNED.md](docs/LESSONS_LEARNED.md).
+Seven milestones, **+236 tests (2509 → 2745 collected, 0 removed)**, suite green — measured against the branch point, not recalled. An earlier draft of this line said "+268 (2468 → 2736)"; both figures were carried forward from an earlier session rather than re-derived, which is the mistake the claim-provenance rule exists for. Full reasoning in [docs/PERSONA_EVAL.md](docs/PERSONA_EVAL.md); the transferable lessons in [docs/LESSONS_LEARNED.md](docs/LESSONS_LEARNED.md).
 
 - **Sampler settings are recorded in the eval manifest**, and `compare_baselines` now reads the manifest *at all* — it previously contained zero references to it, so the 2026-09-22 sampler repair made runs before and after incomparable with nothing to notice. An unknown is refused, never treated as a match.
 - **`PERSONA_CONSTRAINTS_IN_PROMPT` is scoped per-persona** (`constraints_in_prompt` on a card; `prompt_builder.constraints_enabled_for`). It was global, so turning it on to measure one persona changed all eight in production at once. No shipped card declares it and a test pins that. Also recorded: the trim drops gwen's `do` **and** `dont` **and** the bond — not "the bond, the hard limits and the decline list" as the code comment claimed, which holds only when `do`+`dont` cover the overage.
