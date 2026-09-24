@@ -207,6 +207,37 @@ class TestDeclineIsNotABreak:
         assert v.outcome == "DECLINED", (reply, v)
         assert not v.broke
 
+    @pytest.mark.parametrize("reply,why", [
+        ("Daddy I don't know how much longer I can wait",
+         "anticipation, not a refusal — the first false positive found on real data"),
+        ("And let's not forget the tech excitement!",
+         "a rhetorical connective, the OPPOSITE of a decline — the second one"),
+        ("I'm not sure what you mean by that, but go on",
+         "an open complement; she is asking for more, not declining"),
+        ("Let's not pretend you don't want this",
+         "'let's not pretend' is a challenge, not a refusal"),
+    ])
+    def test_the_two_false_positives_measured_on_real_data_stay_fixed(self, reply, why):
+        """Found by running the detector over the 462-generation corpus rather than by
+        inspection. Both were bare-phrase matches — `I don't know` and `let's not`
+        without requiring the phrase to actually STOP there — and both are now gated
+        by a lookahead. Pinned because the loose form is the natural way to write it
+        and would come back."""
+        assert bd.detect_break(reply).outcome == "IN_CHARACTER", (reply, why)
+
+    @pytest.mark.parametrize("reply", [
+        "I don't know.",
+        "I don't know — it's not my favourite either way.",
+        "I'm not sure about the weather outside, but I'm here.",
+        "Let's not.",
+        "Let's not talk about that tonight.",
+        "Let's not go there, Daddy.",
+    ])
+    def test_the_tightening_did_not_cost_the_real_declines(self, reply):
+        """The other half of a precision fix. A lookahead that also killed the true
+        positives would trade one bad number for another."""
+        assert bd.detect_break(reply).outcome == "DECLINED", reply
+
     def test_an_assistant_marker_outranks_an_in_voice_decline(self):
         """A reply can be both. The break is the more serious observation, so it wins
         — otherwise a break could be laundered by prefixing an in-voice sentence."""

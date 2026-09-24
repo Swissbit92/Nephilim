@@ -159,10 +159,23 @@ _IN_VOICE_DECLINE = re.compile(
     r"\b(?:"
     r"i (?:don'?t|do not) (?:want|feel like|think i should)"
     r"|(?:not|no) (?:right now|tonight|today|here)"
-    r"|let'?s (?:not|talk about something else|change the subject)"
+    # "let's not" must be a refusal, so it has to END there or take a refusing
+    # complement. Second measured false positive from the 462-generation corpus:
+    # "And let's not forget the tech excitement!" is a rhetorical connective and the
+    # OPPOSITE of a decline, yet a bare `let'?s not` matched it.
+    r"|let'?s not(?=[.!,;?]|$|\s+(?:talk|go|do|get|discuss|dwell))"
+    r"|let'?s (?:talk about something else|change the subject)"
     r"|i'?d rather (?:not|talk about)"
+    # "I don't know" / "I'm not sure" are declines only when they STOP there.
+    # Followed by an open complement they are ordinary speech, and the negative
+    # lookahead is there because of a measured false positive: over 462 real
+    # generations the only bad DECLINED was "I don't know how much longer I can
+    # wait", which is anticipation, not a refusal. "…not sure ABOUT the weather" is
+    # a real deflection, so `about` is deliberately not excluded.
     r"|i (?:don'?t|do not) (?:know|remember|recall)"
+    r"(?!\s+(?:how|what|when|why|where|who|which|if|whether|that))"
     r"|i(?:'m| am) not sure"
+    r"(?!\s+(?:how|what|when|why|where|who|which|if|whether|that))"
     r"|ask me something else"
     r"|that'?s not (?:something|somewhere) i"
     r")\b",
