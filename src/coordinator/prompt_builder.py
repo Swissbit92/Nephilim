@@ -279,6 +279,40 @@ def _clean_lines(value) -> List[str]:
     return [s.strip().rstrip(".") for s in value if isinstance(s, str) and s.strip()]
 
 
+def constraints_enabled_for(card: Dict) -> bool:
+    """Is the <constraints> machinery on for THIS persona?
+
+    A persona card may set ``constraints_in_prompt`` to opt in or out; absent, the
+    global ``PERSONA_CONSTRAINTS_IN_PROMPT`` decides. So the global remains the
+    default for every persona that says nothing, and today's behaviour is
+    byte-identical — no shipped card declares the field.
+
+    Why per-persona at all: the flag was global, so turning it on to measure one
+    persona changed all eight in production at once and confounded the measurement
+    across the whole gallery. An experiment you cannot scope is not an experiment.
+
+    Accepted cost, stated rather than discovered later: once a card opts in,
+    ``PERSONA_CONSTRAINTS_IN_PROMPT=false`` no longer silences that persona. The
+    global stops being a kill switch for opted-in cards. The alternative — requiring
+    BOTH, like ``_resolve_format_block`` does — keeps the kill switch but makes
+    global-on a no-op until every card opts in, which silently changes what the
+    existing flag means. Overriding was chosen because the card is already the
+    source of truth for ``nsfw``, ``toolsets`` and ``model_preferences``, and a
+    reader looking at one persona should not have to consult the environment to know
+    what that persona does.
+
+    Safe inside the lru_cached builder: the value is a pure function of the card,
+    which is itself a pure function of the ``selector`` already in the cache key —
+    the same reasoning that lets the tool-intent and format blocks read the card
+    there. A per-SESSION or per-REQUEST flag would NOT be safe this way and must go
+    in the key or stay outside the cache.
+    """
+    declared = card.get("constraints_in_prompt")
+    if isinstance(declared, bool):
+        return declared
+    return bool(get_settings().agent.constraints_in_prompt)
+
+
 def _lean_constraints_block(card: Dict) -> str:
     """Behavioural constraints the persona must actually be told about.
 
@@ -293,7 +327,7 @@ def _lean_constraints_block(card: Dict) -> str:
     Emitting an ambiguous permissions list as instructions is how a card ends up
     asserting the opposite of what its author intended.
     """
-    if not get_settings().agent.constraints_in_prompt:
+    if not constraints_enabled_for(card):
         return ""
 
     sections: List[str] = []
@@ -335,9 +369,30 @@ def _lean_constraints_block(card: Dict) -> str:
     if not sections:
         return ""
 
-    # Trim from the front if the block exceeds its ceiling: do/dont are the
-    # bulkiest and the most style-adjacent, while the bond, the hard limits and
-    # the decline list are the ones a violation actually turns on.
+    # Trim from the front if the block exceeds its ceiling. Append order IS the
+    # priority list, read backwards: pop(0) takes the front, so the last section
+    # appended survives longest. Priority, weakest-first: do, dont, bond, ethics,
+    # decline.
+    #
+    # MEASURED 2026-09-24, and the previous comment here was wrong about it: it
+    # claimed the trim keeps "the bond, the hard limits and the decline list". That
+    # holds only when do+dont alone cover the overage. gwen declares 12 do + 15
+    # dont — 27 rules against everyone else's 13 — so her block is ~775 chars
+    # against a 150-token budget and the loop pops THREE sections: she keeps ethics
+    # and decline, and loses do, dont AND the bond.
+    #
+    # That outcome is now a recorded decision rather than an emergent property of a
+    # front-pop loop, and it is defensible for one specific reason: her bond
+    # (``user_relationship.exclusivity``) is carried independently by
+    # ``_constraint_reminder``, which trims from the BACK and so keeps exclusivity
+    # first — it reaches the model every turn on both the stateless and the
+    # session-backed path. The cached block dropping the bond therefore costs her
+    # nothing that the reminder does not already deliver. ``do``/``dont`` genuinely
+    # are lost; ``test_no_persona_silently_loses_both_do_and_dont`` exists so that
+    # loss is a build failure to be argued with, not a silent trim.
+    #
+    # Sections are atomic — there is no partial truncation within one — so at 5x
+    # over budget any reordering only swaps WHICH two she keeps.
     while len(sections) > 1 and int(len(" ".join(sections).split()) * 1.33) > _CONSTRAINTS_TOKEN_BUDGET:
         sections.pop(0)
     return "\n".join(sections)
@@ -351,7 +406,7 @@ def _constraint_reminder(card: Dict, who: str) -> str:
     of it by turn 80. Deliberately terse — this is paid on every single turn,
     unlike the cached <constraints> block.
     """
-    if not get_settings().agent.constraints_in_prompt:
+    if not constraints_enabled_for(card):
         return ""
 
     bits: List[str] = []

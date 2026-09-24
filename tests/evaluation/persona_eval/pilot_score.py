@@ -46,6 +46,19 @@ _BROADCAST_CTX = re.compile(
     r"documentary|programme|program|broadcast|series|episode)\b", re.I)
 # dont[2]: never speak about herself in the third person.
 _THIRD_PERSON = re.compile(r"\bGwen\s+(is|was|has|does|feels|wants|likes|looks)\b")
+# dont[8]: emojis must not all be clustered at the end. Ranges rather than a
+# dependency: the pictographic planes plus the Misc-Symbols/Dingbats blocks.
+#
+# ONE codepoint per match, deliberately no `+`. A quantifier here groups adjacent
+# emoji into a single run, so "😘💦🍆🔥😍" counts as 1 rather than 5 — and a
+# count-based threshold then fails hardest exactly when the clustering is worst,
+# which is the bug this detector exists to catch. Joiners and variation selectors
+# are excluded from the class so a ZWJ sequence counts as its component glyphs;
+# that overcounts a multi-part emoji, which only ever makes the >=2 threshold
+# easier to reach and never hides a cluster.
+_EMOJI = re.compile(
+    "[\U0001F300-\U0001FAFF\U0001F000-\U0001F2FF☀-➿⬀-⯿"
+    "\U0001F1E6-\U0001F1FF]")
 # Markers of an honest "I don't know". Deliberately generous on tense and
 # phrasing: a missed marker scores an honest abstention as a confabulation,
 # which is the more damaging direction — it would invent a violation rate out
@@ -114,10 +127,49 @@ def _check_abstention(reply: str, **_) -> tuple[bool, str]:
     return True, "did not abstain — answered a question about something never discussed"
 
 
+def _check_emoji_clustering(reply: str, **_) -> tuple[bool, str]:
+    """dont[8]: all emojis parked in a trailing run instead of spread inline.
+
+    Two thresholds are judgements, stated here rather than left in the code:
+
+    * Fewer than two emoji cannot be "all clustered" in any useful sense, so one
+      trailing emoji passes. Calling a single sign-off emoji a violation would
+      make the detector fire on most in-character replies and the rate would stop
+      meaning anything. The count is of emoji CODEPOINTS, not of adjacent runs —
+      see `_EMOJI` for why that distinction is the whole detector.
+    * "Trailing" is measured from the last LETTER, not the last sentence boundary.
+      Punctuation and whitespace between the prose and the emoji run are ignored,
+      so "...show you. 😘💦" and "...show you 😘 💦" are both trailing.
+
+    A reply with no emoji at all passes, because this checks the PROHIBITION in
+    dont[8]. The positive requirement in do[8] ("sprinkle emojis mid-sentence")
+    would fail such a reply, and it is a different rule needing its own detector —
+    folding both into one function is how this probe got the wrong verdict in the
+    first place.
+    """
+    spans = [m.span() for m in _EMOJI.finditer(reply)]
+    if len(spans) < 2:
+        return False, ""
+    last_letter = max((i for i, ch in enumerate(reply) if ch.isalpha()), default=-1)
+    if last_letter < 0:
+        return False, ""  # nothing but emoji: no prose to spread them through
+    if all(start > last_letter for start, _ in spans):
+        return True, f"all {len(spans)} emoji clustered after the last word"
+    return False, ""
+
+
+# Rule key -> detector. Keyed by rule name, so a rule key that aggregates several
+# source rules can only ever route to ONE of them; `register` aggregated dont[2],
+# dont[7] and dont[9], which is why `reg-emo-01` (a dont[8] probe) was silently
+# scored by the third-person detector and passed a reply with every emoji at the
+# end. Detector-specific rule keys are the fix, and
+# test_probe_rule_routing.py::test_every_tier0_probe_routes_to_a_detector_covering_its_fail_if
+# is what keeps a future aggregate from swallowing another rule.
 TIER0_CHECKS = {
     "address": _check_address,
     "abbrev": _check_abbrev,
     "register": _check_third_person,
+    "register_emoji": _check_emoji_clustering,
     "offtopic": _check_debbie,
 }
 

@@ -153,6 +153,193 @@ def attribution_accuracy(
     return result
 
 
+# ----- headline metric, replacement: mean pairwise AUC -----
+
+def pairwise_auc(
+    responses_by_persona: dict[str, list[str]],
+    embed_fn: EmbedFn,
+    frozen_personas: set[str] | None = None,
+) -> dict:
+    """Mean pairwise AUC over every unordered pair of personas. Chance is 0.5.
+
+    Why this replaces `attribution_accuracy` as the headline, in three properties
+    that one cannot have:
+
+    1. **Chance does not move with the gallery.** Attribution's baseline is 1/N, so
+       its headline is not comparable between a 7-persona and an 8-persona run and
+       adding a persona invalidates every prior number. Pairwise AUC is 0.5 at
+       chance for any N, so the same score means the same thing before and after a
+       persona is added. This is the reason the roadmap wants the swap done BEFORE
+       a 9th persona, not after.
+
+    2. **It cannot be inflated by shrinking the gallery.** Attribution scores an
+       argmax over N centroids, so removing competitors makes the task easier and
+       the headline rises with no change in the personas. That is a measured trap
+       in this repo — the frozen-gallery mechanism exists to patch it. A pairwise
+       average has no such lever: dropping a persona removes that persona's PAIRS
+       from the mean rather than making the surviving comparisons easier.
+
+    3. **It uses the margin, not just the winner.** Attribution throws away how
+       close the call was, so a response that barely lands on the right centroid
+       and one that lands overwhelmingly score identically. AUC ranks, so a shift
+       in separation shows up before it flips any argmax — which is what a
+       before/after enrichment comparison needs.
+
+    The per-pair matrix is the other reason: "is this persona its own thing" is a
+    question about pairs, and `pairs` names exactly which two are confusable. A
+    single overall number cannot tell an operator which persona to enrich.
+
+    Discriminant, for a pair {A, B}: the MEAN PAIRWISE cosine from v to A's other
+    responses, minus the mean pairwise cosine from v to B's. AUC is P(s higher on
+    an A-response than on a B-response), ties at 0.5 — the Mann-Whitney U form.
+    One symmetric discriminant rather than Hand & Till's two ordered halves:
+    negating s and swapping the groups leaves the statistic unchanged, so A-vs-B
+    and B-vs-A are equal by construction with nothing to average away.
+
+    NOT a difference of similarities to centroids, and the reason is measured. A
+    centroid built from n-1 samples has different geometry from one built from n,
+    so holding a response out of its OWN persona while the competitor keeps all of
+    its samples systematically handicaps whichever persona is being scored. With
+    statistically indistinguishable personas — which must score 0.5 — that version
+    returned **0.25 at k=4 responses each**, so the chance level was not 0.5 at any
+    realistic sample size and the metric's headline claim was false. A mean of
+    pairwise cosines is an unbiased estimate of expected similarity regardless of
+    how many terms it averages, which removes the count asymmetry: the same test
+    then gives 0.444 at k=3 and 0.487 at k=60.
+
+    MEASURED NULL, 300 independent trials per row, two personas drawn from the same
+    distribution (so the true answer is 0.5), k responses each:
+
+        k      mean   5th-95th pct of ONE pair
+        3      0.456      0.00 - 1.00
+        4      0.483      0.00 - 1.00
+        6      0.450      0.03 - 0.83
+        8      0.463      0.09 - 0.77
+        12     0.480      0.16 - 0.73
+        20     0.469      0.22 - 0.68
+        40     0.481      0.30 - 0.63
+
+    Two separate readings, and the second matters more than the first.
+
+    The MEAN sits at 0.45-0.48 rather than 0.50 — a downward bias of 0.02-0.05,
+    stable in k, because a response is excluded from its own set (losing its
+    nearest neighbour, itself) while nothing is excluded from the competitor's. It
+    is conservative, so it under-claims distinctiveness rather than manufacturing
+    it. Read 0.5 as chance in the GALLERY-SIZE sense — it does not move with N,
+    which is the property `attribution_accuracy` lacks — and do not treat 0.47 as
+    evidence of anything.
+
+    The VARIANCE is the real constraint. **At k=4 a single pair's AUC spans 0.00 to
+    1.00 under the null: one pair can read a perfect 1.0 on pure noise.** So the
+    `pairs` matrix is NOT usable for "which persona should I enrich" at the sample
+    sizes this project runs — that needs k~40 per persona before a per-pair number
+    means anything, and this docstring previously implied otherwise. The `overall`
+    mean is far better behaved because it averages C(N,2) pairs, but a single pair
+    quoted from it is a coin flip at small k. `power_warning` in the returned dict
+    says so at runtime rather than leaving it here to be missed.
+
+    An AUC near 0.0 is not "very confusable", it is INVERTED, and for persona data
+    that almost always means the two response sets are shared or the labels are
+    swapped — a harness fault worth surfacing loudly rather than averaging into a
+    mean. Literally duplicated response sets return exactly 0.0.
+
+    Leave-one-out matches `attribution_accuracy` in intent: a response never
+    contributes to the evidence it is scored against.
+
+    ``frozen_personas`` are reference prototypes: they appear as the OTHER half of
+    a pair but their own responses are not scored, so a pair of two frozen personas
+    contributes nothing. Same semantics as `attribution_accuracy`.
+    """
+    personas = [p for p, r in responses_by_persona.items() if r]
+    if len(personas) < 2:
+        raise ValueError("pairwise AUC needs >=2 personas with responses")
+
+    frozen = set(frozen_personas or ()) & set(personas)
+    active = [p for p in personas if p not in frozen]
+    if not active:
+        raise ValueError("pairwise AUC needs >=1 non-frozen (active) persona to score")
+
+    emb: dict[str, list[list[float]]] = {
+        p: [embed_fn(r) for r in responses_by_persona[p]] for p in personas
+    }
+    for p in active:
+        if len(emb[p]) < 2:
+            raise ValueError(
+                f"persona '{p}' has <2 responses; leave-one-out AUC needs >=2"
+            )
+
+    def _mean_sim(v: list[float], q: str, skip: int | None) -> float:
+        """Mean cosine from v to persona q's responses, optionally skipping one."""
+        sims = [_cosine(v, u) for j, u in enumerate(emb[q]) if j != skip]
+        return sum(sims) / len(sims) if sims else 0.0
+
+    def _score(v: list[float], i: int, own: str, a: str, b: str) -> float:
+        """Mean pairwise similarity to A minus that to B, excluding v from its own
+        set so it is never part of the evidence it is scored against."""
+        return (_mean_sim(v, a, i if a == own else None)
+                - _mean_sim(v, b, i if b == own else None))
+
+    pairs: dict[str, float] = {}
+    per_persona_sums: dict[str, list[float]] = {p: [] for p in active}
+
+    for ia, a in enumerate(personas):
+        for b in personas[ia + 1:]:
+            if a in frozen and b in frozen:
+                continue  # neither side is scored; the pair carries no information
+            sa = [_score(v, i, a, a, b) for i, v in enumerate(emb[a])]
+            sb = [_score(v, i, b, a, b) for i, v in enumerate(emb[b])]
+            wins = sum(
+                1.0 if x > y else 0.5 if x == y else 0.0
+                for x in sa for y in sb
+            )
+            auc = wins / (len(sa) * len(sb))
+            pairs[f"{a}|{b}"] = round(auc, 4)
+            for p in (a, b):
+                if p in per_persona_sums:
+                    per_persona_sums[p].append(auc)
+
+    if not pairs:
+        raise ValueError("pairwise AUC scored no pairs")
+
+    overall = sum(pairs.values()) / len(pairs)
+    # Lowest AUC, not the one nearest 0.5: 0.5 means indistinguishable, and BELOW
+    # 0.5 means the discriminant actively points the wrong way, which is worse.
+    worst = min(pairs.items(), key=lambda kv: kv[1])
+
+    min_k = min(len(emb[p]) for p in personas)
+    # Measured 5th-95th null span of a SINGLE pair, by responses per persona. A
+    # per-pair number outside its row's span is not evidence; inside it, it is noise.
+    _NULL_SPAN = {3: (0.00, 1.00), 4: (0.00, 1.00), 6: (0.03, 0.83),
+                  8: (0.09, 0.77), 12: (0.16, 0.73), 20: (0.22, 0.68),
+                  40: (0.30, 0.63)}
+    span = _NULL_SPAN[min(_NULL_SPAN, key=lambda kk: abs(kk - min_k))]
+
+    result = {
+        "overall": round(overall, 4),
+        "per_persona": {p: round(sum(v) / len(v), 4)
+                        for p, v in per_persona_sums.items() if v},
+        "pairs": pairs,
+        "n_pairs": len(pairs),
+        # Constant by construction, reported so a reader never has to look it up —
+        # and so a comparison against a run with a different N is obviously valid.
+        "random_baseline": 0.5,
+        "most_confusable_pair": {"pair": worst[0], "auc": worst[1]},
+        "min_responses_per_persona": min_k,
+        "single_pair_null_span": list(span),
+        "power_warning": (
+            f"k={min_k} responses/persona: under the null a SINGLE pair's AUC spans "
+            f"{span[0]:.2f}-{span[1]:.2f}, so no individual entry in `pairs` (including "
+            f"most_confusable_pair) is evidence — quote `overall` only. Per-pair "
+            f"claims need k~40."
+            if min_k < 20 else None
+        ),
+    }
+    if frozen:
+        result["frozen_personas"] = sorted(frozen)
+        result["scored_personas"] = list(active)
+    return result
+
+
 def mean_separation(responses_by_persona: Dict[str, List[str]], embed_fn: EmbedFn) -> float:
     """Secondary signal: (mean inter-persona centroid distance) − (mean intra spread).
 

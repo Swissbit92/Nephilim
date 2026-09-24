@@ -11,7 +11,8 @@ the confusable dormant neighbours stay live competitors.
 This is closed-set identification against a fixed gallery / a frozen-prototype
 NCM classifier. It is valid ONLY while the dormant personas' voices are unchanged
 — so every gallery carries a **manifest** (embedding model, companion model,
-prompt-builder version, per-persona definition hashes) and a staleness check
+prompt-builder version, per-persona definition hashes, and the RESOLVED sampler
+settings) and a staleness check
 refuses on an embedding-model change (frozen vectors would live in a different
 space) and warns on dormant-persona / model drift. See the README + the
 compare_baselines commensurability guard.
@@ -34,12 +35,44 @@ _BASELINE_DIR = Path(__file__).parent / "baselines"
 # gallery frozen under the old builder is flagged stale.
 PROMPT_BUILDER_VERSION = "lean-v1"
 
+# Manifest schema version. Bump when a field is ADDED to the comparability set, so
+# every artifact written before the bump is explicitly incomparable rather than
+# silently missing a check.
+#
+# v2 (2026-09-24) adds `sampling`. Measured cause: the 2026-09-22 sampler repair
+# changed what actually reached the model (tool-brain prose temperature 0.4 -> the
+# card's 0.9, repeat_penalty 1.0 -> 1.05, repeat_last_n 64 -> 384) and NOTHING in
+# any artifact recorded it. The v1 manifest cannot express the axis that moved, so
+# "absent" here must read as "incomparable", never as "nothing to check" — that
+# equivalence is exactly how the blind spot survived.
+MANIFEST_SCHEMA_VERSION = 2
+
+# Explicit sentinel for an artifact written before a comparability field existed.
+# Deliberately not None and not absent: a reader must be able to tell "recorded and
+# equal", "recorded and different", and "never recorded" apart, and only the last
+# one may not be treated as agreement.
+UNRECORDED = "unrecorded_pre_v2"
+
 
 # ----- hashing / manifest (pure) -----
 
 
 def _sha16(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def sampling_fingerprint(sampling: Optional[dict]) -> str:
+    """Stable hash of a sampling record, or UNRECORDED when there is none.
+
+    Hashed over canonical JSON (sorted keys) rather than the dict's repr, because
+    ``get_persona_sampling_overrides`` emits a VARIABLE key set — every key except
+    temperature appears only when the persona or a global fallback sets one — so
+    dict ordering is not stable across runs and an order-sensitive hash would
+    report spurious mismatches.
+    """
+    if not sampling:
+        return UNRECORDED
+    return _sha16(json.dumps(sampling, sort_keys=True, separators=(",", ":")))
 
 
 def persona_def_hash(persona_key: str, persona_dir: Optional[Path] = None) -> Optional[str]:
@@ -57,20 +90,40 @@ def build_manifest(
     companion_model: str,
     persona_dir: Optional[Path] = None,
     prompt_builder_version: str = PROMPT_BUILDER_VERSION,
+    sampling: Optional[Dict[str, dict]] = None,
+    sampling_env: Optional[dict] = None,
 ) -> dict:
     """Content-addressed record of everything the frozen centroids depend on.
 
     Checked before a gallery is trusted (see ``check_staleness``): an artifact is
     only comparable to a later run when these inputs still match.
+
+    ``sampling`` is the RESOLVED per-persona override dict, not the card's declared
+    ``model_preferences``. The distinction is the point: declared and effective
+    differ wherever a global fallback fills in (``PERSONA_TEMPERATURE``,
+    ``OLLAMA_MIN_P``) or a value is out of range and dropped rather than clamped.
+    ``persona_def_hashes`` already covers the declared half — it hashes the whole
+    card file — so recording the declaration again would add nothing, while the
+    resolved dict covers the half no file hash can see.
+
+    ``sampling_env`` holds the run-level knobs that are not per-persona at all
+    (context window, output cap, completion backend). The completion backend
+    matters more than it looks: on the legacy path ``min_p`` never reaches the wire
+    unless it is ``http``, so two runs can record an identical ``min_p`` and have
+    sent different things.
     """
     ps = sorted(personas)
     return {
+        "manifest_schema_version": MANIFEST_SCHEMA_VERSION,
         "n_personas": len(ps),
         "personas": ps,
         "embedding_model": embedding_model,
         "companion_model": companion_model,
         "prompt_builder_version": prompt_builder_version,
         "persona_def_hashes": {p: persona_def_hash(p, persona_dir) for p in ps},
+        "sampling": sampling if sampling else None,
+        "sampling_env": sampling_env if sampling_env else None,
+        "sampling_fingerprint": sampling_fingerprint(sampling),
     }
 
 
@@ -114,6 +167,27 @@ def check_staleness(
         warnings.append(
             "prompt builder version changed since the gallery was frozen: dormant "
             "voices may have drifted"
+        )
+
+    # Sampler drift. A WARNING here, not an error, and deliberately so: this
+    # function guards the frozen GALLERY (are the dormant centroids still valid),
+    # and samplers move the VOICE, not the embedding SPACE — the same reasoning that
+    # makes companion_model advisory. The hard refusal for comparing two finished
+    # baselines across a sampler change belongs in compare_baselines, which is where
+    # commensurability is decided and where — until now — the manifest was never
+    # read at all.
+    cur_fp = current.get("sampling_fingerprint", UNRECORDED)
+    gal_fp = gallery.get("sampling_fingerprint", UNRECORDED)
+    if gal_fp == UNRECORDED and cur_fp != UNRECORDED:
+        warnings.append(
+            "gallery predates sampler recording (manifest schema "
+            f"v{gallery.get('manifest_schema_version', 1)}): cannot verify the frozen "
+            "voices were generated under the current sampler settings"
+        )
+    elif cur_fp != gal_fp:
+        warnings.append(
+            f"sampler settings changed since the gallery was frozen ({gal_fp} -> "
+            f"{cur_fp}): dormant voices may have drifted"
         )
 
     # Per-dormant-persona definition drift.
@@ -221,10 +295,38 @@ def default_manifest(
         sys.path.insert(0, str(src))
     from coordinator.config import get_settings  # type: ignore
 
+    from coordinator.config import get_persona_sampling_overrides  # type: ignore
+
     s = get_settings()
+    pdir = persona_dir or _PERSONA_DIR
+
+    # Resolve each persona's EFFECTIVE overrides the same way routes/chat.py does.
+    # Honest limitation, stated here because it is the failure this whole field
+    # exists to prevent: this resolves in the HARNESS process, so it records what
+    # this process's settings + cards would produce, not what the live server
+    # actually sent. A server on a different `.env` would disagree, and nothing
+    # here can see that — which is why transport_preflight.verify_resolved_config
+    # exists and should be run alongside.
+    sampling: Dict[str, dict] = {}
+    for key in sorted(personas):
+        f = pdir / f"{key}.json"
+        if not f.exists():
+            continue
+        try:
+            card = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001 - a malformed card must not break the manifest
+            continue
+        sampling[key] = get_persona_sampling_overrides(card)
+
     return build_manifest(
         personas,
         embedding_model=s.memory.embedding_model,
         companion_model=s.ollama.model,
         persona_dir=persona_dir,
+        sampling=sampling or None,
+        sampling_env={
+            "context_window": s.ollama.context_window,
+            "max_output_tokens": s.ollama.max_output_tokens,
+            "completion_backend": getattr(s.ollama, "completion_backend", None),
+        },
     )
