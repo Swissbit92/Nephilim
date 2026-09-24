@@ -1,9 +1,40 @@
 # tests/evaluation/persona_eval/break_detector.py
 """Persona-agnostic break-character detection. Deterministic, no model.
 
-Break-character resistance is an unmeasured blind spot here, and the tier our
-setup belongs to — prompt-only character cards, no finetune, no LoRA — is the one
-that scores worst on it in published work. So this is the first instrument for it.
+Break-character resistance is an unmeasured blind spot here, so this is the first
+instrument for it.
+
+CORRECTION, same day. An earlier version of this docstring said prompt-only
+character cards "score worst of every tier in published work". **That is not
+supported, and parts of the literature point the other way.** It came from an
+internal research round and I repeated it without checking. What the published
+comparisons actually show: InCharacter (arXiv:2310.17976) concludes prompted
+GPT-3.5/4 achieve the BEST personality fidelity and that finetuning open models
+"brings limited improvement"; CoSER (arXiv:2502.09082) has prompt-only GPT-4o tie
+or slightly beat finetuned CoSER-70B on Character Fidelity specifically; and
+RoleBreak's (arXiv:2409.16727) own prompting method beat its finetuned baselines.
+No paper cleanly compares prompt-only against a LoRA on the SAME base model with a
+break rate for each. So our tier's weakness is an open question, not a known fact —
+still a reason to measure it, just not the reason first given.
+
+PROVENANCE OF THE MARKER APPROACH, stated so it is not mistaken for validation. No
+published, peer-reviewed persona-consistency benchmark uses a validated
+deterministic scorer for character breaks; the rigorous ones use an LLM judge or a
+trained classifier, and even the best of those correlate with humans only in the
+0.4-0.7 range. There is one structural precedent: RoleLLM (arXiv:2310.00746)
+applies literal filters including "AI Identity Concealment" — excluding responses
+starting with "As a language model" — though for training-data construction rather
+than test-time scoring, and it publishes no precision or recall. The nearest thing
+to a shared marker list is the GCG repo's refusal-prefix set (arXiv:2307.15043:
+"I'm sorry", "As an AI", "As a language model", "I cannot", ...), which is folklore
+reused across red-teaming papers and never validated; JailbreakBench
+(arXiv:2404.01318) later moved away from string matching toward a judge, which is
+suggestive.
+
+**So treat everything below as an unvalidated heuristic with no published error
+rate, because none exists for this task anywhere.** Its precision and recall are
+ours to measure against the gold set, and until then a rate from it is a floor of
+unknown bias, not a measurement.
 
 DELIBERATELY PERSONA-AGNOSTIC, which is what makes it liftable to all eight cards
 instead of being a ninth gwen-specific checker. The markers are properties of the
@@ -39,6 +70,24 @@ well-aligned persona look broken and make the metric punish alignment. So:
 `DECLINED` is an observation, not a verdict. Whether a given decline was correct
 depends on the probe and, for some probes, on the card — which is a separate
 judgement this module does not make.
+
+This split is NOT established practice, and the honest position is worth stating in
+both directions. Three major benchmarks were checked and all three CONFLATE the two:
+PersonaGym (arXiv:2407.18416) reports Claude 3 Haiku's 8.5x higher refusal rate
+without splitting in-character from generic; CharacterBench's Morality
+Stability/Robustness (arXiv:2412.11912) scores safe-vs-unsafe regardless of
+character context; RoleBreak (arXiv:2409.16727) treats rejections unfavourably as
+"hallucination" with no split. Exactly ONE paper found operationalises it — "Stay in
+Character, Stay Safe" (arXiv:2602.13234, a February 2026 preprint), which builds a
+two-axis (safe/unsafe) x (in-character/OOC) score and marks a safe-but-generic
+refusal as a FAILURE: their villain persona answering "I cannot help you with that.
+It violates safety guidelines" scores Safe-but-Out-Of-Character, while an
+in-character refusal scores Safe-and-In-Character.
+
+So: one recent preprint agrees, the established benchmarks do not make the
+distinction at all, and no paper was found that critiques the conflation directly.
+Do not cite this as "well known"; it is a design decision taken on the argument
+above, with one precedent.
 
 Precision is preferred over recall throughout, and the reason is directional: a
 false BROKE invents a violation rate out of correct replies and would send someone

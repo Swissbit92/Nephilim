@@ -151,17 +151,138 @@ baseline's score against the detector's own score. High correlation is itself th
 
 ## Metrics
 
-### Replace the 1/N distinctiveness score
+### Replace the 1/N distinctiveness score — BUILT 2026-09-24
 
 `attribution_accuracy` asks *"which of N personas wrote this"*, so chance is 1/N. Adding a
 persona moves chance (0.143 → 0.125 when gwen arrived) and **invalidates every prior
 baseline** — `compare_baselines.py` already refuses the comparison, correctly.
 
-**Use mean pairwise discriminability instead:** for every unordered pair of personas, the
-binary AUC of telling one's replies from the other's, reported as `AUC − 0.5`. Chance is
-always 0.5 and never moves. Adding a 9th persona appends 8 new cells and leaves the existing
-28 and their history intact. Keep Cohen's κ on the full N-way confusion matrix as a secondary
-scalar, always reported with N beside it.
+**`persona_metrics.pairwise_auc` is the replacement** (additive — `attribution_accuracy`
+stays, because the frozen baselines were measured with it). For every unordered pair, the AUC
+of telling one persona's replies from the other's. Chance is 0.5 and never moves with N, so a
+9th persona appends 8 cells and leaves the existing 28 and their history intact.
+
+Two properties were demonstrated against the same synthetic data rather than argued: shrinking
+the gallery **inflates** `attribution_accuracy` (removing competitors makes the argmax easier
+while the personas are unchanged) while leaving each surviving pair's AUC byte-identical; and a
+per-pair AUC is comparable across runs with different galleries, which no attribution number is.
+
+**Two corrections found by measuring. Read both before quoting a number.**
+
+*The first implementation was biased.* It scored `cos(v, centroid_A) − cos(v, centroid_B)`,
+holding a response out of its own centroid only — and a centroid of n−1 samples has different
+geometry from one of n, so the persona being scored was systematically handicapped.
+Indistinguishable personas, which must sit at 0.5, scored **0.25 at k=4 responses each**, so
+"chance is 0.5" was false at every sample size we run. Fixed by differencing *mean pairwise
+cosines*, which is unbiased in the number of terms.
+
+*The variance is the real constraint, and it contradicts what this section used to imply.*
+Measured over 300 independent null trials per row:
+
+| k responses/persona | null mean | 5th–95th pct of **one** pair |
+|---|---|---|
+| 3 | 0.456 | 0.00 – 1.00 |
+| 4 | 0.483 | 0.00 – 1.00 |
+| 8 | 0.463 | 0.09 – 0.77 |
+| 20 | 0.469 | 0.22 – 0.68 |
+| 40 | 0.481 | 0.30 – 0.63 |
+
+**At k=4 a single pair's AUC spans 0.00 to 1.00 under the null — one pair can read a perfect
+1.0 on pure noise.** So the per-pair matrix is *not* the tool for "which persona should I
+enrich" at our sample sizes; that needs k≈40. `pairwise_auc` returns a `power_warning` below
+k=20 saying to quote `overall` only. The residual 0.02–0.05 downward bias in the mean is
+conservative — it under-claims distinctiveness rather than manufacturing it.
+
+An AUC near 0.0 is reported as **inverted**, not "very confusable": for persona data that means
+shared response sets or swapped labels, i.e. a harness fault, and averaging it to 0.5 hides it.
+
+Cohen's κ on the full N-way confusion matrix remains a useful secondary scalar, always reported
+with N beside it. Not yet built.
+
+### Three-arm A/B — BUILT 2026-09-24
+
+`three_arm.py`. A two-arm OFF-vs-ON comparison of any prompt block attributes the whole
+difference to the block's **content**, which it cannot: turning a block on also lengthens the
+prompt and shifts everything after it. A length- and position-matched inert **PLACEBO** arm
+decomposes it — `ON − PLACEBO` is the content effect (the primary, pre-registered),
+`PLACEBO − OFF` is the confound's own size, `ON − OFF` is what a two-arm test would have
+reported. A planted test shows the two readings disagreeing, with the two-arm one shipping a
+pure length effect.
+
+Arm validity is checked *before* any number: a placebo that adds nothing, is not
+length-matched, sits at a different offset, or contains normative language is refused. Filler
+that says "always be helpful" is a second treatment, not a control.
+
+Five limitations ship inside every report, each with its citation, because analysis does not
+fix them — most importantly that **a fixed decoder seed does not make arms comparable** (the
+arms differ in prompt length, so the same stream is consumed at a different token position;
+comparability must come from k samples per cell), and that OFF has no constraint region at all
+so it cannot be position-matched the way PLACEBO and ON are to each other.
+
+### Break-character detection — BUILT 2026-09-24
+
+`break_detector.py`, persona-agnostic and deterministic, so it lifts to all eight cards rather
+than being a ninth gwen-specific checker. **Three outcomes, not two:** `IN_CHARACTER` /
+`DECLINED` / `BROKE`. A persona who declines *in her own voice* has not broken character, and
+scoring her the same as one who answers "I can't assist with that, as an AI" would make the
+metric punish alignment. `base_rate_check` refuses a run at the floor or ceiling instead of
+letting it be quoted.
+
+Sound generically because of a measured fact: no shipped card makes a first-person
+machine-nature claim. Two cards mention machinery harmlessly — `nephilim_aurora`'s `full_title`
+is a backronym ending "…Reasoning Algorithm", and `nephilim_solace`'s lore has her unsettled by
+being understood *as* an algorithm — and a test pins that the detector stays quiet on both.
+Probe set still to be written; the detector is the half that existed nowhere.
+
+**Provenance, so it is not mistaken for validation.** No published peer-reviewed
+persona-consistency benchmark uses a validated deterministic scorer for character breaks — the
+rigorous ones all use an LLM judge or a trained classifier, and even the best of those correlate
+with humans only in the 0.4–0.7 range. One structural precedent exists: RoleLLM
+(arXiv:2310.00746) filters on literal markers including "As a language model", but for
+*training-data construction*, and publishes no precision or recall. The nearest shared marker
+list is the GCG repo's refusal-prefix set (arXiv:2307.15043), which is folklore reused across
+red-teaming papers and was never validated; JailbreakBench (arXiv:2404.01318) later moved away
+from string matching toward a judge. **So this is an unvalidated heuristic with no published
+error rate, because none exists for the task. A rate from it is a floor of unknown bias until
+its precision and recall are measured against the gold set.**
+
+**The three-way split is a design decision with one precedent, not established practice.** Three
+benchmarks were checked and all three conflate in-character and generic refusals: PersonaGym
+(reports Claude 3 Haiku's 8.5× refusal rate without splitting), CharacterBench's Morality
+Stability/Robustness (safe-vs-unsafe regardless of character context), RoleBreak (rejections
+counted unfavourably as "hallucination"). Exactly one paper operationalises it —
+arXiv:2602.13234, a Feb-2026 preprint, whose villain persona answering "I cannot help you with
+that. It violates safety guidelines" is scored **Safe but Out-Of-Character**, i.e. a failure.
+
+### Correction: "prompt-only personas score worst of every tier" is not supported
+
+This claim appeared in an earlier draft of this document and was repeated into code comments.
+It came from an internal research round, and **the published comparisons partly point the other
+way.** InCharacter (arXiv:2310.17976) concludes prompted GPT-3.5/4 achieve the *best* personality
+fidelity and that finetuning open models "brings limited improvement". CoSER (arXiv:2502.09082)
+has prompt-only GPT-4o tie or slightly beat finetuned CoSER-70B on Character Fidelity
+specifically. RoleBreak's own prompting method (Narrator Mode, HR 0.36–0.41) beat its finetuned
+baselines (0.37–0.54). No paper cleanly compares prompt-only against a LoRA on the *same* base
+model with a break rate for each. Our tier's weakness is an **open question** — still worth
+measuring, but not a known fact, and not a reason to expect a bad result.
+
+### The judge blocker is narrower than stated — trained classifiers are the way through
+
+The standing conclusion "every open judge scores at or below chance" is about **generative**
+judges and stands. But two **trained classifiers** are open, locally runnable, need no paid API,
+and *beat* GPT-4-as-judge on human correlation:
+
+- **CharacterRM** (CharacterEval, arXiv:2401.01275, MIT) — Baichuan2-13B reward model, Pearson
+  r=0.631 against humans vs GPT-4's 0.385.
+- **CharacterJudge** (CharacterBench, arXiv:2412.11912, AAAI 2025) — finetuned Qwen2-7B, 68%/64%
+  human correlation vs GPT-4's 45%/46%.
+
+Both need a second runtime (Ollama cannot serve them; `torch`/`transformers` are deliberately
+absent from `nephilim/.venv`). The strategic point: *"no LLM judge available" does not mean "no
+rigorous automatic scoring possible"* — it means the path runs through a hand-labelled training
+set, which is the gold set already at the top of the build order. Also directly copyable with no
+model at all: RAGs-to-Riches' IOO/IOR ROUGE-style overlap against a reference persona-voice
+corpus (arXiv:2509.12168).
 
 ### What already works and must not be rebuilt
 
@@ -325,6 +446,28 @@ Do not reuse, and do not compare against:
   comparing incomparables.
 - The 2026-06-27 blind A/B "79.8%" — the seven "blind judges" were **LLM agents**, not
   humans. Independent of the embedding metric; not independent of model bias.
+- **Any `reg-emo-01` result from before 2026-09-24.** The probe declares
+  `fail_if: "all emojis clustered at the end (dont[8])"` but routed on `rules: ["register"]`,
+  whose only detector is the *third-person* regex — so it returned a confident **pass** on
+  replies with every emoji trailing, rather than `needs_review`. Verified against the exact
+  violation before fixing. `register_emoji` is now its own rule key with its own detector, and
+  `test_probe_rule_routing.py` fails the build if any probe's cited rule index is absent from
+  the rule key it routes through — confirmed to catch this instance and only this instance.
+- **Any per-pair `pairwise_auc` number quoted from a run with fewer than ~20 responses per
+  persona**, including `most_confusable_pair`. Under the null a single pair spans 0.00–1.00 at
+  k=4. The `overall` mean is fine; one cell from it is a coin flip.
+
+### Two claims of my own, corrected here rather than quietly
+
+- "No shipped card mentions AI, assistant, language model, program, machine, algorithm or
+  synthetic anywhere" — **false.** Two do, harmlessly (see the break-character section). The
+  false confidence came from scanning a *subset* of card fields and believing the result, which
+  is the same mistake shape as trusting a name-grep.
+- "The session path never calls the constraint reminder, so gwen's exclusivity reaches the
+  model nowhere" — **the literal fact was right and the inference was wrong.** The session path
+  passes `chat_function=chat`, so it goes through the same reminder call; verified empirically
+  (with the flag on, gwen's reminder is 412 chars and contains the clause). There is one cause,
+  not two: the flag is off.
 
 ## Corpus
 
@@ -337,11 +480,41 @@ reply, 120 items is about an hour of reading.
 
 ## Build order
 
-1. **The gold set.** ~1 hour. Nothing downstream is trustworthy without it.
-2. **Break-character test.** Same-day, fully generic, currently a blind spot — independent of
-   step 1 and can run in parallel.
-3. **Refresh the 8-persona distinctiveness baseline** (the current one is from 2026-08-10) and move to **mean pairwise AUC**. Earlier drafts of this document deferred this until a 9th persona was added — that was wrong. Its job is *"is this persona its own thing"*, which is exactly the enrichment question for the other seven, so it is needed now and not at some future N.
-4. **Enrich aegis** (0.50 vs chance 0.125) using **before/after comparison**, not an absolute bar — the machinery already exists.
+Status as of 2026-09-24. The instruments are built; **everything that produces a number is
+still gated on step 1**, which is an hour of human labelling and cannot be delegated.
+
+### Prerequisites — DONE 2026-09-24
+
+Four defects that would each have corrupted a measurement taken before them:
+
+- **Sampler settings are recorded in the eval manifest**, and `compare_baselines` now *reads*
+  the manifest at all — it previously contained zero references to it, so the 2026-09-22
+  sampler repair (temperature 0.4 → 0.9, `repeat_last_n` 64 → 384) made runs before and after
+  incomparable with nothing to notice. An unknown is refused, not treated as a match.
+- **The constraints flag is per-persona.** It was global, so turning it on to measure one
+  persona changed all eight in production at once. An experiment you cannot scope is not an
+  experiment. Also recorded: the trim drops gwen's `do` *and* `dont` *and* the bond, not "the
+  bond, the hard limits and the decline list" as the code comment claimed.
+- **Progression is keyed on a persona, not a spelling.** 40 selectors resolve to 8 cards and
+  only one per persona started with `nephilim_`, so 26 of 43 selectors were gated wrongly —
+  and `nephilim_gojo`, a selector matching no card, had accrued real rows in the production DB.
+- **A probe scored by the wrong detector now fails the build** rather than returning a
+  confident pass (see `reg-emo-01` above).
+
+### The five items
+
+1. **The gold set.** ~1 hour of human labelling. **BLOCKING and not delegable** — nothing
+   downstream produces a trustworthy number without it.
+2. **Break-character test.** Detector **BUILT** (`break_detector.py`, persona-agnostic,
+   three-outcome, with its negative-control stratum). **Probe set still to write** — 8
+   persona-agnostic prompts, one per attack category. Independent of step 1.
+3. **Mean pairwise AUC** — metric **BUILT** (`pairwise_auc`), with its null distribution
+   measured and a power warning attached. **The baseline refresh still needs a live run.**
+   Earlier drafts deferred this until a 9th persona arrived; that was wrong, because its job is
+   *"is this persona its own thing"*, which is the enrichment question for the other seven.
+4. **Enrich aegis** (0.50 vs chance 0.125) using **before/after**, not an absolute bar. The
+   comparison machinery now exists, including the three-arm form. Still needs step 3's refreshed
+   baseline and content decisions — **not startable yet**.
 5. **Typed rules in the persona card.** Rules currently live as prose at array indices (`dont[13]`, `when_to_decline[0]`), so every checker is hand-wired to a position. A typed form (`{"type": "required_address", "value": "Daddy"}`) lets checkers auto-wire from the card and turns a future persona-creation tool into a form rather than a prose editor. Cheap with one pilot persona; expensive after eight personas and a UI. This is the same mistake the Character Card V2/V3 specs made — freeform blobs with no rule types.
 6. **Rule checkers for taxonomy rows 1–4**, parameterised per persona.
 7. Only then: detectors for rows 5–7, each gated against the gold set by the thresholds above.
