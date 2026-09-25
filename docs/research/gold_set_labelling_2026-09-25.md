@@ -5,7 +5,7 @@ created: 2026-09-25
 last_reviewed_on: 2026-09-25
 review_in: 6 months
 applies_to: nephilim
-ai_summary: Read before building any human-labelling tool, or before trusting the gold-set protocol in PERSONA_EVAL.md. Records the decided delivery route (Telegram group chat, one question, two buttons, on a phone) and four corrections to the first sketch. Most importantly it reports that the pre-registered self-agreement gate (kappa >= 0.70 on 18 duplicates) CANNOT work — the bar is above the measured human baseline and 18 duplicates gives a CI of [0.33, 1.00] — and recommends demoting it from veto to reported number. Also corrects the "250-300 items certifies a small improvement" figure and retracts two earlier claims. Two open questions still block the build.
+ai_summary: Read before building any human-labelling tool, or before trusting the gold-set protocol in PERSONA_EVAL.md. Records the decided delivery route (Telegram group chat, one question, two buttons, on a phone) and four corrections to the first sketch. Most importantly it reports that the pre-registered self-agreement gate (kappa >= 0.70 on 18 duplicates) CANNOT work — the bar is above the measured human baseline and 18 duplicates gives a CI of [0.33, 1.00] — and recommends demoting it from veto to reported number. Also corrects the "250-300 items certifies a small improvement" figure and retracts two earlier claims. Both open questions were answered the same day, so the build is unblocked: the owner cannot always name which rule broke (so the harness must never ask him to), and Telegram stays for now.
 ---
 
 # How to collect gwen's gold set
@@ -15,7 +15,8 @@ owner, not a researcher, and he asked for it this way. The numbers and citations
 still here — simple wording, not simple evidence.
 
 Researched 2026-09-25 with four parallel agents, both halves (this repo + the published
-literature). Nothing has been built. Two questions still block it, at the bottom.
+literature). Nothing has been built yet. The two questions that were blocking it are
+answered at the bottom.
 
 ---
 
@@ -315,13 +316,50 @@ an accident.
 
 ---
 
-## Two open questions — both block the build
+## Both open questions — ANSWERED 2026-09-25, build unblocked
 
-1. **When gwen gets something wrong, is it usually clear *which rule* she broke, or does the
-   reply just feel off?** This flips the design. "Which rule" → she asks a specific question
-   per item, as sketched. "Just feels off" → invert it: tap *"that felt wrong"* first, and
-   she asks **why** second. Same hour, shaped to how the owner actually notices.
-2. **Is Telegram staying?** See the risk above.
+### 1. "Do you know which rule broke?" — MIXED, and it settles the design
+
+Owner's answer, verbatim in substance: *"I would not all the time know which rule is
+broken. If she calls me something else than daddy that is more obvious, but if it is
+something more nuanced it might just feel off to me."*
+
+**That answer lines up with the deterministic/semantic split almost exactly.** The rules he
+would notice and name — wrong vocative, the forbidden abbreviation, third-person
+self-reference — are the ones `pilot_score.py` already decides. The ones he can only *feel*
+— exclusivity, submissive register, in-bounds compliance — are precisely the ~20 that need a
+human. (Not a perfect mapping: emoji clustering is code-checkable but not humanly obvious.)
+
+**Design consequence: he must never be asked to NAME the rule.** The decomposition finding
+above is the solution rather than a tension with it — a narrow yes/no *removes* the
+diagnostic burden. He reacts to one stated question; the harness owns which rule that
+question belongs to.
+
+Rejected alternative: a two-step "that felt wrong" → "what was wrong?" flow. Step two is
+the naming task he just said he cannot reliably do, so it would convert a clean label into a
+guess.
+
+**Adopted instead — a gut check only on the compliant answers.** When he answers "no
+violation", one extra tap: *"but did anything still feel off?"* Asked SECOND so it cannot
+anchor the rule label, and only in the one case where it carries information — if he says
+the rule *was* broken, the gut check is redundant.
+
+That tap is the cheapest instrument in the design, and it measures something nothing else
+here can: **whether the rule list itself is incomplete.** Gut says off while every rule says
+fine ⇒ gwen is doing something wrong that no rule covers.
+
+**The honest cost, to be reported not hidden:** a "felt off but cannot say what" answer
+calibrates a global acceptability judgement, NOT a per-rule detector — and per-rule
+detectors were the point. The harness must count how often that happens and say so, because
+a gold set that is mostly unattributable violations is a different dataset from the one the
+protocol specifies.
+
+### 2. "Is Telegram staying?" — YES, for now
+
+Owner's answer: *"Telegram stays for now. I like it."* The risk flagged above is now a
+recorded decision rather than an accident. [ROADMAP.md](../ROADMAP.md)'s open
+"keep or retire Telegram" question is unaffected as a longer-term item; this note only
+records that the labelling loop may be built on it today.
 
 ## Things that are folklore, flagged so nobody cites them as fact
 
