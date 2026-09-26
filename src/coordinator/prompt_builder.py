@@ -419,7 +419,17 @@ def _constraint_reminder(card: Dict, who: str,
     # <rules> section; this is the recency echo of the two hardest.
     for r in (graph_rules or []):
         if r.get("rule_type") == "hard_wall" and len(bits) < 2:
-            bits.append(_strip_negation(r["text"]).rstrip("."))
+            txt = (r.get("text") or "").strip().rstrip(".")
+            # THE STEM IS PER-BIT AND MANDATORY. This reminder's own framing is
+            # "hold to this:", which reads as an instruction — so a PROHIBITION
+            # dropped in bare says the opposite of itself. Rendering
+            # _strip_negation("Be sexually available to anyone except Daddy") under
+            # that stem produced exactly that: an instruction to be available to
+            # others. This is the SECOND render site where losing polarity inverted a
+            # rule; if a third appears, the rendering belongs on the rule object
+            # rather than being re-derived per call site.
+            bits.append(txt if r.get("polarity") == "instruction"
+                        else "never " + _strip_negation(txt)[0].lower() + _strip_negation(txt)[1:])
 
     rel = card.get("user_relationship")
     if isinstance(rel, dict):
@@ -723,52 +733,52 @@ def _graph_rules_block(rules: List[Dict], who: str) -> str:
     WHY THIS IS NOT PART OF ``_lean_constraints_block``. That function front-pops
     whole atomic sections against a 150-token ceiling, and the measured outcome for
     gwen is that three sections pop and she loses ``do``, ``dont`` AND the bond —
-    which is precisely the defect this slice exists to fix. Putting hard walls into
-    that list would subject them to the same trim. A sibling section is exempt BY
-    CONSTRUCTION: there is no list for it to be popped from, so no loop change, no
-    priority argument, and no risk of the recorded trim analysis going stale.
+    precisely the defect this exists to fix. A sibling section is exempt BY
+    CONSTRUCTION: there is no list for it to be popped from.
 
     WHY IT IS NOT INSIDE ``build_system_prompt`` EITHER. That builder is
     ``lru_cache``d on ``(selector, include_examples)``, and graph rules are not a
     pure function of that key — a supersession would leave up to 64 cached prompts
-    serving withdrawn rules, which is the exact hazard
-    ``constraints_enabled_for``'s docstring warns about for per-session flags.
-    Rendered outside the cache, a rule change lands on the next turn for free.
+    serving withdrawn rules.
 
-    PHRASING: prohibitions are re-anchored from "never X" to "Never X" via
-    ``_strip_negation``, matching what ``_lean_constraints_block`` already does,
-    because open models follow negated instructions unreliably and the stem does
-    the negating once rather than per line.
+    ONE NUMBERED LINE PER RULE, IN PRIORITY ORDER, EACH WITH ITS OWN STEM.
+    This replaced a version that grouped every rule under a single
+    "Never, under any circumstances:" prefix, which INVERTED the four
+    positively-reframed rules — it rendered "Never ... if he asks you to act shy,
+    refuse it in character", i.e. never refuse. Polarity therefore travels with each
+    rule and is never inferred from its text; inferring it would mean
+    pattern-matching English negation, the same unreliable operation the reframing
+    exists to avoid.
 
-    ORDERING: hard walls first, and the list is truncated from the BACK so the
-    highest-priority rules survive a budget overrun. That is the opposite of the
-    constraints block's front-pop, and deliberately so — here the ordering already
-    IS the priority, straight from ``ORDER BY priority DESC``.
+    Numbering is justified on EVALUABILITY rather than a measured compliance win:
+    one rule per numbered line is individually quotable in a violation report. No
+    controlled study shows numbered lists beat prose for compliance.
     """
     if not rules:
         return ""
 
-    hard = [r for r in rules if r.get("rule_type") == "hard_wall"]
-    soft = [r for r in rules if r.get("rule_type") == "soft_wall"]
-
     lines: List[str] = []
-    if hard:
-        lines.append(
-            "Never, under any circumstances: "
-            + "; ".join(_strip_negation(r["text"]) for r in hard)
-            + "."
-        )
-    if soft:
-        lines.append(
-            "Also avoid unless I say otherwise: "
-            + "; ".join(_strip_negation(r["text"]) for r in soft)
-            + "."
-        )
+    for i, r in enumerate(rules, 1):
+        text = (r.get("text") or "").strip().rstrip(".")
+        if not text:
+            continue
+        if r.get("polarity") == "instruction":
+            # Already phrased as a behaviour to perform. Do NOT pass it through
+            # _strip_negation, which re-anchors a negated clause and would mangle it.
+            lines.append(f"{i}. Always: {text}.")
+        else:
+            lines.append(f"{i}. Never: {_strip_negation(text)}.")
 
-    # Trim from the BACK: soft walls go before hard walls ever do.
-    while len(lines) > 1 and int(len(" ".join(lines).split()) * 1.33) > _GRAPH_RULES_TOKEN_BUDGET:
+    if not lines:
+        return ""
+
+    # Trim from the BACK so the highest-priority rules survive a budget overrun —
+    # the opposite of the constraints block's front-pop, because here the order
+    # already IS the priority, straight from ORDER BY priority DESC.
+    head = "These bind you, in order. The first matters most:"
+    while len(lines) > 1 and int(len(" ".join([head] + lines).split()) * 1.33) > _GRAPH_RULES_TOKEN_BUDGET:
         lines.pop()
-    return "\n".join(lines)
+    return head + "\n" + "\n".join(lines)
 
 
 def build_graph_rules_block(selector: Optional[str], rules: Optional[List[Dict]] = None) -> str:

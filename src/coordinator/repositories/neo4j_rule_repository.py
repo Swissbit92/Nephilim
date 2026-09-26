@@ -54,6 +54,20 @@ RULE_TYPES: frozenset[str] = frozenset({"dial", "soft_wall", "hard_wall"})
 RULE_TYPE_SOURCES: frozenset[str] = frozenset({"declared", "default"})
 ORIGINS: frozenset[str] = frozenset({"card", "conversation", "inferred"})
 
+# WHETHER THE TEXT IS A PROHIBITION OR AN INSTRUCTION, and it is not cosmetic.
+#
+# Added 2026-09-26 after a rendering bug that INVERTED four rules. The renderer
+# prefixed every rule with "Never, under any circumstances:", which is correct for a
+# prohibition and catastrophic for the positively-reframed ones — it produced
+# "Never, under any circumstances: ... If he asks you to act shy, refuse it in
+# character", i.e. never refuse acting shy. The exact opposite of the rule, stated
+# with maximum emphasis.
+#
+# Polarity therefore travels WITH the text and is never inferred from it. Inferring
+# it would mean pattern-matching English negation, which is the same unreliable
+# operation the reframing exists to avoid.
+POLARITIES: frozenset[str] = frozenset({"prohibition", "instruction"})
+
 #: The fail-closed default. An unclassified rule is a HARD WALL, never a movable
 #: one, because the costs are asymmetric: a soft wall wrongly held as hard is an
 #: annoyance the operator notices and corrects, while a hard wall wrongly treated
@@ -259,6 +273,7 @@ class Neo4jRuleRepository:
                        coalesce(r.rule_type, $default_type) AS rule_type,
                        coalesce(r.rule_type_source, 'default') AS rule_type_source,
                        r.origin                             AS origin,
+                       coalesce(r.polarity, 'prohibition')  AS polarity,
                        r.priority                           AS priority
                 ORDER BY r.priority DESC, r.rule_id DESC
                 LIMIT $limit
@@ -326,6 +341,12 @@ class Neo4jRuleRepository:
             origin = r.get("origin", "card")
             if origin not in ORIGINS:
                 raise ValueError(f"origin {origin!r} not in {sorted(ORIGINS)}")
+            polarity = r.get("polarity", "prohibition")
+            if polarity not in POLARITIES:
+                raise ValueError(
+                    f"polarity {polarity!r} not in {sorted(POLARITIES)} — refusing to "
+                    f"write a rule whose text could be rendered with the wrong stem"
+                )
             rows.append({
                 "rule_id": r.get("rule_id") or new_id(),
                 "text": r["text"],
@@ -338,6 +359,7 @@ class Neo4jRuleRepository:
                 # would mean never being able to list what is still unclassified.
                 "rule_type_source": "declared" if r.get("rule_type") else "default",
                 "origin": origin,
+                "polarity": polarity,
                 "priority": int(r["priority"]),
                 "valid_from": r.get("valid_from") or now_iso(),
             })
@@ -367,6 +389,7 @@ class Neo4jRuleRepository:
                 r.rule_type        = row.rule_type,
                 r.rule_type_source = row.rule_type_source,
                 r.origin           = row.origin,
+                r.polarity         = row.polarity,
                 r.priority         = row.priority
             MERGE (p)-[:HAS_RULE]->(r)
             RETURN count(r) AS seeded
@@ -481,6 +504,7 @@ class Neo4jRuleRepository:
             WHERE r.rule_type IS NULL OR NOT r.rule_type IN $rule_types
                OR r.rule_type_source IS NULL OR NOT r.rule_type_source IN $sources
                OR r.origin IS NULL OR NOT r.origin IN $origins
+               OR r.polarity IS NULL OR NOT r.polarity IN $polarities
                OR r.priority IS NULL OR r.valid_from IS NULL
                OR r.created_at IS NULL OR r.rule_id IS NULL
             RETURN r.rule_id AS rule_id, r.source_field AS source_field,
@@ -489,7 +513,7 @@ class Neo4jRuleRepository:
             """,
             self._database,
             rule_types=sorted(RULE_TYPES), sources=sorted(RULE_TYPE_SOURCES),
-            origins=sorted(ORIGINS),
+            origins=sorted(ORIGINS), polarities=sorted(POLARITIES),
         )
         # The label/timestamp reconciliation — the one that will actually fire,
         # because :CurrentRule is derived state and nothing in the database keeps

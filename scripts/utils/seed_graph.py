@@ -82,6 +82,24 @@ TIER_PRIORITY: dict[str, int] = {
     "dial": 10,
 }
 
+# WITHIN a tier, `rank` breaks the tie: priority = base - rank. Added 2026-09-26
+# after reading her answers.
+#
+# All six hard walls were priority 100, so the read's tie-break — rule_id DESC, a
+# random ULID — decided which two reached the per-turn echo. Measured: the echo
+# carried the address rule and the racial-dignity rule, while the rule observed being
+# violated ("never pretend to be pure or innocent") sat third and never reached it.
+# Regenerating the ids would have silently changed which rules she is reminded of,
+# which is not a property anything should have.
+#
+# The tier still owns the BAND — rank is bounded below by the gap to the next tier, so
+# a hard wall can never sort under a soft wall no matter how it is ranked.
+MAX_RANK = 9
+assert TIER_PRIORITY["hard_wall"] - MAX_RANK > TIER_PRIORITY["soft_wall"], (
+    "rank range overlaps the next tier: a badly-ranked hard wall could sort below a "
+    "soft wall, which would invert the whole point of the tiers"
+)
+
 
 class Seeder:
     """Reads cards, writes the graph. Never writes a card."""
@@ -154,13 +172,26 @@ class Seeder:
             rule_type = entry["rule_type"]
             if rule_type not in TIER_PRIORITY:
                 raise ValueError(f"unknown rule_type {rule_type!r} in {tier_path.name}")
+            rank = int(entry.get("rank", 0))
+            if not (0 <= rank <= MAX_RANK):
+                raise ValueError(
+                    f"{persona_key} {entry['index']}: rank {rank} outside 0..{MAX_RANK}"
+                )
+            # `prompt_text` is how the rule is SAID to the model, where a bare
+            # prohibition was measured to fail. `text` stays the verbatim card string
+            # and remains the pin verified above, so the card is still the source of
+            # truth and is still never written to.
+            # A reframed rule is an INSTRUCTION; a verbatim one is a PROHIBITION.
+            # Derived here rather than declared, so the two can never disagree — and
+            # a mismatch is exactly what inverted four rules on 2026-09-26.
             rows.append({
-                "text": text,
+                "polarity": "instruction" if entry.get("prompt_text") else "prohibition",
+                "text": entry.get("prompt_text") or text,
                 "source_field": field,
                 "source_index": idx,
                 "rule_type": rule_type,
                 "origin": "card",
-                "priority": TIER_PRIORITY[rule_type],
+                "priority": TIER_PRIORITY[rule_type] - rank,
             })
         return rows
 
@@ -222,6 +253,9 @@ class Seeder:
                          persona_key, len(expected), len(got))
             return 1
 
+        # `expected` already carries prompt_text where one was declared, so this
+        # compares what was SEEDED, not what the card says. The card-vs-overlay
+        # comparison happens earlier, in load_rules.
         want_texts = {r["text"].strip() for r in expected}
         got_texts = {r["text"].strip() for r in got}
         if want_texts != got_texts:
