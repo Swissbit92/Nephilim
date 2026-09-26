@@ -51,3 +51,23 @@ trafilatura>=2.1.0
 # react-scripts breaks on Node 17+ unless NODE_OPTIONS=--openssl-legacy-provider is set —
 # that flag is already baked into the react-ui/package.json scripts.
 # Install Node.js from: https://nodejs.org/  then: cd react-ui && npm install
+
+# Graph store — ADR-014. Pinned exactly, matching this repo's stance that a
+# floating >= lets CI drift from local. 6.x is a MAJOR bump from the 5.x line
+# most tutorials target: read_transaction/write_transaction are REMOVED (use
+# execute_read/execute_write), execute_query graduated from preview to the
+# recommended default, and the driver no longer closes itself in __del__ — an
+# unclosed driver leaks connections silently in a long-lived server, which is
+# why server.py's lifespan gained a second shutdown entry.
+# Driver 6.x supports 4.4 / 5.x / 2025.x / 2026.x servers, so 6.3.1 against the
+# 5.26 LTS container is a supported pairing.
+neo4j==6.3.1
+
+# Sort-stable ids for graph rows — ADR-014. Pure Python, and on 3.12 it has ZERO
+# transitive dependencies (its only requirement, typing-extensions, is conditional
+# on python<3.11).
+# WHY NOT uuid.uuid7(): uuid6/uuid7/uuid8 are "Added in version 3.14" in the
+# stdlib. This repo runs 3.12, so uuid.uuid7 is an AttributeError. Revisit if the
+# interpreter is ever upgraded — the stdlib version guarantees monotonicity within
+# a millisecond via a 42-bit counter, which is stronger than any third-party one.
+python-ulid>=4.0.1,<5

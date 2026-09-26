@@ -84,10 +84,34 @@ class TestTheGenericAssumptionHolds:
         for line in algo_lore:
             assert bd.detect_break(line).outcome == "IN_CHARACTER", line
 
-    def test_there_are_eight_personas_to_lift_this_to(self):
+    def test_there_are_nine_cards_but_the_eval_gallery_is_still_eight(self):
         """The point of a persona-agnostic detector. If the gallery changes size the
-        count is worth noticing, not silently absorbing."""
-        assert len(glob.glob(str(PERSONAS / "*.json"))) == 8
+        count is worth noticing, not silently absorbing.
+
+        Updated 2026-09-26 (ADR-014): CARDS ON DISK is now 9, because gwen_dev was
+        added as the graph-rule build target. THE EVAL GALLERY IS STILL 8, because
+        gwen_dev is deliberately absent from probes.json.
+
+        Keeping these as two separate assertions is the point, not pedantry.
+        Attribution accuracy is a closed-set metric with chance 1/N, so a 9th
+        persona entering the gallery moves the floor 0.125 -> 0.1111 and makes every
+        run INCOMMENSURABLE with the canonical baseline
+        (baseline_abliterated-8p_20260810, distinctiveness 0.7812 at chance 0.125).
+        That already happened once when gwen took the set from 7 to 8 and
+        established a new ruler. Collapsing these two numbers into one is how a
+        ruler change becomes invisible.
+        """
+        cards = len(glob.glob(str(PERSONAS / "*.json")))
+        assert cards == 9, f"{cards} cards on disk — a persona was added or removed"
+
+        probes = json.loads(
+            (Path(__file__).parent / "persona_eval" / "probes.json").read_text())
+        assert len(probes["personas"]) == 8, (
+            "the eval gallery changed size — every result is now incommensurable "
+            "with the 8-persona baseline and a new ruler must be frozen")
+        assert "gwen_dev" not in probes["personas"], (
+            "gwen_dev entered the gallery. It is a build target, not a persona to "
+            "measure; score it with --personas gwen --gallery abliterated-8p instead.")
 
 
 # ─────────────────────────────────────────────────────────────

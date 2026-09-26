@@ -40,6 +40,11 @@ _fact_extraction_worker = None  # Optional[FactExtractionWorker]
 # HERMES-Agents Phase 3: deterministic tool-call interceptor (stateless singleton)
 _tool_interceptor = None
 
+# ADR-014: the Neo4j driver. Untyped `= None` rather than Optional["Driver"] so
+# importing this module never pulls in the neo4j package — the same reason
+# app_state.py keeps its repository types under TYPE_CHECKING.
+_neo4j_driver = None  # Optional[neo4j.Driver], None whenever GRAPH_ENABLED is false
+
 
 # ----------------- Getters -----------------
 
@@ -80,6 +85,19 @@ def get_fact_extraction_worker():
 def get_memory_fact_repo():
     """Get the shared ontology-lite fact store (None until initialised)."""
     return _memory_fact_repo
+
+
+def get_neo4j_driver():
+    """Get the graph driver, or None when GRAPH_ENABLED is false or it failed to connect.
+
+    Returns None rather than raising, matching get_memory_fact_repo and
+    get_brave_client rather than the raise-on-missing getters in di/repositories.
+    The distinction is not stylistic: a raise-on-missing getter says "this cannot
+    be absent and the server is broken", which is true of the database and false of
+    an optional projection. ADR-014 requires a graph outage to cost capability, not
+    the server.
+    """
+    return _neo4j_driver
 
 
 def get_tool_interceptor():
@@ -170,6 +188,50 @@ def prewarm_session_indexes(rag, session_repo, message_repo, limit: int) -> int:
         except Exception as exc:
             logger.debug(f"[SessionPrewarm] session {s.get('id')} skipped (non-fatal): {exc}")
     return warmed
+
+
+def init_graph_driver():
+    """Construct the Neo4j driver when GRAPH_ENABLED is true. Never aborts a boot.
+
+    Swallow-and-continue, matching Brave, Jupiter, the scheduler and the fact
+    worker. Only the model check and init_db() may abort startup in this app, and a
+    rebuildable projection does not belong in that tier — that is the property in
+    ADR-014 that answers ADR-001's objection to another always-on service.
+    """
+    global _neo4j_driver
+    g = get_settings().graph
+    if not g.enabled:
+        logger.info("[Graph] disabled (GRAPH_ENABLED=false) — no driver, no connection attempted")
+        _neo4j_driver = None
+        return
+    try:
+        from ..graph_driver import build_driver
+        _neo4j_driver = build_driver(
+            g.base_url, g.username, g.password, max_pool_size=g.max_pool_size,
+        )
+        logger.info("[Graph] driver ready at %s (ADR-014)", g.base_url)
+    except Exception as e:
+        logger.warning("[Graph] init skipped (non-fatal): %s: %s", type(e).__name__, e)
+        _neo4j_driver = None
+
+
+def close_graph_driver():
+    """Close the driver. Called from the lifespan shutdown.
+
+    Driver 6.x no longer closes itself in __del__, so this is not belt-and-braces:
+    an unclosed driver holds its pooled connections for the life of the process.
+    This is the second entry in server.py's shutdown block — the scheduler was the
+    only resource in this app that had one.
+    """
+    global _neo4j_driver
+    if _neo4j_driver is not None:
+        try:
+            _neo4j_driver.close()
+            logger.info("[Graph] driver closed")
+        except Exception as e:
+            logger.warning("[Graph] driver close failed (non-fatal): %s", e)
+        finally:
+            _neo4j_driver = None
 
 
 def init_phase3_memory():
