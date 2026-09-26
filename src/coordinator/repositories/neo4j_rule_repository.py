@@ -71,17 +71,66 @@ _SCHEMA: tuple[str, ...] = (
     "FOR (r:Rule) REQUIRE r.rule_id IS UNIQUE",
     "CREATE CONSTRAINT persona_id_unique IF NOT EXISTS "
     "FOR (p:Persona) REQUIRE p.persona_id IS UNIQUE",
-    # THE read index. Equality on the leading property plus ordering on the next
-    # two gives an index-backed sort with no Sort operator. Scoped to :CurrentRule
-    # so it behaves as a partial index over exactly the live rows.
+    # THE read index. TWO columns, not three, and that is MEASURED rather than
+    # chosen — see the note below. Scoped to :CurrentRule so it behaves as a
+    # partial index over exactly the live rows.
     "CREATE INDEX current_rule_read IF NOT EXISTS "
-    "FOR (r:CurrentRule) ON (r.persona_id, r.priority, r.rule_id)",
+    "FOR (r:CurrentRule) ON (r.persona_id, r.priority)",
     # Time travel over the full history, which :CurrentRule deliberately excludes.
     "CREATE INDEX rule_history_read IF NOT EXISTS "
     "FOR (r:Rule) ON (r.persona_id, r.valid_from)",
     # DELIBERATELY ABSENT: an index on expired_at or valid_to. See the module
     # docstring — it cannot serve IS NULL and costs on every write.
 )
+
+# MEASURED 2026-09-26 on Neo4j 5.26.31, and it corrects an earlier claim in this
+# file and in ADR-014 that the read is "index-backed with no Sort operator".
+#
+# It is half true. EXPLAIN on the real read, with the real index ONLINE:
+#
+#   3-column composite (persona_id, priority, rule_id) -> NodeByLabelScan
+#   single-property    (persona_id)                    -> NodeIndexSeek
+#   2-column           (persona_id, priority)          -> NodeIndexSeek
+#
+# So a THREE-column composite is not usable for a predicate that constrains only
+# the leading property — it was dead weight, paying write cost on every insert and
+# never once serving a query. Two columns seek. That is the fix.
+#
+# AND `Top` IS PRESENT IN ALL THREE PLANS. The ordering is NEVER supplied by the
+# index on this version: `ORDER BY priority DESC, rule_id DESC` always becomes a
+# bounded sort. Neo4j's own documentation covers only single-property ASCENDING
+# index-backed ordering and says nothing about composite or descending, and the
+# existence of PartialSort/PartialTop for prefix ordering implies the general case
+# is partial at best.
+#
+# AND THE HONEST CONCLUSION, after chasing it further than it deserved: at this
+# data size the planner is RIGHT to scan. There are 9 :CurrentRule nodes. A label
+# scan over 9 rows beats an index seek, and it will keep beating it into the
+# hundreds. `USING INDEX` is refused outright for this query shape, because
+# `expired_at IS NULL` cannot be index-served at all — indexes do not store nulls,
+# which is the same fact that made :CurrentRule a label in the first place.
+#
+# THE REAL ERROR WAS CONFLATING TWO INDEPENDENT CLAIMS, and it is worth naming
+# because it survived several passes of review:
+#
+#   DETERMINISM comes from the ORDER BY being a TOTAL order — a priority plus a
+#   UNIQUE, fixed-width, lexicographically-sortable rule_id. It holds under a label
+#   scan, under a seek, under `Sort`, under `Top`, and after a restore that changes
+#   the planner's mind. It is a property of the query's semantics.
+#
+#   INDEX-BACKING is a performance property. It is planner-dependent, it changes
+#   with the statistics, and at 9 rows it is correctly absent.
+#
+# ADR-014 claimed "deterministic AND index-backed with no Sort operator" as though
+# they were one claim. They are not, and only the first is load-bearing. The tests
+# therefore assert DETERMINISM — the same answer across repeated calls, and a
+# stable order under tied priorities — and deliberately do NOT assert plan shape,
+# which would pin planner behaviour at a scale that does not represent production
+# and would fail for a reason unrelated to correctness.
+#
+# The 2-column index stays: it is measured to be seekable for this predicate shape
+# (unlike the 3-column form) and costs almost nothing to maintain at this size. It
+# is insurance for scale, not a load-bearing part of today's read.
 
 # REGISTERS THE BI-TEMPORAL PROPERTY KEYS. This looks like a hack and is the
 # opposite of one; the alternative is strictly worse.
@@ -240,12 +289,27 @@ class Neo4jRuleRepository:
         criteria, so putting `text` there would silently create a duplicate on
         every edit instead of updating — the single most common MERGE defect.
 
-        NOTE THE HONEST LIMIT, recorded rather than hidden: an in-place edit to a
-        card rule is applied as an UPDATE, so the previous wording is overwritten
-        rather than superseded, and the graph then disagrees with its own history.
-        That is acceptable only because the card is hand-edited and version
-        controlled — git holds the previous wording. It would NOT be acceptable for
-        an operator-given rule, which is why `add_rule` supersedes instead.
+        WHY A POSITIONAL KEY IS SAFE HERE, WHICH IS NOT OBVIOUS AND WAS CHALLENGED.
+        A positional key into a hand-edited list is normally unsound, and the worst
+        case is not an edit but a DELETION: remove `dont[1]` and every later index
+        shifts down, so slot 2 now holds what slot 3 held. A naive positional MERGE
+        would then record an EDIT where a rule was in fact retired and a different
+        one renumbered — and the genuinely deleted rule would survive as an orphaned
+        :CurrentRule, still enforced, with no card backing and no supersessor.
+
+        That cannot happen here, because the TIER OVERLAY PINS THE TEXT AT EACH
+        POSITION and the seed script compares them before writing anything. Any
+        shift, reorder or in-place edit desynchronises text from position and the
+        seed REFUSES with a diff. Verified 2026-09-26 by deleting dont[1] from the
+        card and running the seed: exit 1, "the card and the overlay disagree about
+        the rule text." So the safety property is not the key — it is the key plus
+        the pin, and neither is sufficient alone.
+
+        It fails LOUD rather than fails correct: the operator must re-run the
+        classification. That is the right trade for a hand-edited card, because a
+        changed rule needs a human tier decision anyway — a content-addressed key
+        would silently create a new node and supersede, which for a CARD edit is
+        wrong. The card is the origin; git holds its history, not the graph.
         """
         if self._driver is None:
             return {"seeded": 0, "skipped": len(rules), "reason": "graph unavailable"}

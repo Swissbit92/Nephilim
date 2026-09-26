@@ -13,7 +13,7 @@ from .. import startup  # module ref for call-time getter resolution (tests patc
 from ..schemas import ChatBody, GreetBody, ImpersonateBody, NarrateBody, ResponseMetadata, SourceType
 from ..config import get_settings, get_persona_sampling_overrides
 from ..llm_client import create_llm_client, log_context_stats, estimate_tokens
-from ..prompt_builder import build_constraint_reminder
+from ..prompt_builder import build_constraint_reminder, build_graph_rules_block
 from ..persona_memory import (
     build_system_prompt,
     build_greeting_user_prompt,
@@ -435,6 +435,41 @@ def chat(body: ChatBody):
     )
     system = build_system_prompt(body.persona, include_examples=_include_examples)
 
+    # ADR-014: the persona's standing rules, read from the graph.
+    #
+    # DELIBERATELY HERE AND NOT INSIDE build_system_prompt, which is lru_cached on
+    # (selector, include_examples) — graph rules are not a pure function of that
+    # key, so a supersession would leave up to 64 cached prompts serving withdrawn
+    # rules. Rendered per-request, a rule change lands on the very next turn.
+    #
+    # The list is read ONCE and used TWICE: in full as an untrimmable <rules>
+    # section, and the top two hard walls echoed in the per-turn reminder below,
+    # which sits immediately before the user's message. Two placements of the SAME
+    # instruction, never two conflicting ones — this repo already measured that
+    # adding a second, CONFLICTING style instruction "moved the needle barely at
+    # all", so consistency between the two positions is the point.
+    #
+    # Returns [] when GRAPH_ENABLED is false or the graph is unreachable, and both
+    # renderers return "" for an empty list — so the graph being down costs rules,
+    # never the turn.
+    graph_rules: list = []
+    try:
+        _graph_cfg = get_settings().graph
+        if _graph_cfg.enabled:
+            _driver = startup.get_neo4j_driver()
+            if _driver is not None:
+                from ..repositories.neo4j_rule_repository import Neo4jRuleRepository
+                graph_rules = Neo4jRuleRepository(
+                    _driver, _graph_cfg.database, ensure_schema=False
+                ).standing_rules(body.persona, limit=_graph_cfg.rule_read_limit)
+    except Exception as e:
+        # Never fatal. A persona turn must not fail because a projection is down.
+        logger.warning("[Graph] rule read skipped for %s (non-fatal): %s", body.persona, e)
+
+    _rules_block = build_graph_rules_block(body.persona, graph_rules)
+    if _rules_block:
+        system = f"{system}\n\n{_rules_block}"
+
     # Inject wallet ground-truth state for wallet-capable personas (anti-hallucination).
     # This must happen HERE (not in handle_session_chat) because this function
     # rebuilds the system prompt — any injection upstream gets discarded.
@@ -484,7 +519,7 @@ def chat(body: ChatBody):
     # turns on are repeated here — immediately before the latest user turn —
     # rather than relying on the single statement at the top of the system
     # prompt, which is the least-attended position by turn 80.
-    constraint_reminder = build_constraint_reminder(body.persona)
+    constraint_reminder = build_constraint_reminder(body.persona, graph_rules)
     if constraint_reminder:
         lines.append(constraint_reminder)
     # R2: Self-reminder wrapper reduces jailbreak success (Self-Reminder technique ~48pp reduction)

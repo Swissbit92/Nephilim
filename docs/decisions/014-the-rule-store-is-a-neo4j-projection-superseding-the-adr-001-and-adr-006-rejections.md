@@ -106,7 +106,8 @@ do not.** The same mistake already exists locally in
 `idx_memory_facts_valid ON memory_facts(valid_to)`.
 
 **The read is `ORDER BY priority DESC, rule_id DESC`, with `rule_id` a sortable
-unique id.** Not `created_at`: seeding a card writes all 15 rules in one
+unique id**, and determinism is a property of that being a TOTAL order — nothing
+more. Not `created_at`: seeding a card writes all 15 rules in one
 transaction, so they share a timestamp and exactly the rules most likely to tie on
 priority would stay tied. Not `elementId()`: not stable across a dump/restore.
 Only a `UNIQUE` property gives a total order, which is what makes "the same
@@ -136,7 +137,34 @@ carrying `key: "gwen"` would hijack every lookup of the live persona.
 
 ## Status
 
-Accepted
+Accepted — **one claim in this ADR was measured and found wrong, 2026-09-26.**
+
+An earlier draft said the read is deterministic *and* index-backed with no Sort
+operator, as though those were one claim. They are two, and only the first holds.
+
+Measured with EXPLAIN on 5.26.31, index ONLINE: the real read plans as
+`NodeByLabelScan` + `Top`. A **three-column** composite on
+`(persona_id, priority, rule_id)` is never used at all — it was dead weight paying
+write cost on every insert — while a two-column `(persona_id, priority)` is
+seekable. And `Top` appears in every variant: **a composite index does not supply
+`ORDER BY priority DESC, rule_id DESC` on this version.** `USING INDEX` is refused
+outright, because `expired_at IS NULL` cannot be index-served — the same fact that
+made `:CurrentRule` a label rather than a predicate.
+
+At 9 rows the planner is right to scan, and stays right into the hundreds. So:
+
+- **Determinism** comes from the ORDER BY being a TOTAL order — a priority plus a
+  unique, fixed-width, lexicographically-sortable id. It holds under a scan, under
+  a seek, under `Sort`, under `Top`, and after a restore that changes the planner's
+  mind. It is what this design actually promises, and it is what the tests assert.
+- **Index-backing** is a performance property, planner-dependent, and correctly
+  absent at this size. The tests deliberately do NOT assert plan shape: pinning
+  planner behaviour at a scale that does not represent production would fail for
+  reasons unrelated to correctness.
+
+Recorded rather than quietly fixed, because a test asserting only
+`"Sort" not in plan` would have passed throughout — `Sort` is genuinely absent and
+`Top` does the work.
 
 ## Consequences
 
