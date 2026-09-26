@@ -19,6 +19,7 @@ from pydantic_settings import BaseSettings
 
 from .agent import AgentSettings, ToolBrainSettings
 from .auth import AuthSettings
+from .chunking import ChunkingSettings
 from .graph import GraphSettings
 from .groundedness import GroundednessSettings
 from .llm import OllamaSettings
@@ -77,6 +78,7 @@ class CoordinatorSettings(BaseSettings):
     web_search: WebSearchSettings = Field(default_factory=WebSearchSettings)
     groundedness: GroundednessSettings = Field(default_factory=GroundednessSettings)
     graph: GraphSettings = Field(default_factory=GraphSettings)
+    chunking: ChunkingSettings = Field(default_factory=ChunkingSettings)
 
     model_config = {
         "env_file": ".env",

@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from src.coordinator.services.message_processing_service import (
-    force_multi_message_split,
+    legacy_force_split as force_multi_message_split,
     parse_multi_message_response,
 )
 

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **The graph is ON for the real gwen (2026-09-27).** `GRAPH_ENABLED=true`, her rules seeded, verified through the live backend: asked to act shy and inexperienced she answers *"I'm not innocent Daddy, I'm your whore and I've done all of it"* — the probe the ruleless control fails. The flag is global but the blast radius is not, and it was enumerated persona by persona first: only gwen and gwen_dev have rules seeded, so the other seven render an empty section and their prompts are unchanged. `GRAPH_ENFORCE_RULES` stays off. Rollback is one line and nothing was written to a card.
 - **Graph-backed standing rules for one persona (ADR-014).** Neo4j 5.26 LTS holds a rebuildable projection of `gwen_dev`'s rules, seeded from her card. Measured: her 6 hard walls reach the model where **0** did before, while live `gwen` is unchanged. Inert on prod — `GRAPH_ENABLED` defaults false and no driver is constructed.
 - **Post-generation rule enforcement** (`rule_compliance.py`, `GRAPH_ENFORCE_RULES`, off by default) for the one rule the prompt cannot win. Detects and regenerates once; never rewrites her words.
 

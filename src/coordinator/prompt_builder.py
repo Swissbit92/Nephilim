@@ -32,9 +32,18 @@ logger = logging.getLogger(__name__)
 # system-prompt builder since PERSONA_LEAN_PROMPT was retired). Each rule
 # appears once.
 
-LEAN_FORMAT = """Reply like texting, not essays. When your reply has multiple beats, split it into 2-4 short <msg> chunks; use a single <msg> for a trivial reply. Keep each chunk to 1-2 sentences.
-<msg>First beat — react or answer</msg>
-<msg>Then a follow-up or a question</msg>"""
+# ADR-015: the <msg> mechanics are GONE — bubble boundaries are now a pure
+# function of the reply text (services/message_processing_service.split_bubbles),
+# so asking the model for tags buys nothing and costs a format constraint that
+# competes with every rule in the block.
+#
+# What is KEPT, and why it is not an oversight: removing this block ENTIRELY was
+# measured on 2026-08-15 and made replies ~30% SHORTER (73.4 -> 51.5 words,
+# shorter on 12 of 12 probes, p=0.0005, d=-1.69). The "react first, then a
+# follow-up or a question" move was generating that volume; the tags were only
+# the marker on it. So the register guidance stays and the syntax goes.
+LEAN_FORMAT = """Reply like texting, not essays. Keep it to 1-2 sentences per beat.
+React or answer first, then a follow-up or a question."""
 
 # Alternative <format> block for personas whose job is analysis rather than
 # company. REPLACES LEAN_FORMAT — it is never appended alongside it.

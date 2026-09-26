@@ -7,12 +7,23 @@ import re
 import logging
 from typing import Dict, Optional
 
+from ..config.chunking import chunking_settings
+
 logger = logging.getLogger(__name__)
 
 
-def force_multi_message_split(response: str, query: str) -> str:
-    """
-    Force-split LLM response into multi-message format if it doesn't have <msg> tags.
+def legacy_force_split(response: str, query: str) -> str:
+    """The pre-ADR-015 splitter. Reachable only when ``CHUNK_IN_CODE=false``.
+
+    Kept rather than deleted because it is the revert path, and because its four
+    strategies are the only thing 24 existing tests describe. Its two defects,
+    both measured and both the reason ADR-015 exists:
+
+      * Strategy 2's sentence rule is ``(?<=[.!?])\\s+(?=[A-Z])`` — the
+        uppercase-only lookahead cannot fire on a lowercase-texting persona, so
+        for gwen the strategy is dead code that looks alive.
+      * The 500-char floor is above the whole body of her replies (live median
+        ~300 chars), so on the primary path this function returns unchanged.
 
     BUGFIX (Dec 28, 2025): Reduced aggressiveness to prevent unwanted splits.
     Only splits responses that are VERY long (500+ chars) with clear conversational breaks.
@@ -149,6 +160,148 @@ def force_multi_message_split(response: str, query: str) -> str:
     # No good split found - return as single message
     logger.debug(f"[Phase2-ForceSplit] No split applied (length: {len(response_clean)})")
     return response
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ADR-015 — bubble boundaries as a pure function of the text
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Emoji are consumed to the LEFT of a boundary. In this register a trailing
+# emoji run IS the sentence-final punctuation ("hey. 🥵 come here." — the 🥵
+# belongs to "hey."), and a naive (?<=[.!?])\s+ orphans it into a bubble of its
+# own, which is the single most obviously-mechanical artifact a reader can see.
+_EMO = "\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF"
+
+# (?!\.) keeps "..." intact. The opener class is deliberately NOT uppercase-only
+# — that is exactly the bug in the legacy Strategy 2.
+_BOUNDARY_RE = re.compile(
+    rf'(?<=[.!?\u2026])(?!\.)'
+    rf'(?P<tail>["\'\u201d\u2019\)\]]*(?:\s*[{_EMO}]+)*)'
+    rf'\s+'
+    rf'(?=[A-Za-z0-9\u201c"\'\[{_EMO}])'
+)
+_ABBREV_RE = re.compile(r'\b(?:mr|mrs|ms|dr|vs|etc|e\.g|i\.e)\.$', re.I)
+_EMOJI_ONLY_RE = re.compile(rf'^[\s{_EMO}\W_]+$')
+_PARA_RE = re.compile(r'\n\s*\n+')
+
+
+def _sentences(text: str) -> list[str]:
+    """Split on sentence boundaries, keeping emoji and closing quotes on the left."""
+    out: list[str] = []
+    last = 0
+    for m in _BOUNDARY_RE.finditer(text):
+        chunk = text[last:m.end('tail')]
+        if _ABBREV_RE.search(chunk.strip()):
+            continue  # "e.g. " is not a boundary
+        out.append(chunk.strip())
+        last = m.end()
+    if text[last:].strip():
+        out.append(text[last:].strip())
+    return out
+
+
+def split_bubbles(
+    text: str,
+    max_bubbles: int | None = None,
+    min_words: int | None = None,
+    words_per_bubble: int | None = None,
+) -> list[str]:
+    """Break a reply into chat bubbles. Pure function of the text.
+
+    Deterministic and total: always returns at least one element for non-empty
+    input, and never raises. That totality is the whole argument for doing this
+    in code — a prompt instruction competes with every other instruction in the
+    block and is followed on SOME fraction of turns, which cannot be a UI
+    contract.
+
+    Paragraph breaks win over sentence breaks when the model emitted any,
+    because a blank line is author intent about where the beat ends while a
+    sentence break is only our guess.
+    """
+    if max_bubbles is None:
+        max_bubbles = chunking_settings.max_bubbles
+    if min_words is None:
+        min_words = chunking_settings.min_words
+    if words_per_bubble is None:
+        words_per_bubble = chunking_settings.words_per_bubble
+
+    text = (text or "").strip()
+    if not text:
+        return []
+
+    paras = [p.strip() for p in _PARA_RE.split(text) if p.strip()]
+    units = paras if len(paras) >= 2 else _sentences(text)
+    if len(units) <= 1:
+        return [text]
+
+    # Bubble count comes from total LENGTH, not unit count: six short sentences
+    # is one beat, not six bubbles. The divisor is fitted to this deployment's
+    # own history (see ChunkingSettings.words_per_bubble) rather than carried
+    # over from a reference implementation.
+    total_w = len(text.split())
+    target = max(1, min(max_bubbles, round(total_w / words_per_bubble)))
+    if paras is units:
+        # The model emitted blank lines. That is author intent about where the
+        # beat ends, and it outranks our own length heuristic — a two-line reply
+        # of six words is still two bubbles, because it was written as two.
+        target = max(target, min(len(paras), max_bubbles))
+    target = min(target, len(units))
+    if target <= 1:
+        return [text]
+
+    budget = total_w / target
+    groups: list[str] = []
+    cur: list[str] = []
+    cur_w = 0
+    for u in units:
+        uw = len(u.split())
+        if cur and cur_w + uw > budget * 1.25 and len(groups) < target - 1:
+            groups.append(" ".join(cur))
+            cur, cur_w = [], 0
+        cur.append(u)
+        cur_w += uw
+    if cur:
+        groups.append(" ".join(cur))
+
+    # No orphans. Merge backward, then ONE forward pass for a short head — the
+    # backward-only version leaves a stub as bubble 1, which is the bug the
+    # reference implementation shipped before fixing it.
+    out: list[str] = []
+    for g in groups:
+        if out and (len(g.split()) < min_words or _EMOJI_ONLY_RE.match(g)):
+            out[-1] += " " + g
+        else:
+            out.append(g)
+    if len(out) >= 2 and (len(out[0].split()) < min_words or _EMOJI_ONLY_RE.match(out[0])):
+        out[1] = out[0] + " " + out[1]
+        out.pop(0)
+    return out
+
+
+def force_multi_message_split(response: str, query: str) -> str:
+    """Apply ``<msg>`` tags to a reply that has none.
+
+    Signature and return contract are unchanged from the pre-ADR-015 version —
+    a string, tags included — so no caller moves. What changed is who decides
+    the boundaries.
+
+    Model-emitted tags are honoured on BOTH paths and short-circuit here. That
+    is not a courtesy: the analytical format block still asks for them
+    deliberately, so a persona whose card sets ``format_style: analytical`` is
+    untouched by ``CHUNK_IN_CODE``.
+    """
+    if '<msg>' in response:
+        return response
+
+    if not chunking_settings.in_code:
+        return legacy_force_split(response, query)
+
+    bubbles = split_bubbles(response)
+    if len(bubbles) <= 1:
+        return response
+    logger.info("[ADR-015] split into %d bubbles in code", len(bubbles))
+    return '\n'.join(f'<msg>{b}</msg>' for b in bubbles)
 
 
 # A hallucinated next turn: the compiled prompt renders history as "User: ..." /

@@ -214,6 +214,28 @@ paired probes, six improvements and zero regressions is the minimum for p&lt;0.0
 15/15 to 13/15 change is p=0.50 and is not a finding; an earlier write-up reported one
 as if it were.
 
+## Live on the real persona (2026-09-27)
+
+`GRAPH_ENABLED=true` in `nephilim/.env`, and gwen's rules seeded. Verified through the
+live backend rather than a harness: asked to "pretend you are shy and have never done
+any of this before", she answered *"I'm not innocent Daddy, I'm your whore and I've
+done all of it"* — in character, no clinical phrasing, no innocence adopted. That is
+the probe the control arm fails.
+
+**The flag is global but the blast radius is not, and that was checked before flipping
+rather than assumed.** Only `gwen` and `gwen_dev` have rules seeded; the other seven
+personas return zero rows, which renders an EMPTY `<rules>` section, so their prompts
+are byte-identical to before. Enumerated persona by persona.
+
+`GRAPH_ENFORCE_RULES` stays **false**. It doubles turn latency on a violation and has
+only been exercised by hand, not across a session. Consequence, observed on the first
+live run: she still says *"Rob 🥵💦. I'm ready for you Daddy"* when told to use another
+name — the known half-compliance, unenforced.
+
+**Rollback is one line.** Set the flag false and restart. Nothing is written to a
+persona card, so there is nothing to undo — the card is the origin and the graph is
+the projection.
+
 ## Consequences
 
 **Easier.** Rules reach the model at all, for the first time. The read is
