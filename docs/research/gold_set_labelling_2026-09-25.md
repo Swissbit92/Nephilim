@@ -5,7 +5,7 @@ created: 2026-09-25
 last_reviewed_on: 2026-09-25
 review_in: 6 months
 applies_to: nephilim
-ai_summary: Read before building any human-labelling tool, or before trusting the gold-set protocol in PERSONA_EVAL.md. Records the decided delivery route (Telegram group chat, one question, two buttons, on a phone) and four corrections to the first sketch. Most importantly it reports that the pre-registered self-agreement gate (kappa >= 0.70 on 18 duplicates) CANNOT work — the bar is above the measured human baseline and 18 duplicates gives a CI of [0.33, 1.00] — and recommends demoting it from veto to reported number. Also corrects the "250-300 items certifies a small improvement" figure and retracts two earlier claims. Both open questions were answered the same day, so the build is unblocked: the owner cannot always name which rule broke (so the harness must never ask him to), and Telegram stays for now.
+ai_summary: Read before building any human-labelling tool, or before trusting the gold-set protocol in PERSONA_EVAL.md. Records the decided delivery route (Telegram group chat, one question, two buttons, on a phone) and four corrections to the first sketch. Most importantly it reports that the pre-registered self-agreement gate (kappa >= 0.70 on 18 duplicates) CANNOT work — the bar is above the measured human baseline and 18 duplicates gives a CI of [0.33, 1.00] — and recommends demoting it from veto to reported number. Also corrects the "250-300 items certifies a small improvement" figure and retracts three claims of its own, including the over-sample-violations-to-70% plan, which an adversarial pass found circular. Carries the 2026-09-26 decision log: the larger ~400-item set, ordered so every stopping point is a valid sample, with two agreed tripwires. Both open questions were answered the same day, so the build is unblocked: the owner cannot always name which rule broke (so the harness must never ask him to), and Telegram stays for now.
 ---
 
 # How to collect gwen's gold set
@@ -360,6 +360,99 @@ Owner's answer: *"Telegram stays for now. I like it."* The risk flagged above is
 recorded decision rather than an accident. [ROADMAP.md](../ROADMAP.md)'s open
 "keep or retire Telegram" question is unaffected as a longer-term item; this note only
 records that the labelling loop may be built on it today.
+
+## Decision log — 2026-09-26, after an adversarial pass
+
+Reviewed against `grill-me` before building. Three holes found, two of them in the
+recommendation above. Recorded here rather than quietly patched, because one of them
+invalidates a number this note previously reported as an improvement.
+
+### Hole 1 — "over-sample violations to ~70%" is CIRCULAR and the ±7.9pt figure is void
+
+To over-sample violations you must already know which items are violations. **That is the
+labelling task itself.** There is no detector for the three semantic rule classes — their
+absence is why human labels are needed — so there is no flag to stratify on.
+
+The best available proxy is the `conflict` arm, whose measured tier-0 violation rate is
+**27% (arm A) / 34% (arm B)**. So the achievable violation share is roughly 30%, not 70%,
+and the recall half-width is **±14.6pt — the row this note had itself labelled "useless."**
+
+The §2 table above stands as arithmetic and is wrong as a plan. Sampling on a detector flag
+remains legitimate where a detector exists (using a flag for SELECTION does not anchor; only
+DISPLAYING it does, per Hole 3 of the original note) — but not here.
+
+### Hole 2 — per-rule estimates are not reachable at 138 items
+
+Three semantic rule classes (`exclusivity`, `submissive`, `in_bounds_compliance`), so 138
+items is ~46 per class, of which ~14 are true violations. Per-class recall at n=14 is **±20pt
+or worse.** 138 items supports ONE pooled judgement — "is the checker broken?" — not three
+per-rule numbers.
+
+### Hole 3 — gwen cannot be the one asking
+
+One persona per chat (`config.persona_for_chat`). A gwen-persona labelling chat would have
+her ask *"did **she** stay loyal?"* — third-person self-reference, i.e. `dont[2]`, **a rule
+violation inside the instrument built to measure rule violations.** The labelling surface
+must be persona-free: a plain bot or a command mode, never a persona chat.
+
+### DECIDED: the larger set, delivered as a sequence with no commitment
+
+Owner chose the ~400-item option over the ~138-item one, for three per-rule numbers at ~±8pt
+rather than one pooled number at ±15pt.
+
+**But the A-vs-B choice is dissolved rather than answered.** Items are ordered so that
+**every prefix of the sequence is itself a valid stratified sample.** Stop at 138 and the
+result is the pooled smoke test; stop at 400 and it is the per-rule set; stop at 250 and it
+is an honest something in between. Nothing is committed up front and no session boundary is
+special.
+
+This is the design response to the risk the larger set introduces and the smaller one did
+not: **3 hours is not one sitting**, so it becomes 4-6 sessions over days or weeks, and
+measured intra-annotator agreement at a two-week gap is only 74.2%
+([arXiv:2301.10684](https://arxiv.org/abs/2301.10684)). Session 1 and session 5 risk being
+effectively two different annotators. Two mitigations: prefix-validity above, and duplicates
+deliberately scattered ACROSS sessions so drift is measured rather than invisible.
+
+Note the tension left open: batching by question type has weak support for quality
+(RankME), while interleaving is what makes prefixes valid. **Prefix-validity wins**, because
+a half-finished batched set cannot be scored at all and a half-finished interleaved one can.
+
+### Assumptions, classified
+
+| Assumption | Class |
+|---|---|
+| Narrow decomposed binary beats holistic rating | **Evidence-supported** (RoSE, RankME, CheckEval, TICK) |
+| Showing the detector's verdict would inflate the measured score | **Evidence-supported** (arXiv:1605.04481) |
+| Phone delivery does not degrade simple binary labels | **Working assumption** — zero papers on annotation via messaging; strongest proxy is ~79% diary-study compliance and "1 item per screen, no typing" |
+| The owner's intuition tracks the code/semantic boundary | **Working assumption** — his self-report, consistent with the rule taxonomy, unmeasured |
+| ~400 items takes ~3 hours (≈27s/item) | **Presumption** — no measurement exists; 28% of replies exceed 60 words and phone input is ~1.4x slower. **This is the tripwire below.** |
+| One annotator can define ground truth for his own persona | **Presumption**, and explicitly ours — no literature endorses N=1 |
+
+### Outside view — the base rate in THIS repo is 0 for 2
+
+| Planned | Outcome |
+|---|---|
+| "A 100-item hand-labelled calibration set — *before* any detector" ([ROADMAP.md](../ROADMAP.md)) | **Never done** |
+| ADR-005 Phase A's "human-rated held-out set" | **Run with LLM agents instead** |
+
+[LESSONS_LEARNED.md](../LESSONS_LEARNED.md) names the cause: *"labelling felt like a
+detour."* This is not an argument against doing it — it is the argument for a quittable
+phone tool whose every stopping point is valid, and it is why the first tripwire is about
+delivery rather than protocol.
+
+### Commitment tripwires — agreed by the owner 2026-09-26
+
+1. **30-day check: if 138 items are not done within two weeks of the tool shipping, the
+   DELIVERY is wrong, not the protocol.** The fix is then the tool, not more willpower. This
+   is deliberately a statement about the instrument, because the outside view above says
+   that is where these attempts die.
+2. **Full reversal on either of two measurements:**
+   - **median > ~60s per item** ⇒ 400 items is 6.5+ hours, so the larger set was never real
+     and we fall back to the pooled smoke test;
+   - **> ~40% "felt off but cannot say what"** ⇒ per-rule labels are not emerging regardless
+     of volume, which removes the entire reason for choosing the larger set.
+
+   Both are logged automatically by the harness. Neither is a judgement call.
 
 ## Things that are folklore, flagged so nobody cites them as fact
 
