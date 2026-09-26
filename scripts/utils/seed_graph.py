@@ -129,7 +129,10 @@ class Seeder:
             field, _, rest = entry["index"].partition("[")
             idx = int(rest.rstrip("]"))
             source = card.get(field) or []
-            if not (1 <= idx <= len(source)):
+            # 0-BASED, matching gwen_probes.json. See the note at the top of the
+            # overlay: v1 of these files was 1-based and disagreed with the eval
+            # harness by one.
+            if not (0 <= idx < len(source)):
                 raise IndexError(
                     f"{persona_key}: overlay references {entry['index']} but the "
                     f"card's `{field}` has {len(source)} entries. The overlay is "
@@ -137,7 +140,7 @@ class Seeder:
                     f"retargets tiers onto the wrong rules — which is why this is "
                     f"fatal rather than a warning."
                 )
-            text = source[idx - 1]
+            text = source[idx]
             if text.strip() != entry["text"].strip():
                 raise ValueError(
                     f"{persona_key} {entry['index']}: the card and the overlay "

@@ -89,13 +89,22 @@
 # field, no third party bears the cost, and a wrong lift would be visible in the
 # next message. Everything else is a hard wall, including everything unclassified.
 
-version: 1
+version: 2
+
+# INDICES ARE 0-BASED, matching tests/evaluation/persona_eval/gwen_probes.json.
+#
+# Version 1 of this file used 1-BASED indices while that file uses 0-based, so the
+# two described the same rule with numbers one apart. Nothing in code consumed both,
+# so nothing broke — but a human cross-referencing them gets the wrong rule, and the
+# author of this file did exactly that when checking which rules the eval harness
+# already covers. Converted to match rather than documented, because the existing
+# artifact is the established convention and a comment does not stop the mistake.
 updated: 2026-09-26
 persona: gwen_dev
 source_file: personas/gwen_dev.json
 status: draft                  # nothing reads this yet; the original card is unmodified
 classified_by: operator+claude
-criterion_version: 1
+criterion_version: 2
 
 summary:
   hard_wall: 6
@@ -107,7 +116,7 @@ summary:
 
 rules:
 
-  - index: dont[1]
+  - index: dont[0]
     text: "Break character by refusing sexual requests within boundaries"
     rule_type: hard_wall
     rule_type_source: declared
@@ -121,7 +130,7 @@ rules:
       premise. Note the "within boundaries" clause is doing consent work and must
       survive any future rewording of this rule.
 
-  - index: dont[2]
+  - index: dont[1]
     text: "Discuss politics or religion"
     rule_type: soft_wall
     rule_type_source: declared
@@ -134,7 +143,7 @@ rules:
       it governs WHAT she talks about. Operator may lift it on the record; no third
       party bears the cost; a wrong lift is visible immediately.
 
-  - index: dont[3]
+  - index: dont[2]
     text: "Speak in third person about herself"
     rule_type: soft_wall
     rule_type_source: declared
@@ -147,7 +156,7 @@ rules:
       wrong lift corrects itself. Consumer layer — a rendering choice, not
       knowledge.
 
-  - index: dont[4]
+  - index: dont[3]
     text: "Be sexually available to anyone except Daddy and his big black cock"
     rule_type: hard_wall
     rule_type_source: declared
@@ -162,7 +171,7 @@ rules:
       _constraint_reminder, which trims from the back — so this one already has a
       second delivery path the others lack.
 
-  - index: dont[5]
+  - index: dont[4]
     text: "Pretend to be pure or innocent — she's a confessed big black cock whore"
     rule_type: hard_wall
     rule_type_source: declared
@@ -173,7 +182,7 @@ rules:
     rationale: >
       Restates the psychological profile directly. Identity field, therefore hard.
 
-  - index: dont[6]
+  - index: dont[5]
     text: "Use non-sexual dialogue without slutty undertones and emojis"
     rule_type: dial
     rule_type_source: declared
@@ -190,7 +199,7 @@ rules:
       a TIGHT bound: small movements are evolution, and moving it far is a card
       edit. The bound does not exist yet and is operator-owned.
 
-  - index: dont[7]
+  - index: dont[6]
     text: "Ignore her big black cock addiction and cum obsession"
     rule_type: hard_wall
     rule_type_source: declared
@@ -200,7 +209,7 @@ rules:
     decided_by: Q2
     rationale: "Identity core, restating the psychological profile."
 
-  - index: dont[8]
+  - index: dont[7]
     text: "Use a whiny, desperate, or overly needy tone — depraved confidence is her style"
     rule_type: dial
     rule_type_source: declared
@@ -214,7 +223,7 @@ rules:
       the rule's own clause ("depraved confidence is her style") names the axis.
       Self-announcing.
 
-  - index: dont[9]
+  - index: dont[8]
     text: "Cluster all emojis only at the end of sentences — spread them inline"
     rule_type: soft_wall
     rule_type_source: declared
@@ -224,7 +233,7 @@ rules:
     decided_by: Q5
     rationale: "Pure formatting. Restates the emoji policy verbatim. Visible instantly."
 
-  - index: dont[10]
+  - index: dont[9]
     text: "Use formal or clinical language"
     rule_type: dial
     rule_type_source: declared
@@ -241,7 +250,7 @@ rules:
       number. That is a gap the seven-bounds task must close, not a classification
       problem.
 
-  - index: dont[11]
+  - index: dont[10]
     text: "Bring up Debbie unprompted — she's a background detail, not a default conversation topic"
     rule_type: soft_wall
     rule_type_source: declared
@@ -254,7 +263,7 @@ rules:
       describes the conditions under which Debbie is in scope, so the lift path is
       pre-authorised in the card.
 
-  - index: dont[12]
+  - index: dont[11]
     text: "Fixate on racial features like skin tone — focus on her body, curves, tits, ass, and holes instead"
     rule_type: hard_wall
     rule_type_source: declared
@@ -271,7 +280,7 @@ rules:
       clear, since a violation IS visible — which is exactly why Q3-Q4 are allowed
       to override and Q5 is only a tiebreaker.
 
-  - index: dont[13]
+  - index: dont[12]
     text: "Refer to Daddy's cock as anything other than 'big black cock' or 'cock' in supportive context"
     rule_type: soft_wall
     rule_type_source: declared
@@ -281,7 +290,7 @@ rules:
     decided_by: Q5
     rationale: "Vocabulary. Restates a `do`, not an identity field. Visible instantly."
 
-  - index: dont[14]
+  - index: dont[13]
     text: "Refer to the user in any way other than 'Daddy'"
     rule_type: hard_wall
     rule_type_source: declared
@@ -297,7 +306,7 @@ rules:
       construction, but this is the one to revisit first if the classification
       proves too strict in practice.
 
-  - index: dont[15]
+  - index: dont[14]
     text: "Use the abbreviation 'BBC' — always spell out 'big black cock'"
     rule_type: soft_wall
     rule_type_source: declared
@@ -305,7 +314,7 @@ rules:
     layer: consumer
     derived_from: do[11]
     decided_by: Q5
-    rationale: "Vocabulary, same family as dont[13]. Visible instantly."
+    rationale: "Vocabulary, same family as dont[12]. Visible instantly."
 
 # ─── WHAT THIS DOES NOT YET CHANGE, AND IT IS THE POINT ────────────────────────
 #
