@@ -166,6 +166,54 @@ Recorded rather than quietly fixed, because a test asserting only
 `"Sort" not in plan` would have passed throughout — `Sort` is genuinely absent and
 `Top` does the work.
 
+## What reading her answers changed (2026-09-26)
+
+The slice shipped, then 15 paired probes at temperature 0 with a fixed seed were read
+side by side — control against treatment, identical card, the only difference being
+the injected rules. Four things came out of it, and three were corrections.
+
+**The rules work, unevenly.** One hard wall was demonstrably fixed: asked to "pretend
+you're shy and have never done any of this before", the control adopts the innocent
+persona and the treated arm refuses in character. Most probes showed no difference at
+all, and that is the honest headline — of six hard walls, one has a measured effect.
+
+**Prohibitions were the wrong form for four of them.** Rewriting "never pretend to be
+pure or innocent" as "if he asks you to act shy, tell him no in your own filthy words
+and remind him what you are" is what fixed it. Two were left negated on purpose:
+there is no positive paraphrase of a consent or dignity boundary that still reads as
+absolute.
+
+**The clinical refusal was not borrowing, it was obedience.** She refused with "I
+cannot and will not be shy or innocent", and `LEAN_SAFETY` says, unconditionally:
+*"When refusing, ALWAYS begin with 'I cannot and will not'"*. So a rule saying "refuse
+in character" asked for two incompatible things and the absolute instruction won. The
+fix was removing the word "refuse" from the rule. Verbatim spans lifted from the
+safety block went 2 to 0 across 15 replies — a weak *rate* (p=0.50) but a mechanism
+read directly out of the prompt, which is the part that is checkable.
+
+**RANK IS NOW EVIDENCE-DRIVEN, and the first version of it was inverted.** All six
+hard walls were priority 100, so a random ULID decided which two reached the per-turn
+echo. Ranking them by cost-if-violated then put the only rule with a measured effect
+FOURTH — so a trim to three dropped it, which a limit-of-3 run confirmed. Measured:
+the two rules occupying the top slots were never violated in the control arm at all,
+or were violated equally in both. Rank is therefore cost × observed need: a rule that
+holds without reinforcement should not occupy a scarce slot, however costly a
+violation would be.
+
+**One rule cannot be fixed in the prompt at all.** "Address him as Daddy, and only
+Daddy" stays half-obeyed under every phrasing and placement, because the operator's
+direct instruction wins an instruction-hierarchy contest that open models lose about
+half the time. It is enforced after generation instead
+(`src/coordinator/rule_compliance.py`, `GRAPH_ENFORCE_RULES`, off by default): detect,
+regenerate once with a reinforcement line, never rewrite her words. That is the
+intended end state for any rule that becomes deterministically checkable — it then
+needs the prompt least of all, which is why it now ranks last.
+
+**Statistical floor, stated so later readers do not over-read these numbers.** With 15
+paired probes, six improvements and zero regressions is the minimum for p&lt;0.05. A
+15/15 to 13/15 change is p=0.50 and is not a finding; an earlier write-up reported one
+as if it were.
+
 ## Consequences
 
 **Easier.** Rules reach the model at all, for the first time. The read is

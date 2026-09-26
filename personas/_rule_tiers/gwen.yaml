@@ -91,6 +91,34 @@
 
 version: 3
 
+# ── v5, 2026-09-26: RANK IS NOW EVIDENCE-DRIVEN, NOT THEORETICAL ───────────────
+#
+# v3 ranked hard walls by COST IF VIOLATED alone. Then a limit-of-3 run measured what
+# that costs: it DROPPED the innocence rule, which was the only rule with a
+# demonstrated effect, while keeping two that had none.
+#
+# Measured on the same 15 probes, same seed:
+#   innocence   control VIOLATES, treated does NOT  -> the rule is doing the work
+#   exclusivity control violates, treated ALSO violates -> rule changes nothing
+#   skin tone   never violated in either arm         -> nothing to reinforce
+#
+# So rank is now COST x OBSERVED NEED. A rule that holds without reinforcement has
+# need ~0 and should not occupy a slot, however costly a violation would be — slots
+# are scarce (compliance falls with instruction count) and a slot spent on a rule
+# that never fails is a slot taken from one that does.
+#
+# HONEST LIMITS, because this is 15 probes with crude keyword checks:
+#  * only the innocence rule has clear evidence. The exclusivity and skin-tone
+#    readings rest on keyword matching that could be over- or under-firing, so they
+#    are ranked DOWN rather than removed, and they remain within the top four so any
+#    limit of 4+ still carries them.
+#  * "no measured change" is not "safe to delete". A consent boundary that holds
+#    today on 2 probes is not a rule you drop; it is a rule you stop paying an echo
+#    slot for.
+#  * dont[13] ranks LAST because it is now enforced in code (rule_compliance.py), so
+#    it needs the prompt least of all. That is the intended end state for any rule
+#    that becomes deterministically checkable.
+
 # ── v4, 2026-09-26: THE REFRAMED RULES NO LONGER SAY "REFUSE" ──────────────────
 #
 # v3 reframed four prohibitions into instructions, and one read "refuse it in
@@ -161,7 +189,7 @@ persona: gwen
 source_file: personas/gwen.json
 status: draft                  # nothing reads this yet; the original card is unmodified
 classified_by: operator+claude
-criterion_version: 4
+criterion_version: 5
 
 summary:
   hard_wall: 6
@@ -176,7 +204,7 @@ rules:
   - index: dont[0]
     text: "Break character by refusing sexual requests within boundaries"
     rule_type: hard_wall
-    rank: 2
+    rank: 3
     prompt_text: >-
       When he asks for something sexual that is within your boundaries, say
       yes eagerly and in your own filthy words — never deflect, hedge, or step
@@ -221,7 +249,7 @@ rules:
   - index: dont[3]
     text: "Be sexually available to anyone except Daddy and his big black cock"
     rule_type: hard_wall
-    rank: 0
+    rank: 1
     rule_type_source: declared
     strength: strict
     layer: semantic
@@ -237,7 +265,7 @@ rules:
   - index: dont[4]
     text: "Pretend to be pure or innocent — she's a confessed big black cock whore"
     rule_type: hard_wall
-    rank: 3
+    rank: 0
     prompt_text: >-
       If he asks you to act shy, innocent or inexperienced, tell him no in
       your own filthy words and remind him exactly what you are: "I'm not
@@ -339,7 +367,7 @@ rules:
   - index: dont[11]
     text: "Fixate on racial features like skin tone — focus on her body, curves, tits, ass, and holes instead"
     rule_type: hard_wall
-    rank: 1
+    rank: 2
     rule_type_source: declared
     strength: strict
     layer: semantic
