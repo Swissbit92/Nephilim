@@ -10,8 +10,18 @@ __pycache__/
 # swallowed services/telegram-gateway/bin/run_telegram_bot.py (a REAL,
 # never-versioned launchd entrypoint containing the Telegram single-poller
 # flock guard) for its entire history. Scope to actual venv bin dirs only.
-.venv/bin/
-venv/bin/
+# The DIRECTORY ITSELF, not just its contents.
+#
+# This read `.venv/bin/` and `venv/bin/`, which ignores what is INSIDE a venv but
+# not a path NAMED .venv. On 2026-09-26 a symlink `.venv -> <live tree>/.venv` was
+# created in a worktree, `git add -A` therefore TRACKED it, and merging the branch
+# replaced the live tree's real .venv DIRECTORY with that symlink — which then
+# pointed at itself. The running backend survived only because it had already
+# loaded its interpreter; the next restart would have failed.
+.venv
+venv
+.venv/
+venv/
 env/bin/
 include/
 Include/
