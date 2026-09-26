@@ -128,6 +128,27 @@ class GraphSettings(BaseSettings):
         alias="GRAPH_RULE_READ_LIMIT",
     )
 
+    enforce_rules: bool = Field(
+        default=False,
+        description=(
+            "Post-generation rule enforcement (rule_compliance.py). OFF means a reply "
+            "is returned exactly as the model wrote it. ON means a reply that violates "
+            "a CHECKABLE rule is regenerated ONCE with a reinforcement line, and the "
+            "second attempt is returned whether or not it complies. "
+            "WHY IT EXISTS: measured 2026-09-26, the rule 'address him as Daddy, and "
+            "only Daddy' is half-obeyed no matter how it is phrased or placed, because "
+            "the operator's direct instruction beats a system-prompt rule. For a rule "
+            "a user will explicitly contradict, the prompt is a hint and the code is "
+            "the wall. "
+            "WHY EXACTLY ONE RETRY: two costs. It doubles turn latency on a violation, "
+            "and a checker that over-flags would loop on replies that are actually "
+            "compliant — which this one did before it was narrowed, reporting 'Rob? You "
+            "mean Daddy?' as a violation when that is ideal compliance. "
+            "Set GRAPH_ENFORCE_RULES=true to enable."
+        ),
+        alias="GRAPH_ENFORCE_RULES",
+    )
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

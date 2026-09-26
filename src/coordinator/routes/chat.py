@@ -14,6 +14,7 @@ from ..schemas import ChatBody, GreetBody, ImpersonateBody, NarrateBody, Respons
 from ..config import get_settings, get_persona_sampling_overrides
 from ..llm_client import create_llm_client, log_context_stats, estimate_tokens
 from ..prompt_builder import build_constraint_reminder, build_graph_rules_block
+from ..rule_compliance import check_reply, reinforcement_for
 from ..persona_memory import (
     build_system_prompt,
     build_greeting_user_prompt,
