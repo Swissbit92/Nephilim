@@ -160,7 +160,17 @@ class TestWhatTheTrimDrops:
         every declared do/dont while the card looks authoritative is the same defect
         class as a field with no reader.
         """
-        ACCEPTED = {"gwen"}
+        # gwen_dev added 2026-09-26 (ADR-014) WITH A REASON, as this test demands.
+        # It is a copy of gwen's card as the graph-rule build target, so it carries
+        # her 12 do + 15 dont verbatim and loses them to the trim for exactly the
+        # same measured reason she does — ~775 chars against a 150-token budget,
+        # three sections front-popped. Accepting it is not a new concession: it is
+        # the same concession, on the same rules, counted twice.
+        # It is ALSO the persona whose hard walls the graph read exists to deliver,
+        # so this entry is expected to be REMOVED once GRAPH_ENABLED is on and the
+        # untrimmable <rules> section carries them. If it is still here after that
+        # ships, the graph read is not working.
+        ACCEPTED = {"gwen", "gwen_dev"}
         casualties = []
         for f in sorted(PERSONAS.glob("*.json")):
             card = json.loads(f.read_text())

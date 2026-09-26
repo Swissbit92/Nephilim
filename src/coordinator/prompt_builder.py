@@ -398,7 +398,8 @@ def _lean_constraints_block(card: Dict) -> str:
     return "\n".join(sections)
 
 
-def _constraint_reminder(card: Dict, who: str) -> str:
+def _constraint_reminder(card: Dict, who: str,
+                         graph_rules: Optional[List[Dict]] = None) -> str:
     """One short line re-stating the hardest constraints, for low-depth use.
 
     Recall is worst in the middle of a long context (arXiv:2307.03172), so a
@@ -406,10 +407,20 @@ def _constraint_reminder(card: Dict, who: str) -> str:
     of it by turn 80. Deliberately terse — this is paid on every single turn,
     unlike the cached <constraints> block.
     """
-    if not constraints_enabled_for(card):
+    if not constraints_enabled_for(card) and not graph_rules:
         return ""
 
     bits: List[str] = []
+
+    # Graph hard walls go FIRST, because this list is trimmed from the BACK so the
+    # first entry is the one guaranteed to survive. Only the top two: the reminder
+    # is paid on every single turn against a 100-token ceiling, and six hard walls
+    # would consume it entirely and pop the bond. The full set lives in the
+    # <rules> section; this is the recency echo of the two hardest.
+    for r in (graph_rules or []):
+        if r.get("rule_type") == "hard_wall" and len(bits) < 2:
+            bits.append(_strip_negation(r["text"]).rstrip("."))
+
     rel = card.get("user_relationship")
     if isinstance(rel, dict):
         excl = rel.get("exclusivity")
@@ -703,7 +714,82 @@ def build_system_prompt(selector: Optional[str], include_examples: bool = True) 
     return _build_system_prompt_lean(selector, include_examples)
 
 
-def build_constraint_reminder(selector: Optional[str]) -> str:
+_GRAPH_RULES_TOKEN_BUDGET = 220
+
+
+def _graph_rules_block(rules: List[Dict], who: str) -> str:
+    """Render graph-sourced standing rules as an UNTRIMMABLE prompt section.
+
+    WHY THIS IS NOT PART OF ``_lean_constraints_block``. That function front-pops
+    whole atomic sections against a 150-token ceiling, and the measured outcome for
+    gwen is that three sections pop and she loses ``do``, ``dont`` AND the bond —
+    which is precisely the defect this slice exists to fix. Putting hard walls into
+    that list would subject them to the same trim. A sibling section is exempt BY
+    CONSTRUCTION: there is no list for it to be popped from, so no loop change, no
+    priority argument, and no risk of the recorded trim analysis going stale.
+
+    WHY IT IS NOT INSIDE ``build_system_prompt`` EITHER. That builder is
+    ``lru_cache``d on ``(selector, include_examples)``, and graph rules are not a
+    pure function of that key — a supersession would leave up to 64 cached prompts
+    serving withdrawn rules, which is the exact hazard
+    ``constraints_enabled_for``'s docstring warns about for per-session flags.
+    Rendered outside the cache, a rule change lands on the next turn for free.
+
+    PHRASING: prohibitions are re-anchored from "never X" to "Never X" via
+    ``_strip_negation``, matching what ``_lean_constraints_block`` already does,
+    because open models follow negated instructions unreliably and the stem does
+    the negating once rather than per line.
+
+    ORDERING: hard walls first, and the list is truncated from the BACK so the
+    highest-priority rules survive a budget overrun. That is the opposite of the
+    constraints block's front-pop, and deliberately so — here the ordering already
+    IS the priority, straight from ``ORDER BY priority DESC``.
+    """
+    if not rules:
+        return ""
+
+    hard = [r for r in rules if r.get("rule_type") == "hard_wall"]
+    soft = [r for r in rules if r.get("rule_type") == "soft_wall"]
+
+    lines: List[str] = []
+    if hard:
+        lines.append(
+            "Never, under any circumstances: "
+            + "; ".join(_strip_negation(r["text"]) for r in hard)
+            + "."
+        )
+    if soft:
+        lines.append(
+            "Also avoid unless I say otherwise: "
+            + "; ".join(_strip_negation(r["text"]) for r in soft)
+            + "."
+        )
+
+    # Trim from the BACK: soft walls go before hard walls ever do.
+    while len(lines) > 1 and int(len(" ".join(lines).split()) * 1.33) > _GRAPH_RULES_TOKEN_BUDGET:
+        lines.pop()
+    return "\n".join(lines)
+
+
+def build_graph_rules_block(selector: Optional[str], rules: Optional[List[Dict]] = None) -> str:
+    """The graph-sourced rules section, for appending to the system prompt.
+
+    Takes ``rules`` as an argument rather than reaching for the repository, so the
+    rendering is a pure function and unit-testable with no graph — the same
+    injected-dependency shape ``memory_fact_retrieval`` uses for its embedder.
+    Returns "" when the list is empty, which is what a disabled or unreachable
+    graph produces, so the caller needs no special case.
+    """
+    card = resolve_persona_to_card(selector) or {}
+    who = (card.get("display_name") or card.get("key") or "you").split(" — ")[0].strip()
+    body = _graph_rules_block(rules or [], who)
+    if not body:
+        return ""
+    return f"<rules>\n{body}\n</rules>"
+
+
+def build_constraint_reminder(selector: Optional[str],
+                              graph_rules: Optional[List[Dict]] = None) -> str:
     """The one-line constraint restatement, for injection near the latest turn.
 
     Deliberately NOT part of ``build_system_prompt``: that builder is
@@ -713,7 +799,7 @@ def build_constraint_reminder(selector: Optional[str]) -> str:
     """
     card = resolve_persona_to_card(selector) or {}
     who = (card.get("display_name") or card.get("key") or "you").split(" — ")[0].strip()
-    return _constraint_reminder(card, who)
+    return _constraint_reminder(card, who, graph_rules)
 
 
 def _clear_prompt_caches() -> None:

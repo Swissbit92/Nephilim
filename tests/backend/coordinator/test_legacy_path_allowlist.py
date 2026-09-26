@@ -104,14 +104,23 @@ class TestUnrestrictedPersonasAreUnaffected:
         card = json.loads((PERSONAS / f"{name}.json").read_text())
         assert _offer(card, QueryIntent.NEEDS_WEB_SEARCH) == []
 
-    def test_only_one_shipped_persona_has_an_allowlist(self):
-        """Pins the blast radius. If a second persona gains a `tools` allowlist,
+    def test_only_two_shipped_personas_have_an_allowlist(self):
+        """Pins the blast radius. If a further persona gains a `tools` allowlist,
         this fails and whoever added it has to confirm the legacy consequences
-        rather than discover them in production."""
+        rather than discover them in production.
+
+        gwen_dev added 2026-09-26 (ADR-014), and the consequence WAS confirmed
+        rather than assumed: its offer surface was compared against gwen's across
+        every QueryIntent and is byte-identical, because it is a copy of her card
+        with four fields changed (key, display_name, coordinator_label, active).
+        So this adds no new tool exposure — it inherits gwen's existing surface,
+        including the still-open finding that the legacy `get_tools_for_persona`
+        path ignores persona allowlists. Same exposure, one more card.
+        """
         with_allowlist = sorted(
             p.stem for p in PERSONAS.glob("*.json")
             if json.loads(p.read_text()).get("tools") is not None)
-        assert with_allowlist == ["gwen"]
+        assert with_allowlist == ["gwen", "gwen_dev"]
 
 
 class TestDegradedModeFailsClosed:

@@ -78,8 +78,11 @@ from .di.services import (  # noqa: F401 - re-exported for startup.get_X()/init_
     get_fact_extractor,
     get_memory_fact_repo,
     get_memory_manager,
+    get_neo4j_driver,
     get_tool_interceptor,
+    close_graph_driver,
     init_brave_client,
+    init_graph_driver,
     init_memory_manager,
     init_phase3_memory,
     prewarm_session_indexes,
@@ -190,6 +193,14 @@ def initialize_all():
             logger.info("Phase 3: RAG memory disabled")
     except Exception as e:
         logger.warning(f"Phase 3 initialization warning: {e}")
+
+    # ADR-014: the graph driver. No-ops entirely when GRAPH_ENABLED is false.
+    try:
+        init_graph_driver()
+    except Exception as e:
+        # init_graph_driver already swallows; this is the second net, because a
+        # graph outage must never be able to abort a boot.
+        logger.warning(f"Graph driver initialization warning: {e}")
 
     # Initialize Brave MCP
     try:

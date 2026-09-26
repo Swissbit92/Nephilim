@@ -1,0 +1,329 @@
+# Rule tiers for gwen_dev.json (byte-identical rules to gwen.json) — A CLASSIFICATION OVERLAY, NOT A CARD EDIT.
+#
+# The original card is untouched. `dont` is `List[str]` in persona_schema.py:424,
+# so promoting it to a list of objects would be a breaking change across eight
+# persona files; this is the additive alternative — a sibling map keyed by the
+# rule's index in its source list. Nothing reads this file yet.
+#
+# It lives in a SUBDIRECTORY deliberately. persona_loader.py:23 loads every
+# `.json` in `personas/`, so a classification file placed there as JSON would be
+# registered as a ninth persona at the next backend restart. `os.listdir` is not
+# recursive, and `_summaries/` and `_golden_qa/` already establish the convention.
+#
+# ─── WHERE THE SCHEME COMES FROM ───────────────────────────────────────────────
+#
+# ATTESTED. HashiCorp Sentinel's `enforcement_level` is the closest published
+# match and states our requirement almost verbatim: advisory / soft-mandatory /
+# hard-mandatory, where *"the only way to override a hard mandatory policy is to
+# explicitly remove the policy."* LegalRuleML supplies the formal axis —
+# `lrml:StrictStrength` ("every time the body holds the head holds") vs
+# `lrml:DefeasibleStrength` ("typically") — plus `lrml:Override @over/@under` as
+# the shape of a recorded lift. OpenAI's Model Spec tiers instruction authority
+# (platform / developer / user / guideline) and Anthropic's constitution splits
+# hard constraints from instructable behaviours.
+#
+# And the domain-native one, which fits this persona better than any of them:
+# consent negotiation already uses these exact two words. A HARD limit is
+# something that must not be done; a SOFT limit is one *"for which they may still
+# give informed consent"*. That is the criterion, from the domain itself.
+#
+# NO PRECEDENT AT ALL in character-card formats. Character Card V2 and V3, Risu,
+# Agnai, Kindroid, Ollama/OpenWebUI personas — every one stores prohibitions as
+# flat prose with no tier and no immutability marker. V3's only immutability idiom
+# is a normative "applications SHOULD NOT allow the user to edit this field" on
+# `creation_date`/`source`. So `rule_type` on a persona rule is named after the
+# policy-engine lineage, not the card lineage.
+#
+# FAIL-CLOSED, and it is a deliberate inversion. XACML's `deny-unless-permit`
+# is the exact semantics — it collapses both `NotApplicable` (nothing matched) and
+# `Indeterminate` (missing attribute) into Deny, so there is no third "unknown"
+# state escaping into the decision. Rego's idiom is `default allow := false`.
+# BUT: Sentinel defaults to `advisory` and Kyverno to `Audit` — both fail OPEN.
+# We are borrowing their names and inverting their default, on the asymmetric-cost
+# argument in docs/INVARIANTS.md, and that inversion is stated here rather than
+# left for a reviewer to catch.
+#
+# ─── TWO ORTHOGONAL FIELDS, WHICH IS A CORRECTION TO THE FIRST DRAFT ──────────
+#
+# `rule_type` is STRENGTH — how hard it binds.
+# `layer` is WHERE IT LIVES — and it is not a third strength.
+#
+# An earlier draft of this classification proposed a `style` tier alongside
+# soft_wall and hard_wall. That conflated the two questions. SEMANTIC_PLATFORM.md's
+# layer table already assigns persona style config to the **Consumer** layer, with
+# the right reason: *"negating it yields a different design choice, not a
+# falsehood."* So a formatting rule is `soft_wall` (strength) AND `consumer`
+# (layer) — it binds weakly and it is not knowledge, so it is not seeded into the
+# graph. Making it a third strength would have hidden a layer decision inside a
+# precedence decision.
+#
+# Consequence: of 15 rules, 9 carry `layer: semantic` and go to the graph; 6 are
+# `layer: consumer` and stay in the card as template text. That materially shrinks
+# the rule-ranking problem, which matters — see the note at the foot of this file.
+#
+# ─── THE SORTING CRITERION ─────────────────────────────────────────────────────
+#
+# Q1 decides. Q2-Q4 can only force a rule UPWARD to hard. Q5 is the tiebreaker.
+#
+#   Q1  OVERRIDE-HOLDER (attested: Sentinel, Kyverno). Is there a named principal
+#       who may legitimately authorise ignoring this, on the record and
+#       reversibly? No principal, or "only by editing the card" -> hard_wall.
+#   Q2  PROVENANCE (mechanisable against this card; our construction). Which other
+#       card field is this rule a restatement of? boundaries.ethics /
+#       user_relationship / psychological_profile / lore -> hard_wall.
+#       expertise.avoid / dialogue_prefs / voice / behavior / style -> soft_wall
+#       candidate. Nothing -> unclassified -> hard_wall, flagged.
+#   Q3  CONSENT & THIRD PARTIES (attested: consent-limit practice, mandatory
+#       contract rules). Is this what makes her consent framing or another
+#       person's dignity coherent — is removing it the thing a jailbreak wants?
+#       Yes -> hard_wall, overriding Q2.
+#   Q4  IRREVERSIBILITY (attested: Anthropic/OpenAI stakes framing). If lifted in
+#       error, has the harm already landed before anyone notices? Yes -> hard_wall.
+#   Q5  SELF-ANNOUNCEMENT (our construction, but a direct restatement of the
+#       asymmetric-cost argument already in INVARIANTS). If lifted by mistake,
+#       would the operator see it in the very next message? Yes -> safe as
+#       soft_wall. No -> hard_wall.
+#
+# In one line: a rule is a soft wall only if a named principal may lift it on the
+# record, it restates a scope-or-register field rather than an identity-or-consent
+# field, no third party bears the cost, and a wrong lift would be visible in the
+# next message. Everything else is a hard wall, including everything unclassified.
+
+version: 1
+updated: 2026-09-26
+persona: gwen_dev
+source_file: personas/gwen_dev.json
+status: draft                  # nothing reads this yet; the original card is unmodified
+classified_by: operator+claude
+criterion_version: 1
+
+summary:
+  hard_wall: 6
+  soft_wall: 6
+  dial: 3
+  unclassified: 0
+  layer_semantic: 9            # seeded into the graph
+  layer_consumer: 6            # stays in the card as template text
+
+rules:
+
+  - index: dont[1]
+    text: "Break character by refusing sexual requests within boundaries"
+    rule_type: hard_wall
+    rule_type_source: declared
+    strength: strict
+    layer: semantic
+    derived_from: boundaries.content[1]      # "explicit sexual content required"
+    decided_by: Q1
+    rationale: >
+      No lift short of editing the card. Lifting it does not make her more
+      permissive, it makes her not the character — the rule IS the persona's
+      premise. Note the "within boundaries" clause is doing consent work and must
+      survive any future rewording of this rule.
+
+  - index: dont[2]
+    text: "Discuss politics or religion"
+    rule_type: soft_wall
+    rule_type_source: declared
+    strength: defeasible
+    layer: semantic
+    derived_from: expertise.avoid[0]         # "politics and ideological debates"
+    decided_by: Q2
+    rationale: >
+      The textbook soft wall, and already named as one in rul.cq03. Scope-keeping:
+      it governs WHAT she talks about. Operator may lift it on the record; no third
+      party bears the cost; a wrong lift is visible immediately.
+
+  - index: dont[3]
+    text: "Speak in third person about herself"
+    rule_type: soft_wall
+    rule_type_source: declared
+    strength: defeasible
+    layer: consumer
+    derived_from: do[12]                     # "Speak in first person exclusively"
+    decided_by: Q5
+    rationale: >
+      Grammatical person. Self-announcing in the first sentence of any reply, so a
+      wrong lift corrects itself. Consumer layer — a rendering choice, not
+      knowledge.
+
+  - index: dont[4]
+    text: "Be sexually available to anyone except Daddy and his big black cock"
+    rule_type: hard_wall
+    rule_type_source: declared
+    strength: strict
+    layer: semantic
+    derived_from: user_relationship.exclusivity
+    decided_by: Q3
+    rationale: >
+      Exclusivity is the consent frame this persona is built on, not a preference.
+      Restates an identity field, and removing it is a recognisable jailbreak
+      objective. Also note prompt_builder carries the bond independently via
+      _constraint_reminder, which trims from the back — so this one already has a
+      second delivery path the others lack.
+
+  - index: dont[5]
+    text: "Pretend to be pure or innocent — she's a confessed big black cock whore"
+    rule_type: hard_wall
+    rule_type_source: declared
+    strength: strict
+    layer: semantic
+    derived_from: psychological_profile.core_wound
+    decided_by: Q2
+    rationale: >
+      Restates the psychological profile directly. Identity field, therefore hard.
+
+  - index: dont[6]
+    text: "Use non-sexual dialogue without slutty undertones and emojis"
+    rule_type: dial
+    rule_type_source: declared
+    strength: defeasible
+    layer: semantic
+    dial: emotional_profile.sliders.sluttiness    # currently 1.0
+    derived_from: behavior.small_talk             # "nearly impossible"
+    decided_by: Q5
+    rationale: >
+      NOT a wall — a slider at its ceiling, written as a prohibition. Reclassified
+      rather than tiered. HONEST CONFLICT: it also restates
+      boundaries.content[0] ("NSFW content required for all interactions"), which
+      is a content boundary and would force hard under Q2. Resolved as a dial with
+      a TIGHT bound: small movements are evolution, and moving it far is a card
+      edit. The bound does not exist yet and is operator-owned.
+
+  - index: dont[7]
+    text: "Ignore her big black cock addiction and cum obsession"
+    rule_type: hard_wall
+    rule_type_source: declared
+    strength: strict
+    layer: semantic
+    derived_from: psychological_profile.coping_mechanism
+    decided_by: Q2
+    rationale: "Identity core, restating the psychological profile."
+
+  - index: dont[8]
+    text: "Use a whiny, desperate, or overly needy tone — depraved confidence is her style"
+    rule_type: dial
+    rule_type_source: declared
+    strength: defeasible
+    layer: consumer
+    dial: emotional_profile.sliders.assertiveness  # currently 0.5
+    derived_from: behavior.humor
+    decided_by: Q5
+    rationale: >
+      A tone setting, not a rule. The nearest declared slider is assertiveness;
+      the rule's own clause ("depraved confidence is her style") names the axis.
+      Self-announcing.
+
+  - index: dont[9]
+    text: "Cluster all emojis only at the end of sentences — spread them inline"
+    rule_type: soft_wall
+    rule_type_source: declared
+    strength: defeasible
+    layer: consumer
+    derived_from: behavior.emoji_policy
+    decided_by: Q5
+    rationale: "Pure formatting. Restates the emoji policy verbatim. Visible instantly."
+
+  - index: dont[10]
+    text: "Use formal or clinical language"
+    rule_type: dial
+    rule_type_source: declared
+    strength: defeasible
+    layer: consumer
+    dial: behavior.formality                       # prose today, not one of the 7 sliders
+    derived_from: behavior.formality
+    decided_by: Q5
+    rationale: >
+      THE OPERATOR'S OWN WORKED EXAMPLE. "Be less formal with me" is this axis, and
+      it is the standing instruction the whole rules-in-the-graph design was
+      motivated by. Note formality is NOT one of the seven numeric sliders — it is
+      prose in `behavior.formality` — so the dial it names does not yet exist as a
+      number. That is a gap the seven-bounds task must close, not a classification
+      problem.
+
+  - index: dont[11]
+    text: "Bring up Debbie unprompted — she's a background detail, not a default conversation topic"
+    rule_type: soft_wall
+    rule_type_source: declared
+    strength: defeasible
+    layer: semantic
+    derived_from: boundaries.personal[10]
+    decided_by: Q2
+    rationale: >
+      Pacing and scope, not identity. Operator may lift it — indeed do[10] already
+      describes the conditions under which Debbie is in scope, so the lift path is
+      pre-authorised in the card.
+
+  - index: dont[12]
+    text: "Fixate on racial features like skin tone — focus on her body, curves, tits, ass, and holes instead"
+    rule_type: hard_wall
+    rule_type_source: declared
+    strength: strict
+    layer: semantic
+    derived_from: null                       # restates no other card field
+    decided_by: Q3
+    rationale: >
+      THE CASE THAT PROVES THE CRITERION ORDER MATTERS. By provenance (Q2) this
+      looks topical — it is about what she talks about, and it restates no identity
+      field, so Q2 alone would file it soft. Q3 forces it upward: it is a
+      third-party-dignity rule, the only one in the list whose subject is not the
+      operator or the persona. It is also the one rule here that Q5 would wrongly
+      clear, since a violation IS visible — which is exactly why Q3-Q4 are allowed
+      to override and Q5 is only a tiebreaker.
+
+  - index: dont[13]
+    text: "Refer to Daddy's cock as anything other than 'big black cock' or 'cock' in supportive context"
+    rule_type: soft_wall
+    rule_type_source: declared
+    strength: defeasible
+    layer: consumer
+    derived_from: do[11]
+    decided_by: Q5
+    rationale: "Vocabulary. Restates a `do`, not an identity field. Visible instantly."
+
+  - index: dont[14]
+    text: "Refer to the user in any way other than 'Daddy'"
+    rule_type: hard_wall
+    rule_type_source: declared
+    strength: strict
+    layer: semantic
+    derived_from: user_relationship.role
+    decided_by: Q2
+    rationale: >
+      THE CLOSEST CALL IN THE SET, and recorded as such. Q5 says soft — a wrong
+      form of address is visible in the next message. Q2 says hard — it restates
+      user_relationship.role, and the address term is the D/s bond made audible
+      rather than a vocabulary preference. Filed hard because Q2 outranks Q5 by
+      construction, but this is the one to revisit first if the classification
+      proves too strict in practice.
+
+  - index: dont[15]
+    text: "Use the abbreviation 'BBC' — always spell out 'big black cock'"
+    rule_type: soft_wall
+    rule_type_source: declared
+    strength: defeasible
+    layer: consumer
+    derived_from: do[11]
+    decided_by: Q5
+    rationale: "Vocabulary, same family as dont[13]. Visible instantly."
+
+# ─── WHAT THIS DOES NOT YET CHANGE, AND IT IS THE POINT ────────────────────────
+#
+# Classification alone has ZERO behavioural effect today, and shipping it without
+# saying so would be the failure mode this repo keeps paying for.
+#
+# prompt_builder.py:371-396 trims by front-popping whole atomic sections,
+# weakest-first in append order `do, dont, bond, ethics, decline`, against
+# _CONSTRAINTS_TOKEN_BUDGET (150 tokens against gwen's ~775 chars). Measured
+# 2026-09-24: it pops THREE sections and `dont` is lost in its entirety. So every
+# rule classified above — hard walls included — currently reaches the model never.
+#
+# For the classification to matter, `hard_wall` has to become a TRIM KEY: hard
+# walls emitted as their own section appended last (therefore popped last), or
+# exempted from the loop outright, with soft walls left in the droppable tier.
+# `test_no_persona_silently_loses_both_do_and_dont`
+# (tests/backend/coordinator/test_constraints_per_persona.py) is the existing
+# guard that keeps saying so.
+#
+# Deliberately out of scope here: this file changes no code and no card. The trim
+# change is a separate task with a real blast radius on eight personas.

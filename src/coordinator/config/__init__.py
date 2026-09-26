@@ -19,6 +19,7 @@ from pydantic_settings import BaseSettings
 
 from .agent import AgentSettings, ToolBrainSettings
 from .auth import AuthSettings
+from .graph import GraphSettings
 from .groundedness import GroundednessSettings
 from .llm import OllamaSettings
 from .lore import LoreSettings
@@ -75,6 +76,7 @@ class CoordinatorSettings(BaseSettings):
     search: SearchSettings = Field(default_factory=SearchSettings)
     web_search: WebSearchSettings = Field(default_factory=WebSearchSettings)
     groundedness: GroundednessSettings = Field(default_factory=GroundednessSettings)
+    graph: GraphSettings = Field(default_factory=GraphSettings)
 
     model_config = {
         "env_file": ".env",

@@ -45,13 +45,36 @@ async def lifespan(app: FastAPI):
     # Publish the composition-root snapshot for the request path (dependencies.py).
     from .startup import get_app_state
     app.state.container = get_app_state()
-    yield
-    # Shutdown — stop strategy scheduler gracefully
-    from .startup import get_strategy_scheduler
-    scheduler = get_strategy_scheduler()
-    if scheduler and scheduler.running:
-        scheduler.shutdown(wait=False)
-        logger.info("Strategy scheduler stopped")
+    try:
+        yield
+    finally:
+        # Shutdown, in DEPENDENCY ORDER, each step in its own try/finally.
+        #
+        # ORDER IS LOAD-BEARING: producers of graph work stop BEFORE the driver
+        # closes. The driver is documented as concurrency-safe while `close()`
+        # explicitly is NOT — "make sure you are not using the driver object or
+        # any resources spawned from it while calling this method. Failing to do
+        # so results in unspecified behavior." A first draft of this block closed
+        # the driver first, which would be a use-after-close the moment anything
+        # graph-touching is added to the scheduler or the pre-warm threads.
+        #
+        # THE try/finally IS ALSO LOAD-BEARING, and it is why this block grew:
+        # without it a raising scheduler.shutdown() skips close_graph_driver()
+        # entirely — and in driver 6.x a leaked driver is SILENT. All that remains
+        # of the old __del__ behaviour is a ResourceWarning, which Python ignores
+        # by default, so the leak produces no error, no log and no warning. Just
+        # orphaned sockets and threads for the life of the process. In 5.x the GC
+        # quietly saved you; it no longer does.
+        from .startup import close_graph_driver, get_strategy_scheduler
+        try:
+            scheduler = get_strategy_scheduler()
+            if scheduler and scheduler.running:
+                scheduler.shutdown(wait=False)
+                logger.info("Strategy scheduler stopped")
+        except Exception:
+            logger.exception("Strategy scheduler shutdown failed")
+        finally:
+            close_graph_driver()
 
 
 # ----------------- FastAPI App -----------------
