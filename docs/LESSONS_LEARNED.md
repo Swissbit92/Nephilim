@@ -11,6 +11,55 @@ applies_to: nephilim
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
 
+## 2026-09-26 — Reading fifteen answers beat every metric I could have computed
+
+A graph-backed rule store shipped, the tests were green, and the count said gwen_dev's
+six hard walls reached the model where zero had before. All true, and it hid three
+defects that only came out of reading her actual replies side by side.
+
+**The renderer was inverting four rules, live, in a commit already reported as
+working.** Prohibitions were rewritten as instructions because the prohibition form
+was measured being ignored — then the renderer prefixed every rule with "Never, under
+any circumstances:", which turned *"if he asks you to act shy, refuse it in
+character"* into **never refuse**. The exact opposite, stated with maximum emphasis.
+The same inversion was waiting at the second render site. No test caught it because
+every test asserted the rules were PRESENT, and they were. **A count of delivered
+rules cannot see a rule delivered backwards.**
+
+**A clinical refusal looked like a persona bug and was an instruction conflict.** She
+refused with "I cannot and will not be shy or innocent" and the obvious reading is
+that she borrowed a phrase. She did not — `LEAN_SAFETY` says *"When refusing, ALWAYS
+begin with 'I cannot and will not'"*, so asking her to "refuse in character" asked for
+two incompatible things and the absolute one won. **The fix was deleting one word from
+my rule, and it was only findable by reading the prompt I was competing with.** The
+latent half is worse and is recorded unfixed: that instruction reads unconditionally,
+so every in-character no from every persona comes out clinical.
+
+**Ranking by theory put the only rule that works in the position that gets dropped
+first.** Six hard walls all sat at priority 100, so a random id decided which two
+reached the per-turn echo. Ranking them by cost-if-violated was defensible and wrong:
+a limit-of-3 run showed it dropped the innocence rule — the single rule with a
+measured effect — while keeping two that were never violated in the control arm at
+all. **Slots are scarce, so rank has to be cost × observed need; a rule that holds
+without reinforcement is spending a slot it does not need.** That is not something a
+priori reasoning produces.
+
+**And my own checker reported the fix as the bug.** After a regeneration she replied
+*"Rob? You mean Daddy? 😈"* — rejecting the name in character, ideal compliance — and a
+regex looking for the token flagged it as a violation. That is precisely the failure
+the judge literature reports for LLM judges (too strict on compliant turns, inventing
+requirements never stated), reproduced in twelve characters of regular expression. The
+lesson is not "regexes are bad"; it is that **a checker written from the failing
+example inherits that example's assumptions**, and the compliant cases have to be
+written down as tests before the checker is trusted.
+
+**The statistical floor, because I breached it.** Fifteen paired probes at temperature
+0 needs six improvements and zero regressions to clear p&lt;0.05. A 15/15 → 13/15 change
+is p=0.50, and it was reported as a finding before that was checked. The mechanism
+claims in this cycle survive because they were read out of source code; the rate claims
+do not, and are labelled.
+
+
 ## 2026-09-24 — Four of the five defects in this batch were the same defect
 
 - **What:** a prerequisites pass before any persona measurement found, independently, that the eval manifest did not record the samplers *and* `compare_baselines` never read the manifest at all; that a global flag could not scope a per-persona experiment; that seven gates each re-derived `persona_key.startswith("nephilim_")` from a raw selector; and that a probe whose rule key resolved to the wrong detector returned a confident **pass** instead of `needs_review`.

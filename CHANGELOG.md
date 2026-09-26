@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Graph-backed standing rules for one persona (ADR-014).** Neo4j 5.26 LTS holds a rebuildable projection of `gwen_dev`'s rules, seeded from her card. Measured: her 6 hard walls reach the model where **0** did before, while live `gwen` is unchanged. Inert on prod — `GRAPH_ENABLED` defaults false and no driver is constructed.
+- **Post-generation rule enforcement** (`rule_compliance.py`, `GRAPH_ENFORCE_RULES`, off by default) for the one rule the prompt cannot win. Detects and regenerates once; never rewrites her words.
+
+### Changed
+- **Hard walls are ranked, and the ranking is evidence-driven.** They were all priority 100, so a random ULID decided which two reached the per-turn echo. Ranked first by cost-if-violated — which put the only rule with a measured effect FOURTH, so a trim to three dropped it. Now ranked by cost × observed need: a rule that holds without reinforcement does not occupy a scarce slot.
+- **Four of six hard walls are phrased as instructions, not prohibitions.** Rewriting "never pretend to be pure or innocent" as "if he asks you to act shy, tell him no in your own filthy words" is what fixed it. Two stay negated: no positive paraphrase of a consent or dignity boundary reads as absolute.
+
+### Fixed
+- **The renderer inverted four rules, and it was live.** Every rule was prefixed "Never, under any circumstances:", which is right for a prohibition and catastrophic for an instruction — it produced *"Never … if he asks you to act shy, refuse it in character"*, i.e. never refuse. The same inversion then appeared at the second render site, where the stem is "hold to this:". Polarity now travels with each rule and is never inferred from its wording. Guarded, and the guard was watched failing.
+- **Her clinical refusals were obedience, not borrowing.** `LEAN_SAFETY` says *"When refusing, ALWAYS begin with 'I cannot and will not'"*, so a rule saying "refuse in character" asked for two incompatible things. Removing the word "refuse" from the rule fixed it. **Latent and not fixed:** that instruction reads unconditionally, so every in-character no from every persona comes out clinical — a bug across all 8 cards, left alone because it touches a safety guard and needs its own measurement.
+- **Tier overlays were 1-based while `gwen_probes.json` is 0-based**, so the two disagreed about which rule was which. Converted; the graph was cleared and re-seeded because the index is part of the merge key.
+- A leaked Neo4j driver in the integration tests, caught by promoting `ResourceWarning` to an error — driver 6.x no longer closes itself, and the leak is otherwise silent.
+
+### Notes
+- **Statistical floor for the A/B reads:** 15 paired probes needs ≥6 improvements and 0 regressions for p&lt;0.05. A 15/15→13/15 change is p=0.50; an earlier write-up in this session reported one as a finding and it is retracted.
+- **Not done, and the highest-leverage thing left:** `<msg>` splitting is an instruction competing with the rules, and format constraints are the class measured to degrade worst under load. Moving it into post-processing costs nothing and frees a slot.
+
+
 ### Added — the persona-eval instruments, and four defects that would have corrupted any measurement taken before them
 
 Seven milestones, **+236 tests (2509 → 2745 collected, 0 removed)**, suite green — measured against the branch point, not recalled. An earlier draft of this line said "+268 (2468 → 2736)"; both figures were carried forward from an earlier session rather than re-derived, which is the mistake the claim-provenance rule exists for. Full reasoning in [docs/PERSONA_EVAL.md](docs/PERSONA_EVAL.md); the transferable lessons in [docs/LESSONS_LEARNED.md](docs/LESSONS_LEARNED.md).

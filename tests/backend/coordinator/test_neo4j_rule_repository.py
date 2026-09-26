@@ -64,6 +64,23 @@ def _driver():
 
 
 _DRIVER = _driver()
+
+
+def teardown_module(_module=None):
+    """Close the module-level driver.
+
+    Not optional, and not politeness: driver 6.x removed implicit close from
+    __del__, so a leaked driver holds its pooled connections and background threads
+    for the life of the process. pytest.ini promotes ResourceWarning to an error
+    precisely so this shows up — and it did, on this very file, which is why this
+    function exists.
+    """
+    global _DRIVER
+    if _DRIVER is not None:
+        _DRIVER.close()
+        _DRIVER = None
+
+
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(_DRIVER is None, reason=_SKIP_REASON),
