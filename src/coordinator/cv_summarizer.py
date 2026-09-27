@@ -404,6 +404,33 @@ def _release_lock():
 
 # ---------------- Public API ----------------
 
+def reusable_cached_summary(key: str, card: Dict) -> Tuple[Optional[Dict], bool]:
+    """Can an existing cached summary be reused for this card? -> (payload, restamp).
+
+    THE ONLY PLACE THIS DECISION IS MADE. It used to be inlined in three separate
+    functions, and on 2026-09-27 that cost all nine personas their identity text:
+    ``sliders`` was removed from the fingerprint and the adoption path was added to
+    ``get_or_build_cv_summary`` only. ``ensure_all_summaries`` kept its own copy of
+    the check, runs at boot, and so regenerated every summary through the LLM —
+    turning a no-op migration into an irreversible content change, because
+    ``personas/_summaries/`` is gitignored and the text is non-deterministic.
+
+    Returns:
+        (None, False)      -> nothing reusable; build it.
+        (payload, False)   -> valid under the current fingerprint; use as-is.
+        (payload, True)    -> valid under the LEGACY fingerprint; reuse the TEXT and
+                              re-stamp the hash. No LLM call, no drift.
+    """
+    cached = _load_cached_summary(key)
+    if not cached or not isinstance(cached.get("summary"), str):
+        return None, False
+    if cached.get("hash") == _fingerprint(card):
+        return cached, False
+    if cached.get("hash") == _legacy_fingerprint(card):
+        return cached, True
+    return None, False
+
+
 def get_or_build_cv_summary(selector: Optional[str]) -> Dict:
     """
     Get or build CV summary for persona.
@@ -425,17 +452,10 @@ def get_or_build_cv_summary(selector: Optional[str]) -> Dict:
         raise RuntimeError("No personas available.")
     key = (card.get("key") or "Persona").split()[0].capitalize()
     want_hash = _fingerprint(card)
-    cached = _load_cached_summary(key)
-    if cached and cached.get("hash") == want_hash and isinstance(cached.get("summary"), str):
+    cached, restamp = reusable_cached_summary(key, card)
+    if cached and not restamp:
         return cached
-
-    # Adopt a summary cached under the pre-sliders fingerprint rather than paying an
-    # LLM call and drifting the text. Re-stamps the hash in place; no regeneration.
-    if (
-        cached
-        and isinstance(cached.get("summary"), str)
-        and cached.get("hash") == _legacy_fingerprint(card)
-    ):
+    if cached and restamp:
         logger.info("[CV] adopting summary for '%s' under the new fingerprint (no rebuild)", key)
         return _save_summary(key, want_hash, cached["summary"])
 
@@ -445,17 +465,17 @@ def get_or_build_cv_summary(selector: Optional[str]) -> Dict:
     if not _lock_owned_by_me(me):
         if not _acquire_lock(timeout_sec=60.0, poll_sec=0.2):
             # Best-effort: if we couldn't get the lock quickly, re-check cache and bail
-            cached = _load_cached_summary(key)
-            if cached and cached.get("hash") == want_hash:
+            cached, restamp = reusable_cached_summary(key, card)
+            if cached and not restamp:
                 return cached
             raise RuntimeError("Summary builder busy; please retry shortly.")
         need_release = True
 
     try:
         # Double-check cache after lock to avoid duplicate work
-        cached = _load_cached_summary(key)
-        if cached and cached.get("hash") == want_hash and isinstance(cached.get("summary"), str):
-            return cached
+        cached, restamp = reusable_cached_summary(key, card)
+        if cached:
+            return cached if not restamp else _save_summary(key, want_hash, cached["summary"])
         text = _make_cv_summary(card)
         return _save_summary(key, want_hash, text)
     finally:
@@ -522,8 +542,13 @@ def ensure_all_summaries() -> Tuple[int, int]:
         selector = card.get("key")
         key = (card.get("key") or "Persona").split()[0].capitalize()
         want_hash = _fingerprint(card)
-        cached = _load_cached_summary(key)
-        if cached and cached.get("hash") == want_hash and isinstance(cached.get("summary"), str):
+        cached, restamp = reusable_cached_summary(key, card)
+        if cached and not restamp:
+            skipped += 1
+            continue
+        if cached and restamp:
+            logger.info("[CV] adopting summary for '%s' under the new fingerprint (no rebuild)", key)
+            _save_summary(key, want_hash, cached["summary"])
             skipped += 1
             continue
         text = _make_cv_summary(card)

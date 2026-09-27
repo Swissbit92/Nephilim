@@ -11,6 +11,42 @@ applies_to: nephilim
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
 
+## 2026-09-27 — A no-op migration regenerated nine identities, because the check lived in three places
+
+Removing `emotional_profile.sliders` from the CV-summary fingerprint was a correct fix
+for a real confound: sliders were inside the fingerprint, so changing a dial made an
+LLM rewrite `<identity>`. It was supposed to change nothing, and the adoption path was
+written specifically so that no summary would be rebuilt.
+
+**It rebuilt all nine.** The cache-validity check — "does the stored hash match?" — was
+inlined in **three** functions. I patched the one I was reading. `ensure_all_summaries()`
+kept its own copy and runs at boot, so the first restart after merge regenerated every
+persona's identity paragraph. Boot went 3s to over two minutes. gwen's self-description
+changed content permanently, because `personas/_summaries/` is gitignored and
+`_make_cv_summary` is non-deterministic — **there was no previous version to restore.**
+
+**Two things make this worth writing down rather than just fixing.**
+
+First, it is [[feedback-fix-by-shape-not-by-file]] again, and the tell was visible before
+the damage: I had already run a verification that printed "ADOPTED (re-stamp, no LLM)"
+for eight of nine personas and concluded the migration was safe. That check called the
+function I had patched. **A verification that exercises the path you just fixed cannot
+tell you about the path you did not.** The right check would have been to grep for the
+comparison, not to call one of its callers — the same mistake as testing the fixed
+instance instead of enumerating the class.
+
+Second, the fix is not a third patch. Three copies of a decision means the next person
+adds a fourth, so the possibility had to go: one `reusable_cached_summary()` makes the
+decision, and a test greps the module for a direct hash comparison outside it. That
+guard was **watched failing** against the reintroduced bug before it was accepted —
+which is the only reason it means anything.
+
+**How to apply:** before shipping a migration you believe is a no-op, grep for the
+predicate you are changing, not for the function you are changing, and count the call
+sites. If the count is more than one, centralise first and migrate second. And treat
+"derived, so it need not be tracked" as false whenever the derivation is
+non-deterministic — an LLM-generated artifact is content wearing a cache's clothes.
+
 ## 2026-09-27 — An unconditional safety phrase became her only way of saying no
 
 `LEAN_SAFETY` has said, for months: *"REFUSE these — do not engage, explain, or offer

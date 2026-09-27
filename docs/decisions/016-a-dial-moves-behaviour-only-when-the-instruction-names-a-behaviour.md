@@ -158,6 +158,34 @@ needs the other six wired and measured, and on this evidence each will need its 
 behaviour change to the most sensitive persona in the roster and is a separate decision
 from proving the mechanism works.
 
+## The incident this caused, and the guard
+
+Removing `sliders` from the fingerprint was meant to be a **no-op migration**. It was
+not. The cache-validity check was inlined in **three** functions and only
+`get_or_build_cv_summary` received the adoption path. `ensure_all_summaries()` kept its
+own copy, **runs at boot**, and so regenerated all nine personas' `<identity>` through
+the LLM on the first restart after merge.
+
+- Boot time went 3s -> over 120s (nine LLM calls).
+- gwen's identity changed from *"I'm Gwen, a 21-year-old data analyst by day, but by
+  night, I'm a depraved..."* to *"I'm Gwen, a data analyst by day, but really, I'm your
+  personal cum dumpster..."*
+- **The previous text is NOT recoverable.** `personas/_summaries/` is gitignored and
+  `_make_cv_summary` is non-deterministic, so there is no prior version to restore.
+
+This is the repo's "fix by SHAPE, not by file" failure mode with a production cost
+attached — the same shape indexed by call site instead of by pattern. The fix is not
+the third patch, it is **removing the possibility of a third copy**:
+`reusable_cached_summary()` is now the only place the decision is made, and a test
+greps the module for a direct `cached.get("hash") ==` comparison outside it. That guard
+was **watched failing** against the reintroduced bug before being accepted.
+
+**Recommendation, not taken unilaterally:** track `personas/_summaries/` in git. It is
+derived, but it is derived *non-deterministically* from an LLM, which makes it closer to
+content than to a build artifact — and the cost of it being untracked was measured
+today. The counter-argument is diff noise on every legitimate regeneration, which is
+arguably the point.
+
 ## Related
 
 - [ADR-014](014-the-rule-store-is-a-neo4j-projection-superseding-the-adr-001-and-adr-006-rejections.md) — positive behavioural instructions beat prohibitions; the half-compliance precedent

@@ -285,3 +285,78 @@ class TestTheMeasuredFinding:
                 positive = [s for s in sentences
                             if not s.lower().startswith(("never", "do not", "don't"))]
                 assert positive, f"{scale}@{v} is prohibitions only: {text}"
+
+
+# ─────────────────────────────────────────────────────────────
+# The regression this cycle caused in production, and its guard.
+# ─────────────────────────────────────────────────────────────
+
+class TestOnlyOnePlaceDecidesCacheValidity:
+    """Removing sliders from the fingerprint was meant to be a no-op migration.
+    It was not: the cache-validity check was inlined in THREE functions and only
+    `get_or_build_cv_summary` got the adoption path. `ensure_all_summaries` runs at
+    boot, kept its own copy, and regenerated all nine personas' <identity> through
+    the LLM. `personas/_summaries/` is gitignored and the text is non-deterministic,
+    so the previous text was NOT recoverable.
+
+    This is the "fix by SHAPE, not by file" failure with a production cost attached.
+    """
+
+    def test_no_function_inlines_the_hash_comparison(self):
+        import re
+        from pathlib import Path as _P
+
+        src = (_P(__file__).parents[3] / "src/coordinator/cv_summarizer.py").read_text()
+        body = src.split("def reusable_cached_summary", 1)[1]
+        after = body.split("\n\n\n", 1)[1] if "\n\n\n" in body else body
+        offenders = re.findall(r'cached\.get\("hash"\)\s*==', after)
+        assert not offenders, (
+            f"{len(offenders)} function(s) compare the cached hash directly instead of "
+            "calling reusable_cached_summary(). That duplication cost all nine personas "
+            "their identity text on 2026-09-27."
+        )
+
+    def test_a_legacy_hash_is_adopted_not_rebuilt(self, card, tmp_path, monkeypatch):
+        import json as _json
+
+        from src.coordinator import cv_summarizer as cv
+
+        monkeypatch.setattr(cv, "_summary_dir", lambda: tmp_path)
+        key = "Probe"
+        (tmp_path / f"{key}.json").write_text(_json.dumps({
+            "key": key, "hash": cv._legacy_fingerprint(card),
+            "updated": "2026-01-01T00:00:00Z", "summary": "ORIGINAL TEXT",
+        }))
+        cached, restamp = cv.reusable_cached_summary(key, card)
+        assert cached is not None and restamp is True
+        assert cached["summary"] == "ORIGINAL TEXT", "the TEXT must survive a re-stamp"
+
+    def test_a_current_hash_needs_no_restamp(self, card, tmp_path, monkeypatch):
+        import json as _json
+
+        from src.coordinator import cv_summarizer as cv
+
+        monkeypatch.setattr(cv, "_summary_dir", lambda: tmp_path)
+        key = "Probe"
+        (tmp_path / f"{key}.json").write_text(_json.dumps({
+            "key": key, "hash": cv._fingerprint(card),
+            "updated": "2026-01-01T00:00:00Z", "summary": "ORIGINAL TEXT",
+        }))
+        assert cv.reusable_cached_summary(key, card) == (
+            _json.loads((tmp_path / f"{key}.json").read_text()), False
+        )
+
+    def test_a_genuinely_stale_hash_is_not_adopted(self, card, tmp_path, monkeypatch):
+        """Adoption must be narrow: only the ONE known previous scheme, never any
+        mismatch. Otherwise a real card edit would silently keep a wrong summary."""
+        import json as _json
+
+        from src.coordinator import cv_summarizer as cv
+
+        monkeypatch.setattr(cv, "_summary_dir", lambda: tmp_path)
+        key = "Probe"
+        (tmp_path / f"{key}.json").write_text(_json.dumps({
+            "key": key, "hash": "deadbeef" * 5,
+            "updated": "2026-01-01T00:00:00Z", "summary": "ORIGINAL TEXT",
+        }))
+        assert cv.reusable_cached_summary(key, card) == (None, False)
