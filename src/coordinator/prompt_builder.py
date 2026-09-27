@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama.llms import OllamaLLM
@@ -519,6 +519,98 @@ def _resolve_format_block(card: Dict) -> str:
     return _FORMAT_STYLES.get(style.strip().lower(), LEAN_FORMAT)
 
 
+# ---------------- Trait dials (ADR-016) ----------------
+#
+# A dial is delivered as a BEHAVIOURAL INSTRUCTION, never as a number and never as
+# an adjective. Three reasons, in descending order of evidence:
+#
+#   1. This repo measured it. ADR-014 found that rewriting four hard walls from
+#      prohibitions into positive behavioural instructions is what moved a rule that
+#      had been failing under every other phrasing. "Say what you want without
+#      softening it" is the same form; "assertiveness: 0.9" and "you are assertive"
+#      are not.
+#   2. `EmotionalState.to_narrative_context` already chose prose over the
+#      `- field: value` skeleton, and its docstring ties the skeleton to the voice
+#      homogenization measured in ADR-006 M1.
+#   3. A raw float asks the model to invent its own mapping from a number to an
+#      action, per turn, at temperature 0.9. The buckets do that mapping once, in
+#      code, deterministically.
+#
+# FIVE buckets, not a continuum. Nothing in this repo has shown the model can
+# distinguish more, and 0.05-resolution control would be a claim we cannot support.
+# The bucket edges are stated as a table so a future retune changes data, not logic.
+_ASSERTIVENESS_BUCKETS: List[Tuple[float, str]] = [
+    (0.20, "Defer to him. Ask what he wants before you say what you want, and put "
+           "your own wishes as questions rather than statements."),
+    (0.40, "Lean toward going along with him. When you want something, hint at it "
+           "rather than ask outright."),
+    (0.60, "Say what you want when he asks, and go along with him when he leads."),
+    (0.80, "Say what you want without waiting to be asked, and push back when you "
+           "disagree with him."),
+    (1.01, "State what you want plainly and do not soften it. Take the lead, and "
+           "say so openly when you want something different."),
+]
+
+
+def dials_enabled_for(card: Dict) -> bool:
+    """Is the trait-dial machinery on for THIS persona?
+
+    Card-level ``dials_in_prompt`` overrides the global ``PERSONA_DIALS_IN_PROMPT``,
+    matching :func:`constraints_enabled_for` exactly — including its accepted cost,
+    that an opted-in card is no longer silenced by the global.
+
+    Why the override matters more here than there: ``assertiveness`` is populated on
+    all NINE shipped cards, so a global-only flag would move all nine the moment it
+    flipped. ADR-014's measurement was nearly lost to that exact mistake.
+
+    Safe inside the lru_cached builder: a pure function of the card, which is a pure
+    function of the cached ``selector``.
+    """
+    declared = card.get("dials_in_prompt")
+    if isinstance(declared, bool):
+        return declared
+    from .config import get_settings  # noqa: PLC0415 - avoid import cycle at module load
+
+    return bool(get_settings().agent.dials_in_prompt)
+
+
+def render_dial(name: str, value: float) -> str:
+    """Map one dial value to its behavioural instruction. Pure and total.
+
+    Returns "" for an unknown dial rather than raising: only ``assertiveness`` is
+    wired, and a card is free to declare the other six. Silence for an unwired dial
+    is the honest rendering — the alternative is inventing prose for a number whose
+    effect has never been measured.
+    """
+    if name != "assertiveness":
+        return ""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if not 0.0 <= v <= 1.0:
+        return ""
+    for edge, text in _ASSERTIVENESS_BUCKETS:
+        if v < edge:
+            return text
+    return _ASSERTIVENESS_BUCKETS[-1][1]
+
+
+def _lean_dials_block(card: Dict) -> str:
+    """The wired dials for this card, one instruction per line. "" when off."""
+    if not dials_enabled_for(card):
+        return ""
+    sliders = ((card.get("emotional_profile") or {}).get("sliders")) or {}
+    if not isinstance(sliders, dict):
+        return ""
+    out: List[str] = []
+    for name, value in sliders.items():
+        line = render_dial(name, value)
+        if line:
+            out.append(line)
+    return "\n".join(out)
+
+
 def _lean_companion_block(card: Dict) -> str:
     """Compressed behavior + psychology — a few high-signal positive lines."""
     behavior = card.get("behavior") or {}
@@ -558,6 +650,15 @@ def _lean_companion_block(card: Dict) -> str:
             lines.append(f"Embody this tension: {first.strip()}.")
     elif isinstance(psych.get("core_wound"), str) and psych["core_wound"].strip():
         lines.append(f"Carry quietly: {psych['core_wound'].strip()}.")
+
+    # Trait dials LAST inside <companion>, and deliberately inside this block rather
+    # than as a sibling section: _lean_constraints_block front-pops whole sections
+    # against a 150-token ceiling and gwen already loses three of them, so a dial
+    # placed there would be the first to die and would be dead for the one persona
+    # under test. <companion> has no budget and is never trimmed.
+    dials = _lean_dials_block(card)
+    if dials:
+        lines.append(dials)
 
     return "\n".join(lines)
 
