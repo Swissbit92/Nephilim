@@ -82,3 +82,69 @@ def test_each_summary_is_well_formed(f):
     assert set(d) >= {"key", "hash", "summary"}, f.name
     assert isinstance(d["summary"], str) and d["summary"].strip(), f.name
     assert len(d["hash"]) == 40, f"{f.name}: hash is not a sha1"
+
+
+# ─────────────────────────────────────────────────────────────
+# Prompt-control flags must not touch the identity fingerprint.
+# ─────────────────────────────────────────────────────────────
+
+class TestPromptFlagsDoNotDriftTheIdentity:
+    """Second drift, 2026-09-28. The ADR-016 A/B harness writes `dials_in_prompt` and
+    `dial_contrast` onto the card to build an arm's prompt. Those keys were inside the
+    CV fingerprint, so building an arm regenerated <identity> through the LLM and saved
+    it under a hash derived from the temporarily-modified card. The harness restored the
+    card in its `finally`; it could not restore the summary.
+
+    Only tracking the summaries in git made this visible — it surfaced as a one-file
+    diff on the next boot. That is the tracking decision paying for itself on day one.
+    """
+
+    @pytest.fixture
+    def card(self):
+        import json as _json
+
+        return _json.loads((REPO / "personas" / "gwen.json").read_text())
+
+    @pytest.mark.parametrize("key,value", [
+        ("dials_in_prompt", True),
+        ("dial_contrast", "wide"),
+        ("constraints_in_prompt", True),
+    ])
+    def test_a_prompt_control_flag_does_not_move_the_fingerprint(self, card, key, value):
+        import copy
+
+        from src.coordinator.cv_summarizer import _fingerprint
+
+        modified = copy.deepcopy(card)
+        modified[key] = value
+        assert _fingerprint(modified) == _fingerprint(card), (
+            f"{key} is inside the CV fingerprint. Setting it regenerates <identity> "
+            "through the LLM — the 2026-09-28 drift."
+        )
+
+    def test_a_real_card_edit_still_moves_the_fingerprint(self, card):
+        """The exclude set must stay NARROW. Excluding too much would keep a stale
+        summary after a genuine card change, which is the opposite failure."""
+        import copy
+
+        from src.coordinator.cv_summarizer import _fingerprint
+
+        for path, value in [(("emotional_profile", "baseline"), "completely different"),
+                            (("behavior", "traits"), ["utterly different"])]:
+            modified = copy.deepcopy(card)
+            d = modified
+            for k in path[:-1]:
+                d = d.setdefault(k, {})
+            d[path[-1]] = value
+            assert _fingerprint(modified) != _fingerprint(card), path
+
+    def test_the_legacy_fingerprint_keeps_its_original_exclude_set(self, card):
+        """Adoption recognises the PRE-2026-09-27 scheme. Widening the legacy exclude
+        set would stop it matching those cached summaries and defeat adoption."""
+        import copy
+
+        from src.coordinator.cv_summarizer import _legacy_fingerprint
+
+        modified = copy.deepcopy(card)
+        modified["dials_in_prompt"] = True
+        assert _legacy_fingerprint(modified) != _legacy_fingerprint(card)

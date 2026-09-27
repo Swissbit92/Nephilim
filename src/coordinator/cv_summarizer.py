@@ -149,6 +149,27 @@ def _summary_dir() -> Path:
     return Path(get_settings().persona_dir) / "_summaries"
 
 
+# Card keys that do NOT affect the CV identity summary and must not invalidate it.
+#
+# `emoji` and `voice_signature` are lean-prompt-only (ADR-005 Phase B).
+#
+# The three *_in_prompt / dial keys are PROMPT-CONTROL FLAGS, not identity content —
+# they decide which BLOCKS render, never who she is. Leaving them in the fingerprint
+# cost a second identity drift on 2026-09-28: the ADR-016 A/B harness writes
+# `dials_in_prompt` and `dial_contrast` onto the card to build an arm's prompt, which
+# re-fingerprinted the card, regenerated <identity> through the LLM, and SAVED it under
+# a hash derived from the temporarily-modified card. The harness restored the card in
+# its `finally`; it could not restore the summary. Only tracking the summaries in git
+# made this visible at all — it showed up as a one-file diff.
+_FINGERPRINT_EXCLUDE = frozenset({
+    "emoji",
+    "voice_signature",
+    "dials_in_prompt",
+    "dial_contrast",
+    "constraints_in_prompt",
+})
+
+
 def _normalize_for_fingerprint(card: Dict) -> Dict:
     """Normalize card for fingerprinting (exclude fields that don't affect the summary).
 
@@ -169,7 +190,7 @@ def _normalize_for_fingerprint(card: Dict) -> Dict:
     rewritten identity paragraph — the arm difference would have been attributed to
     the dial. Dials are a TONE control; they must not touch the identity text.
     """
-    exclude = {"emoji", "voice_signature"}
+    exclude = _FINGERPRINT_EXCLUDE
     out = {k: v for k, v in card.items() if k not in exclude}
     profile = out.get("emotional_profile")
     if isinstance(profile, dict) and "sliders" in profile:
@@ -185,6 +206,9 @@ def _legacy_fingerprint(card: Dict) -> str:
     sliders changes every persona's hash at once, so all nine identities would be
     rebuilt by an LLM the first time each is asked for.
     """
+    # Deliberately the ORIGINAL two-key exclude set, frozen. This function exists to
+    # recognise summaries cached under the pre-2026-09-27 scheme; widening it would
+    # stop it matching those and defeat adoption.
     exclude = {"emoji", "voice_signature"}
     legacy = {k: v for k, v in card.items() if k not in exclude}
     blob = json.dumps(legacy, sort_keys=True, ensure_ascii=False)
