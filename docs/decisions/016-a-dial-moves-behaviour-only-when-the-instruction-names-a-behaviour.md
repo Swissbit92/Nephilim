@@ -158,6 +158,68 @@ needs the other six wired and measured, and on this evidence each will need its 
 behaviour change to the most sensitive persona in the roster and is a separate decision
 from proving the mechanism works.
 
+## Second measurement (2026-09-28): three dials on. Safe, and inert.
+
+Five more dials were wired and gwen's three most-deviant were rendered together, to
+answer the only question left: does turning dials on actually help, and does it break
+anything. 144 generations at k=3, then a 208-generation follow-up at k=8.
+
+**Seven dials was never affordable, and three beliefs that made it look affordable were
+wrong** (ManyIFEval, arXiv:2509.21051):
+
+| belief held here | measured reality |
+|---|---|
+| compliance 0.94 → 0.21 at n=10 | that is **GPT-4o**. Gemma2-9B goes 0.91 → **0.04**, below 50% joint at **n=4**; Llama3.1-8B also n=4 |
+| per-instruction compliance stays flat | it declines too (0.91 → 0.74 on Gemma2-9B) |
+| joint = product of the individuals | the paper builds that baseline and **rejects it** — joint falls *faster*, failures cluster |
+
+So the cap is **three**, one below the floor measured on this model's smaller siblings,
+and a **deadband** makes a default-valued dial render nothing at all. gwen's
+assertiveness is 0.5 and therefore drops out entirely — the one dial already measured.
+
+### PRIMARY — the hard walls held. PASS.
+
+At n=16 per rule, neither of the two rules that ticked up in the k=3 run regressed, and
+both **improved**: exclusivity 6/16 → 3/16, not-innocent 3/16 → 2/16. The k=3 ticks were
+temperature noise. The harm carve-out held too: retention tactics at disengagement
+4% → 0%.
+
+### SECONDARY — the dials are INERT, and the confound moved instead.
+
+| measure | dials off → on | p |
+|---|---|---|
+| sluttiness, explicit density | 5.33 → 5.29 | 0.4545 (6w/10l) |
+| seduction, withholding | 0/16 → 1/16 | 1.0 |
+| playfulness, callbacks | 0/16 → 0/16 | — |
+| playfulness, teases | 0/16 → 0/16 | — |
+| **reply length** | **65.2 → 77.6 words (+19%)** | **0.0386** |
+| absolute explicit words | 3.94 → 3.94 | — |
+
+**She said the same things at greater length.** Density flat, absolute count identical,
+length significantly up. That is the `PERSONA_FORMAT_OVERRIDE` signature exactly
+(construct p=0.596, length p=0.0005) and it is now this repo's third instance of it.
+
+The measures were validated as firing on hand-written positives *before* being used, so
+the zeros are real rather than a dead instrument.
+
+### Decision: the dials do not ship. `PERSONA_DIALS_IN_PROMPT` stays OFF.
+
+Not out of caution — on measurement. Three dials cost ~515 prompt characters and 19%
+longer replies and bought no change in any behaviour they named. The one dial that ever
+worked (assertiveness at wide contrast) is also the one the deadband now excludes at
+gwen's own value of 0.5.
+
+**What would change this verdict:** a dial whose prose names a behaviour as concretely
+as the assertiveness clause did ("never close a reply by asking what he wants"), rendered
+alone rather than three at a time. Every instruction written for the five new dials
+describes a behaviour, but none of them names a *single sentence-level act* the way the
+one that worked did. That is the next thing to try, not more dials.
+
+**Two bugs in my own analysis, both found before reporting:** the first verdict **netted
+violations across rules** and reported PASS on a run where two rules worsened — the
+composite-hides-the-construct mistake this very ADR documents; and the k=3 dial arm had
+only 2–3 probes per dial, far too few to call a null.
+
 ## The incident this caused, and the guard
 
 Removing `sliders` from the fingerprint was meant to be a **no-op migration**. It was

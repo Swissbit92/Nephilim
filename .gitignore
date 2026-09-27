@@ -101,7 +101,14 @@ personas/_summaries/Gwen_alt.json
 .env
 .env.docker
 # generated artifacts / caches
-/personas/_summaries/
+# personas/_summaries/ IS TRACKED (ADR-016, 2026-09-27).
+# It looks like a cache and was ignored as one. But the text is written by an
+# LLM and is NOT reproducible, so it is content wearing a cache's clothes.
+# Measured cost of ignoring it: a fingerprint change regenerated EIGHT personas'
+# <identity> paragraphs at boot and the previous text was unrecoverable — no
+# git history to restore from. Tracking makes any future regeneration a
+# reviewable diff instead of a silent overwrite. Gojo.json was already tracked,
+# which is the inconsistency that hid the risk.
 /tests/manual/results/
 
 # coverage / pytest artifacts
