@@ -155,9 +155,40 @@ def _normalize_for_fingerprint(card: Dict) -> Dict:
     ``voice_signature`` (ADR-005 Phase B) is lean-prompt-only and never feeds the
     CV identity summary — excluding it keeps cached summaries valid so adding it
     does NOT drift the legacy <identity> text (preserves the frozen eval baseline).
+
+    ``emotional_profile.sliders`` is excluded for the same reason and a sharper one.
+    MEASURED 2026-09-27: the sliders were inside the fingerprint, so changing ANY
+    dial value invalidated the cached summary, an LLM regenerated <identity>, and
+    her self-description silently changed content — at assertiveness 0.0 she opened
+    "I'm Gwen, and I live for one thing", at 1.0 "I'm Gwen, a data analyst by day,
+    but my true passion lies in the art of devotion". Nothing read the dial; the
+    entire difference was regeneration noise.
+
+    Two consequences, both bad. In production, turning a dial rewrites who she says
+    she is. And in an experiment, every dial A/B is confounded by a randomly
+    rewritten identity paragraph — the arm difference would have been attributed to
+    the dial. Dials are a TONE control; they must not touch the identity text.
     """
     exclude = {"emoji", "voice_signature"}
-    return {k: v for k, v in card.items() if k not in exclude}
+    out = {k: v for k, v in card.items() if k not in exclude}
+    profile = out.get("emotional_profile")
+    if isinstance(profile, dict) and "sliders" in profile:
+        out["emotional_profile"] = {k: v for k, v in profile.items() if k != "sliders"}
+    return out
+
+
+def _legacy_fingerprint(card: Dict) -> str:
+    """The pre-2026-09-27 fingerprint, WITH sliders included.
+
+    Kept so an existing cached summary can be adopted instead of regenerated. The
+    fix would otherwise cause exactly the drift it exists to prevent: excluding
+    sliders changes every persona's hash at once, so all nine identities would be
+    rebuilt by an LLM the first time each is asked for.
+    """
+    exclude = {"emoji", "voice_signature"}
+    legacy = {k: v for k, v in card.items() if k not in exclude}
+    blob = json.dumps(legacy, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()
 
 
 def _fingerprint(card: Dict) -> str:
@@ -397,6 +428,16 @@ def get_or_build_cv_summary(selector: Optional[str]) -> Dict:
     cached = _load_cached_summary(key)
     if cached and cached.get("hash") == want_hash and isinstance(cached.get("summary"), str):
         return cached
+
+    # Adopt a summary cached under the pre-sliders fingerprint rather than paying an
+    # LLM call and drifting the text. Re-stamps the hash in place; no regeneration.
+    if (
+        cached
+        and isinstance(cached.get("summary"), str)
+        and cached.get("hash") == _legacy_fingerprint(card)
+    ):
+        logger.info("[CV] adopting summary for '%s' under the new fingerprint (no rebuild)", key)
+        return _save_summary(key, want_hash, cached["summary"])
 
     # Acquire lock briefly to build/update this one; avoid deadlock if we already own it
     me = os.getpid()

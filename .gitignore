@@ -121,3 +121,4 @@ data/
 docs/audits/.raw/
 docker/searxng/settings.yml
 .env.bak-*
+/src/UNKNOWN.egg-info/
