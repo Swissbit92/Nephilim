@@ -53,28 +53,31 @@ class TestRenderDial:
                      "manipulativeness", "sluttiness"):
             assert pb.render_dial(name, 0.9) == ""
 
-    def test_five_buckets_no_more_no_fewer(self):
-        seen = {pb.render_dial("assertiveness", v / 100) for v in range(0, 101)}
+    @pytest.mark.parametrize("scale", ["narrow", "wide"])
+    def test_five_buckets_no_more_no_fewer(self, scale):
+        seen = {pb.render_dial("assertiveness", v / 100, scale) for v in range(0, 101)}
         assert len(seen) == 5, sorted(seen)
 
-    def test_is_monotone_in_bucket_index(self):
+    @pytest.mark.parametrize("scale", ["narrow", "wide"])
+    def test_is_monotone_in_bucket_index(self, scale):
         """0.7 must land between 0.5 and 0.9, never outside them."""
-        order = [pb.render_dial("assertiveness", v) for v in (0.0, 0.3, 0.5, 0.7, 0.9)]
+        order = [pb.render_dial("assertiveness", v, scale) for v in (0.0, 0.3, 0.5, 0.7, 0.9)]
         assert len(set(order)) == 5
         for v in (0.1, 0.35, 0.55, 0.75, 0.95):
-            assert pb.render_dial("assertiveness", v) in order
+            assert pb.render_dial("assertiveness", v, scale) in order
 
-    def test_never_emits_the_raw_number_or_the_dial_name(self):
+    @pytest.mark.parametrize("scale", ["narrow", "wide"])
+    def test_never_emits_the_raw_number_or_the_dial_name(self, scale):
         """A dial is a behavioural instruction, not a label or a float."""
         for v in (0.0, 0.3, 0.5, 0.7, 1.0):
-            line = pb.render_dial("assertiveness", v)
+            line = pb.render_dial("assertiveness", v, scale)
             assert "assertive" not in line.lower()
             assert str(v) not in line
 
     def test_every_bucket_is_an_instruction_not_a_description(self):
         """Measured in ADR-014: positive behavioural instructions moved a rule that
         prohibitions and adjectives could not."""
-        for _edge, text in pb._ASSERTIVENESS_BUCKETS:
+        for _edge, text in pb._ASSERTIVENESS_NARROW + pb._ASSERTIVENESS_WIDE:
             first = text.split()[0].rstrip(".,")
             assert first[0].isupper() and not first.lower().startswith("you"), text
 
@@ -178,3 +181,73 @@ class TestPlacement:
         c = json.loads(json.dumps(card))
         c["dials_in_prompt"] = True
         assert len(pb._lean_dials_block(c)) < 200
+
+
+# ─────────────────────────────────────────────────────────────
+# The two contrast scales
+# ─────────────────────────────────────────────────────────────
+
+class TestContrastScales:
+    def test_the_midpoint_is_identical_in_both(self):
+        """"Double the range" means widen OUTWARD from a fixed centre. If the middle
+        bucket also moved, narrow and wide would be two different scales rather than
+        two widths of one, and neither arm would anchor the other."""
+        assert pb.render_dial("assertiveness", 0.5, "narrow") == pb.render_dial(
+            "assertiveness", 0.5, "wide"
+        )
+
+    def test_wide_extremes_differ_from_narrow_extremes(self):
+        for v in (0.0, 0.1, 0.9, 1.0):
+            assert pb.render_dial("assertiveness", v, "narrow") != pb.render_dial(
+                "assertiveness", v, "wide"
+            )
+
+    def test_wide_really_is_wider(self):
+        """Pins the RELATIONSHIP, not a character count: the wide extremes must each
+        say strictly more than the narrow ones they replace."""
+        for v in (0.0, 1.0):
+            assert len(pb.render_dial("assertiveness", v, "wide")) > len(
+                pb.render_dial("assertiveness", v, "narrow")
+            )
+
+    def test_an_unknown_scale_degrades_to_narrow_and_never_raises(self):
+        """A typo in PERSONA_DIAL_CONTRAST must not be able to take chat down."""
+        for bad in ("nonsense", "", "WIDE ", None, "0.5"):
+            got = pb.render_dial("assertiveness", 0.9, bad)
+            assert got == pb.render_dial("assertiveness", 0.9, "narrow")
+
+    def test_scale_name_is_case_insensitive(self):
+        assert pb.render_dial("assertiveness", 0.9, "WIDE") == pb.render_dial(
+            "assertiveness", 0.9, "wide"
+        )
+
+    def test_card_can_override_the_scale(self, card):
+        c = json.loads(json.dumps(card))
+        c["dial_contrast"] = "wide"
+        assert pb.dial_scale_for(c) == "wide"
+
+    def test_card_with_a_bogus_scale_falls_back_to_the_global(self, card):
+        c = json.loads(json.dumps(card))
+        c["dial_contrast"] = "enormous"
+        assert pb.dial_scale_for(c) == "narrow"
+
+    def test_no_shipped_card_declares_a_scale(self):
+        declared = [
+            p.name for p in sorted(CARDS.glob("*.json"))
+            if "dial_contrast" in json.loads(p.read_text())
+        ]
+        assert declared == [], f"cards pin a contrast scale: {declared} — intended?"
+
+    def test_the_block_uses_the_cards_scale(self, card):
+        c = json.loads(json.dumps(card))
+        c["dials_in_prompt"] = True
+        c["dial_contrast"] = "wide"
+        c["emotional_profile"]["sliders"]["assertiveness"] = 1.0
+        assert pb.render_dial("assertiveness", 1.0, "wide") in pb._lean_companion_block(c)
+
+    def test_wide_stays_within_a_sane_token_cost(self, card):
+        """Wide is longer by design; it still must not rival a rule for budget."""
+        c = json.loads(json.dumps(card))
+        c["dials_in_prompt"] = True
+        c["dial_contrast"] = "wide"
+        assert len(pb._lean_dials_block(c)) < 400

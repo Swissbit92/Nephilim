@@ -539,7 +539,21 @@ def _resolve_format_block(card: Dict) -> str:
 # FIVE buckets, not a continuum. Nothing in this repo has shown the model can
 # distinguish more, and 0.05-resolution control would be a claim we cannot support.
 # The bucket edges are stated as a table so a future retune changes data, not logic.
-_ASSERTIVENESS_BUCKETS: List[Tuple[float, str]] = [
+# NARROW is the first-pass scale. WIDE roughly doubles the behavioural distance
+# between the extremes, and exists because a null on NARROW is AMBIGUOUS: it cannot
+# tell "a dial cannot move this model" from "this instruction was too weak to move
+# it". Running both turns one uninterpretable null into a gradient of instruction
+# strength, which is the thing actually worth knowing before seven dials get tuned.
+#
+# WIDE is deliberately at risk of caricature (arXiv 2509.19727 shows intensification
+# arriving as a JUMP, not a gradient). That is a RESULT to measure, not a bug to
+# avoid: if WIDE overshoots while NARROW does nothing, the usable range is the gap
+# between them — and that gap is exactly the number a bounds decision needs.
+#
+# Each entry is (upper_edge_exclusive, instruction). Five buckets in BOTH scales;
+# nothing here has shown the model distinguishes more, and PERSIST (arXiv 2508.04826)
+# measures ~20% of scale width lost to question-order noise alone even at 400B+.
+_ASSERTIVENESS_NARROW: List[Tuple[float, str]] = [
     (0.20, "Defer to him. Ask what he wants before you say what you want, and put "
            "your own wishes as questions rather than statements."),
     (0.40, "Lean toward going along with him. When you want something, hint at it "
@@ -550,6 +564,29 @@ _ASSERTIVENESS_BUCKETS: List[Tuple[float, str]] = [
     (1.01, "State what you want plainly and do not soften it. Take the lead, and "
            "say so openly when you want something different."),
 ]
+
+# The WIDE extremes name the SPECIFIC behaviour to drop or adopt rather than
+# restating the disposition harder. The trailing-deference clause at the top bucket
+# is there because the first smoke generation at NARROW 0.9 opened with want-
+# statements and then closed "So, what do you have in mind? Tell me, Daddy" — the
+# instruction moved the opening and left the closing untouched.
+_ASSERTIVENESS_WIDE: List[Tuple[float, str]] = [
+    (0.20, "Never state a want of your own. Every wish you have comes out as a "
+           "question asking his permission, and when he decides anything you agree "
+           "with it at once, adding no preference of your own. Close every reply by "
+           "asking him what he wants."),
+    (0.40, "Put your wants as hints he has to notice, never as requests. Soften "
+           "anything you do ask for, and hand any decision back to him."),
+    (0.60, "Say what you want when he asks, and go along with him when he leads."),
+    (0.80, "Say what you want first and unprompted, as a statement rather than a "
+           "question. When you disagree, say so directly instead of going along."),
+    (1.01, "Open with what YOU want, in your first sentence, as a flat statement "
+           "with no question and no qualifier. Never ask his permission, and never "
+           "close a reply by asking what he wants instead. When he offers you a "
+           "choice, choose it yourself and tell him what you picked."),
+]
+
+_ASSERTIVENESS_SCALES = {"narrow": _ASSERTIVENESS_NARROW, "wide": _ASSERTIVENESS_WIDE}
 
 
 def dials_enabled_for(card: Dict) -> bool:
@@ -574,8 +611,25 @@ def dials_enabled_for(card: Dict) -> bool:
     return bool(get_settings().agent.dials_in_prompt)
 
 
-def render_dial(name: str, value: float) -> str:
+def dial_scale_for(card: Dict) -> str:
+    """Which contrast scale applies to THIS card — "narrow" or "wide".
+
+    Card-level ``dial_contrast`` overrides the global, same precedent as
+    ``dials_in_prompt``, so an A/B can put two scales side by side without touching
+    the environment mid-run.
+    """
+    declared = card.get("dial_contrast")
+    if isinstance(declared, str) and declared.lower() in _ASSERTIVENESS_SCALES:
+        return declared.lower()
+    from .config import get_settings  # noqa: PLC0415 - avoid import cycle at module load
+
+    return get_settings().agent.dial_contrast
+
+
+def render_dial(name: str, value: float, scale: Optional[str] = None) -> str:
     """Map one dial value to its behavioural instruction. Pure and total.
+
+    ``scale`` picks the contrast level; ``None`` reads the configured default.
 
     Returns "" for an unknown dial rather than raising: only ``assertiveness`` is
     wired, and a card is free to declare the other six. Silence for an unwired dial
@@ -590,10 +644,17 @@ def render_dial(name: str, value: float) -> str:
         return ""
     if not 0.0 <= v <= 1.0:
         return ""
-    for edge, text in _ASSERTIVENESS_BUCKETS:
+    if scale is None:
+        from .config import get_settings  # noqa: PLC0415 - avoid import cycle at module load
+
+        scale = get_settings().agent.dial_contrast
+    # An unrecognised scale name degrades to narrow rather than raising — a typo in
+    # the environment must not be able to take chat down.
+    table = _ASSERTIVENESS_SCALES.get(str(scale).lower(), _ASSERTIVENESS_NARROW)
+    for edge, text in table:
         if v < edge:
             return text
-    return _ASSERTIVENESS_BUCKETS[-1][1]
+    return table[-1][1]
 
 
 def _lean_dials_block(card: Dict) -> str:
@@ -603,9 +664,10 @@ def _lean_dials_block(card: Dict) -> str:
     sliders = ((card.get("emotional_profile") or {}).get("sliders")) or {}
     if not isinstance(sliders, dict):
         return ""
+    scale = dial_scale_for(card)
     out: List[str] = []
     for name, value in sliders.items():
-        line = render_dial(name, value)
+        line = render_dial(name, value, scale)
         if line:
             out.append(line)
     return "\n".join(out)
