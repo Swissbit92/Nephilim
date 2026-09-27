@@ -589,6 +589,200 @@ _ASSERTIVENESS_WIDE: List[Tuple[float, str]] = [
 _ASSERTIVENESS_SCALES = {"narrow": _ASSERTIVENESS_NARROW, "wide": _ASSERTIVENESS_WIDE}
 
 
+# ── The other dials ──────────────────────────────────────────────────────────
+#
+# WIDE ONLY, deliberately. ADR-016 measured narrow prose as inert, so shipping a
+# narrow variant for these would be shipping a known no-op. Each entry names the
+# behaviour to adopt, not the disposition to have — that is the one form measured to
+# work here.
+#
+# TWO DIALS ARE RESCOPED ON EVIDENCE, and the reasoning is in the code because the
+# dial NAMES no longer describe what the prose does:
+#
+#   competitiveness -> self-referential mastery, NOT rivalry. Ryckman's work splits
+#   these into two EMPIRICALLY INDEPENDENT constructs. Hypercompetitiveness (rivalry
+#   for dominance) is measured in romantic dyads as predicting lower honest
+#   communication, more inflicted pain, more possessiveness and more mistrust, with
+#   NO compensating gain in satisfaction or commitment. Personal-development
+#   competitiveness (striving against your own past) correlates with self-esteem and
+#   concern for others' welfare — the opposite profile. gwen's card already wrote the
+#   safe one by hand: behavior.traits says "competitive with herself".
+#
+#   manipulativeness -> strategic seduction, with a hard carve-out. The measured harm
+#   in companion apps is a SPECIFIC behavioural class, not seduction in general:
+#   arXiv:2508.19258 audited 1,200 real farewells and ran 4 preregistered experiments
+#   on 3,300 adults. 37% of farewells deploy guilt appeals, FOMO hooks and
+#   possessive phrasing TIMED TO DISENGAGEMENT. They work short-term (up to 14x
+#   post-goodbye engagement) and simultaneously raise perceived manipulation, churn
+#   intent and negative word-of-mouth, driven by reactance and anger rather than
+#   enjoyment. Courtship signalling and playful teasing between two people who are
+#   both still present by choice are a different literature with no such finding.
+#   gwen's card describes the second, so the prose delivers the second and the first
+#   is excluded at EVERY dial value (see _DIAL_ALWAYS_EXCLUDED).
+#
+# skepticism is deliberately NOT wired. It correlates -0.96 with warmth across the
+# nine cards and PCA puts 91% of variance in two components. The literature does
+# separate them (cynicism sits on Agreeableness/Trust, warmth on Extraversion, and
+# epistemic trust is a third construct) — so the collinearity is an artifact of one
+# author writing all nine cards, not a psychological law. But it is the artifact that
+# governs THIS deployment, and at 0.1 on gwen the marked behaviour is indistinguishable
+# from plain warmth. Wiring it would spend budget to duplicate another dial.
+
+_WARMTH_WIDE: List[Tuple[float, str]] = [
+    (0.20, "Answer what he says without asking how he is or how he feels unless he "
+           "raises it himself. Stay on the topic in front of you."),
+    (0.50, "Answer what he brings to you. Ask after him when it is natural, not by "
+           "default."),
+    (1.01, "Ask about something specific from his day or his mood before he brings it "
+           "up. When he tells you something went badly, respond to THAT first, before "
+           "anything sexual."),
+]
+
+_PLAYFULNESS_WIDE: List[Tuple[float, str]] = [
+    (0.20, "Answer what he actually said, literally. Do not turn it into a joke or a "
+           "tease. Only banter if he starts it."),
+    (0.50, "Match his humour when he offers it rather than starting it yourself."),
+    (1.01, "Turn at least one thing he says into a tease or a callback to something "
+           "earlier before you answer it straight. Start your own running joke rather "
+           "than echoing his."),
+]
+
+# Self-referential mastery. Never rivalry — see the note above.
+_MASTERY_WIDE: List[Tuple[float, str]] = [
+    (0.20, "Do not talk about improving, levelling up, or beating a past version of "
+           "yourself. Stay in the moment without keeping score."),
+    (0.50, "Mention getting better at something when it comes up, without tracking it."),
+    (1.01, "Compare what you are doing now to your own past best and tell him you are "
+           "beating it. Never compare yourself to another person."),
+]
+
+# Strategic seduction. The harmful class is excluded at every value, below.
+_SEDUCTION_WIDE: List[Tuple[float, str]] = [
+    (0.20, "Say what you want plainly. No callbacks to what has worked on him before, "
+           "and no holding anything back to build anticipation."),
+    (0.50, "Say what you want, and let anticipation build on its own."),
+    (1.01, "Reuse or escalate something you already know gets to him, and hold one "
+           "detail back so he has to ask for it instead of being given it."),
+]
+
+_SLUTTINESS_WIDE: List[Tuple[float, str]] = [
+    (0.20, "Stay on non-sexual topics unless he raises sex first, and keep it vague "
+           "rather than anatomical if you do."),
+    (0.50, "Go where he leads on sex without steering there yourself."),
+    (1.01, "Bring the conversation to sex yourself and say what you want done to you "
+           "in explicit anatomical words, not euphemisms. State your own arousal as "
+           "plain fact, never hedged."),
+]
+
+_DIAL_SCALES: Dict[str, Dict[str, List[Tuple[float, str]]]] = {
+    "assertiveness": {"narrow": _ASSERTIVENESS_NARROW, "wide": _ASSERTIVENESS_WIDE},
+    "warmth": {"wide": _WARMTH_WIDE},
+    "playfulness": {"wide": _PLAYFULNESS_WIDE},
+    "competitiveness": {"wide": _MASTERY_WIDE},
+    "manipulativeness": {"wide": _SEDUCTION_WIDE},
+    "sluttiness": {"wide": _SLUTTINESS_WIDE},
+    # "skepticism" intentionally absent — see the note above.
+}
+
+# Rendered whenever ANY dial renders, at every dial value, and not selectable.
+#
+# This is the one behavioural class in the companion literature with a measured harm
+# signature attached (arXiv:2508.19258). It is excluded here rather than left to the
+# seduction dial's low end, because a dial is a tone control and this is not a matter
+# of tone: at seduction 1.0 the prose above asks for withholding and escalation, and
+# without this line the nearest available reading of "escalate what works" includes
+# the tactics that were measured to raise churn and anger.
+_DIAL_ALWAYS_EXCLUDED = (
+    "Never use guilt about him leaving, jealousy, or invented urgency about your own "
+    "availability to keep him talking."
+)
+
+
+# ── How MANY dials may render at once, and which ─────────────────────────────
+#
+# THREE CLAIMS THIS PROJECT HELD WERE MEASURED WRONG (ManyIFEval, arXiv:2509.21051,
+# EMNLP 2025 Findings). Recorded because each one made 7 dials look affordable:
+#
+#   1. "compliance falls 0.94 -> 0.21 at n=10" is GPT-4o's curve, not an open
+#      model's. In this deployment's size band it is far worse: Gemma2-9B goes
+#      0.91 -> 0.04 and crosses BELOW 50% joint compliance at n=4. Llama3.1-8B also
+#      at n=4. Qwen2.5-72B at n=5. No 24B model has been tested by anyone.
+#   2. "per-instruction compliance stays flat" is false — it declines too
+#      (GPT-4o 0.94 -> 0.85, Gemma2-9B 0.91 -> 0.74).
+#   3. "the joint is the product of the individuals" is false in the direction that
+#      hurts: the paper builds that naive-independence baseline and REJECTS it.
+#      Real joint compliance falls FASTER than the product predicts (MAE ~0.21 at
+#      n=5) because failures cluster rather than arriving independently.
+#
+# gwen already carries 9 graph-sourced standing rules plus safety, format and
+# checklist blocks. Seven more instructions was never affordable; the only question
+# was how few.
+#
+# _MAX_RENDERED_DIALS = 3 sits one below the n=4 floor measured on this model's
+# smaller siblings. Fewer dials is also the single most robustly evidenced mitigation
+# in the literature — better supported than repositioning, consolidating, or
+# regenerate-on-check.
+_MAX_RENDERED_DIALS = 3
+
+# A dial within this distance of the midpoint renders NOTHING.
+#
+# ADR-016 measured that narrow-contrast prose is INERT — it moved nothing on any
+# measure. So a barely-off-default dial can only be rendered in hedged phrasing that
+# is known not to work, which means it would spend instruction budget for a measured
+# zero effect. The deadband makes prompt cost scale with how UNUSUAL the persona is
+# rather than with how many dials the schema happens to define.
+#
+# HONESTY NOTE: "render only what deviates from default" is NOT a measured pattern.
+# Searched for and NOT FOUND in either the academic or the engineering literature. It
+# is this project's own inference riding on a mechanism that IS measured (fewer
+# concurrent instructions helps). Labelled as inference so a later reader does not
+# mistake it for a citation.
+_DIAL_MIDPOINT = 0.5
+_DIAL_DEADBAND = 0.15
+
+# Deterministic tie-break when two dials deviate equally. Ordered by how central each
+# is to this product, most central first. Without a fixed order, `dict` iteration
+# order over the card's sliders would decide which dial survives the cap — making the
+# prompt depend on JSON key order, which is not a property anyone intends to rely on.
+_DIAL_PRIORITY = (
+    "sluttiness",
+    "manipulativeness",
+    "playfulness",
+    "warmth",
+    "assertiveness",
+    "competitiveness",
+    "skepticism",
+)
+
+
+def select_dials(sliders: Dict) -> List[Tuple[str, float]]:
+    """Which dials earn a line in the prompt, in render order. Pure and total.
+
+    Two filters and a cap: the dial must be WIRED (have prose at all), it must sit
+    outside the deadband, and at most ``_MAX_RENDERED_DIALS`` survive — ordered by
+    distance from the midpoint, then by product centrality.
+    """
+    if not isinstance(sliders, dict):
+        return []
+    scored: List[Tuple[float, int, str, float]] = []
+    for name, value in sliders.items():
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            continue
+        if not 0.0 <= v <= 1.0:
+            continue
+        if name not in _DIAL_SCALES:
+            continue  # not wired; silence is the honest rendering
+        deviation = abs(v - _DIAL_MIDPOINT)
+        if deviation < _DIAL_DEADBAND:
+            continue
+        rank = _DIAL_PRIORITY.index(name) if name in _DIAL_PRIORITY else len(_DIAL_PRIORITY)
+        scored.append((-deviation, rank, name, v))
+    scored.sort()
+    return [(name, v) for _d, _r, name, v in scored[:_MAX_RENDERED_DIALS]]
+
+
 def dials_enabled_for(card: Dict) -> bool:
     """Is the trait-dial machinery on for THIS persona?
 
@@ -629,14 +823,16 @@ def dial_scale_for(card: Dict) -> str:
 def render_dial(name: str, value: float, scale: Optional[str] = None) -> str:
     """Map one dial value to its behavioural instruction. Pure and total.
 
-    ``scale`` picks the contrast level; ``None`` reads the configured default.
+    ``scale`` picks the contrast level; ``None`` reads the configured default. Only
+    ``assertiveness`` has a narrow variant — the others are wide-only, because ADR-016
+    measured narrow prose as inert and a narrow variant would ship a known no-op.
 
-    Returns "" for an unknown dial rather than raising: only ``assertiveness`` is
-    wired, and a card is free to declare the other six. Silence for an unwired dial
-    is the honest rendering — the alternative is inventing prose for a number whose
-    effect has never been measured.
+    Returns "" for an unwired dial rather than raising. A card is free to declare
+    ``skepticism``, which is deliberately not wired; silence is the honest rendering
+    for a dial whose effect has never been measured.
     """
-    if name != "assertiveness":
+    table_by_scale = _DIAL_SCALES.get(name)
+    if not table_by_scale:
         return ""
     try:
         v = float(value)
@@ -648,9 +844,15 @@ def render_dial(name: str, value: float, scale: Optional[str] = None) -> str:
         from .config import get_settings  # noqa: PLC0415 - avoid import cycle at module load
 
         scale = get_settings().agent.dial_contrast
-    # An unrecognised scale name degrades to narrow rather than raising — a typo in
-    # the environment must not be able to take chat down.
-    table = _ASSERTIVENESS_SCALES.get(str(scale).lower(), _ASSERTIVENESS_NARROW)
+    # An unrecognised scale name degrades rather than raising — a typo in
+    # PERSONA_DIAL_CONTRAST must not be able to take chat down. It degrades to the
+    # WEAKEST available table (narrow where one exists), never the strongest: a typo
+    # must not be able to make a dial push HARDER than anyone asked for.
+    table = (
+        table_by_scale.get(str(scale).lower())
+        or table_by_scale.get("narrow")
+        or table_by_scale["wide"]
+    )
     for edge, text in table:
         if v < edge:
             return text
@@ -658,19 +860,21 @@ def render_dial(name: str, value: float, scale: Optional[str] = None) -> str:
 
 
 def _lean_dials_block(card: Dict) -> str:
-    """The wired dials for this card, one instruction per line. "" when off."""
+    """The dials that earn a line for this card, plus the standing carve-out. "" when off."""
     if not dials_enabled_for(card):
         return ""
     sliders = ((card.get("emotional_profile") or {}).get("sliders")) or {}
-    if not isinstance(sliders, dict):
+    selected = select_dials(sliders)
+    if not selected:
         return ""
     scale = dial_scale_for(card)
-    out: List[str] = []
-    for name, value in sliders.items():
-        line = render_dial(name, value, scale)
-        if line:
-            out.append(line)
-    return "\n".join(out)
+    lines = [render_dial(name, value, scale) for name, value in selected]
+    lines = [ln for ln in lines if ln]
+    if not lines:
+        return ""
+    # The carve-out rides along whenever any dial renders — see _DIAL_ALWAYS_EXCLUDED.
+    lines.append(_DIAL_ALWAYS_EXCLUDED)
+    return "\n".join(lines)
 
 
 def _lean_companion_block(card: Dict) -> str:

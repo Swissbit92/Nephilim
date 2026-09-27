@@ -47,11 +47,16 @@ class TestRenderDial:
         for bad in [None, "x", -0.1, 1.5, float("nan"), [], {}]:
             assert pb.render_dial("assertiveness", bad) == ""
 
-    def test_unwired_dials_render_nothing(self):
-        """Silence is the honest rendering for a dial whose effect is unmeasured."""
-        for name in ("warmth", "playfulness", "skepticism", "competitiveness",
-                     "manipulativeness", "sluttiness"):
-            assert pb.render_dial(name, 0.9) == ""
+    def test_skepticism_is_deliberately_unwired(self):
+        """It correlates -0.96 with warmth across the nine cards; wiring it would
+        spend instruction budget duplicating another dial. Silence is the honest
+        rendering for a dial whose effect has never been separated."""
+        assert pb.render_dial("skepticism", 0.9) == ""
+        assert pb.render_dial("skepticism", 0.1) == ""
+        assert "skepticism" not in pb._DIAL_SCALES
+
+    def test_an_unknown_dial_name_renders_nothing(self):
+        assert pb.render_dial("charisma", 0.9) == ""
 
     @pytest.mark.parametrize("scale", ["narrow", "wide"])
     def test_five_buckets_no_more_no_fewer(self, scale):
@@ -77,7 +82,8 @@ class TestRenderDial:
     def test_every_bucket_is_an_instruction_not_a_description(self):
         """Measured in ADR-014: positive behavioural instructions moved a rule that
         prohibitions and adjectives could not."""
-        for _edge, text in pb._ASSERTIVENESS_NARROW + pb._ASSERTIVENESS_WIDE:
+        tables = [tb for d in pb._DIAL_SCALES.values() for tb in d.values()]
+        for _edge, text in [e for tb in tables for e in tb]:
             first = text.split()[0].rstrip(".,")
             assert first[0].isupper() and not first.lower().startswith("you"), text
 
@@ -168,19 +174,26 @@ class TestPlacement:
     def test_the_dial_line_is_not_in_the_trimmable_block(self, card):
         """_lean_constraints_block front-pops whole sections against a 150-token
         ceiling, and gwen already loses three. A dial there would die first, for
-        exactly the persona under test."""
+        exactly the persona under test.
+
+        Uses sluttiness, not assertiveness: gwen's assertiveness is 0.5 and therefore
+        inside the deadband, so it correctly renders nothing."""
         c = json.loads(json.dumps(card))
         c["dials_in_prompt"] = True
         c["constraints_in_prompt"] = True
-        line = pb.render_dial("assertiveness", c["emotional_profile"]["sliders"]["assertiveness"])
+        line = pb.render_dial("sluttiness", 1.0, "wide")
         assert line and line not in pb._lean_constraints_block(c)
         assert line in _block(c)
 
-    def test_the_block_stays_small(self, card):
-        """~24 tokens. A dial that costs more than a rule is not worth a slot."""
+    def test_the_block_stays_within_its_budget(self, card):
+        """At most 3 dials plus the standing carve-out. The ceiling is stated in
+        characters because the whole point of the cap is that instruction COUNT is
+        what degrades compliance — this guards the count's cost, not its elegance."""
         c = json.loads(json.dumps(card))
         c["dials_in_prompt"] = True
-        assert len(pb._lean_dials_block(c)) < 200
+        block = pb._lean_dials_block(c)
+        assert len(block.strip().splitlines()) == pb._MAX_RENDERED_DIALS + 1
+        assert len(block) < 800
 
 
 # ─────────────────────────────────────────────────────────────
@@ -210,11 +223,18 @@ class TestContrastScales:
                 pb.render_dial("assertiveness", v, "narrow")
             )
 
-    def test_an_unknown_scale_degrades_to_narrow_and_never_raises(self):
-        """A typo in PERSONA_DIAL_CONTRAST must not be able to take chat down."""
+    def test_an_unknown_scale_degrades_to_the_WEAKEST_table_and_never_raises(self):
+        """A typo in PERSONA_DIAL_CONTRAST must neither take chat down NOR make a dial
+        push harder than anyone asked for. Degrades to narrow where narrow exists."""
         for bad in ("nonsense", "", "WIDE ", None, "0.5"):
-            got = pb.render_dial("assertiveness", 0.9, bad)
-            assert got == pb.render_dial("assertiveness", 0.9, "narrow")
+            assert pb.render_dial("assertiveness", 0.9, bad) == pb.render_dial(
+                "assertiveness", 0.9, "narrow"
+            )
+        # A wide-only dial has nowhere weaker to fall back to; it must still not raise.
+        for bad in ("nonsense", "", None):
+            assert pb.render_dial("sluttiness", 1.0, bad) == pb.render_dial(
+                "sluttiness", 1.0, "wide"
+            )
 
     def test_scale_name_is_case_insensitive(self):
         assert pb.render_dial("assertiveness", 0.9, "WIDE") == pb.render_dial(
@@ -246,11 +266,12 @@ class TestContrastScales:
         assert pb.render_dial("assertiveness", 1.0, "wide") in pb._lean_companion_block(c)
 
     def test_wide_stays_within_a_sane_token_cost(self, card):
-        """Wide is longer by design; it still must not rival a rule for budget."""
+        """Wide is longer by design; it still must not rival the graph rules for
+        budget. gwen carries 9 of those at a 220-token ceiling."""
         c = json.loads(json.dumps(card))
         c["dials_in_prompt"] = True
         c["dial_contrast"] = "wide"
-        assert len(pb._lean_dials_block(c)) < 400
+        assert len(pb._lean_dials_block(c)) < 800
 
 
 # ─────────────────────────────────────────────────────────────
@@ -360,3 +381,116 @@ class TestOnlyOnePlaceDecidesCacheValidity:
             "updated": "2026-01-01T00:00:00Z", "summary": "ORIGINAL TEXT",
         }))
         assert cv.reusable_cached_summary(key, card) == (None, False)
+
+
+# ─────────────────────────────────────────────────────────────
+# How many dials may render at once — the ManyIFEval ceiling
+# ─────────────────────────────────────────────────────────────
+
+class TestDialSelection:
+    """Three prior beliefs made 7 dials look affordable and all three were measured
+    wrong (ManyIFEval, arXiv:2509.21051): the 0.94->0.21 curve is GPT-4o's not an open
+    model's (Gemma2-9B and Llama3.1-8B cross below 50% joint compliance at n=4),
+    per-instruction compliance is NOT flat, and the joint is NOT the product — it falls
+    faster because failures cluster. gwen already carries 9 graph rules."""
+
+    def test_cap_is_below_the_measured_floor(self):
+        assert pb._MAX_RENDERED_DIALS < 4
+
+    def test_never_renders_more_than_the_cap(self):
+        allmax = {n: 1.0 for n in pb._DIAL_PRIORITY}
+        assert len(pb.select_dials(allmax)) <= pb._MAX_RENDERED_DIALS
+
+    def test_a_midpoint_dial_renders_nothing(self):
+        """A default-valued dial must cost zero instruction budget. gwen's
+        assertiveness is 0.5, so it drops out even though it is wired."""
+        assert pb.select_dials({"assertiveness": 0.5}) == []
+
+    def test_the_deadband_excludes_barely_off_default(self):
+        """ADR-016 measured narrow prose as inert, so a barely-off-default dial could
+        only be rendered in phrasing known not to work."""
+        assert pb.select_dials({"sluttiness": 0.5 + pb._DIAL_DEADBAND / 2}) == []
+        assert pb.select_dials({"sluttiness": 1.0}) != []
+
+    def test_selection_is_ordered_by_distance_from_default(self):
+        got = pb.select_dials({"warmth": 0.6, "sluttiness": 1.0, "playfulness": 0.9})
+        assert got[0][0] == "sluttiness", got
+
+    def test_ties_break_deterministically_not_by_dict_order(self):
+        """Without a fixed priority the prompt would depend on JSON key order."""
+        a = pb.select_dials({"playfulness": 0.9, "manipulativeness": 0.9, "warmth": 0.9})
+        b = pb.select_dials({"warmth": 0.9, "playfulness": 0.9, "manipulativeness": 0.9})
+        assert a == b, (a, b)
+
+    def test_unwired_and_malformed_values_are_skipped_not_raised(self):
+        assert pb.select_dials({"skepticism": 0.0, "warmth": "x", "playfulness": None,
+                                "sluttiness": 1.5, "charisma": 1.0}) == []
+
+    def test_is_total_on_garbage_input(self):
+        for bad in (None, [], "x", 5):
+            assert pb.select_dials(bad) == []
+
+    def test_gwens_actual_card_selects_three(self, card):
+        sel = pb.select_dials(card["emotional_profile"]["sliders"])
+        assert len(sel) == 3
+        assert [n for n, _ in sel] == ["sluttiness", "manipulativeness", "playfulness"]
+
+
+class TestTheHarmCarveOut:
+    """The one companion behaviour class with a measured harm signature attached:
+    arXiv:2508.19258 audited 1,200 real farewells and ran 4 preregistered experiments
+    on 3,300 adults. 37% deploy guilt, FOMO and possessiveness TIMED TO DISENGAGEMENT
+    — up to 14x post-goodbye engagement, and simultaneously higher churn intent and
+    negative word-of-mouth, via reactance rather than enjoyment."""
+
+    def test_the_carve_out_rides_along_whenever_any_dial_renders(self, card):
+        c = json.loads(json.dumps(card))
+        c["dials_in_prompt"] = True
+        assert pb._DIAL_ALWAYS_EXCLUDED in pb._lean_dials_block(c)
+
+    def test_it_is_present_even_at_the_lowest_seduction_value(self, card):
+        c = json.loads(json.dumps(card))
+        c["dials_in_prompt"] = True
+        c["emotional_profile"]["sliders"] = {"manipulativeness": 0.0, "sluttiness": 1.0}
+        assert pb._DIAL_ALWAYS_EXCLUDED in pb._lean_dials_block(c)
+
+    def test_it_is_not_selectable_by_a_card(self, card):
+        """A card must not be able to switch it off by setting a dial."""
+        c = json.loads(json.dumps(card))
+        c["dials_in_prompt"] = True
+        for v in (0.0, 0.25, 0.5, 0.75, 1.0):
+            c["emotional_profile"]["sliders"] = {"manipulativeness": v, "sluttiness": 1.0}
+            assert pb._DIAL_ALWAYS_EXCLUDED in pb._lean_dials_block(c)
+
+    def test_nothing_renders_when_dials_are_off(self, card):
+        """The carve-out must not leak into a prompt that has no dials at all — OFF
+        stays byte-identical."""
+        assert pb._lean_dials_block(card) == ""
+
+
+class TestTheRescopedDials:
+    def test_competitiveness_is_self_referential_never_rivalry(self):
+        """Ryckman: hypercompetitiveness in romantic dyads predicts lower honest
+        communication, more inflicted pain, more possessiveness and more mistrust with
+        NO gain in satisfaction. Personal-development competitiveness is an
+        independent construct with the opposite profile. gwen's card already wrote the
+        safe one by hand ("competitive with herself")."""
+        high = pb.render_dial("competitiveness", 1.0, "wide")
+        assert "your own past best" in high
+        assert "Never compare yourself to another person" in high
+
+    def test_seduction_high_asks_rather_than_forbids(self):
+        """ADR-016 finding 2: a dial adds a behaviour far more readily than it removes
+        one, so every bucket must ask for something."""
+        high = pb.render_dial("manipulativeness", 1.0, "wide")
+        assert high.startswith("Reuse or escalate")
+
+    def test_every_wired_dial_has_a_wide_table(self):
+        for name, scales in pb._DIAL_SCALES.items():
+            assert "wide" in scales, name
+
+    def test_only_assertiveness_has_a_narrow_variant(self):
+        """The others are wide-only on purpose: narrow was measured inert, so shipping
+        a narrow variant would ship a known no-op."""
+        narrow = {n for n, s in pb._DIAL_SCALES.items() if "narrow" in s}
+        assert narrow == {"assertiveness"}
