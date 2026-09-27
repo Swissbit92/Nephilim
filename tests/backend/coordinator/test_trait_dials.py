@@ -251,3 +251,37 @@ class TestContrastScales:
         c["dials_in_prompt"] = True
         c["dial_contrast"] = "wide"
         assert len(pb._lean_dials_block(c)) < 400
+
+
+# ─────────────────────────────────────────────────────────────
+# What the measurement showed. These pin the SHAPE of the finding,
+# not the p-values — a re-derived number from another run would be a
+# peer's figure pinned as fact.
+# ─────────────────────────────────────────────────────────────
+
+class TestTheMeasuredFinding:
+    def test_wide_high_bucket_names_the_behaviour_it_forbids(self):
+        """ADR-016's decisive result came from measuring the instruction's OWN words:
+        replies closing with a question went 75.0% -> 48.3% (p=0.0074) on wide, and
+        narrow moved nothing. If this clause is ever reworded, the compliance measure
+        in scripts/research/dial_analyze.py stops testing anything."""
+        top = pb.render_dial("assertiveness", 1.0, "wide")
+        assert "close a reply by asking what he wants" in top
+
+    def test_narrow_high_bucket_does_not_name_it(self):
+        """The contrast that mattered. Narrow states a disposition; wide names a
+        behaviour. Narrow moved nothing on any measure."""
+        assert "close a reply" not in pb.render_dial("assertiveness", 1.0, "narrow")
+
+    def test_buckets_ask_for_something_rather_than_forbidding_it(self):
+        """Finding 2: a dial ADDS a behaviour far more readily than it removes one
+        (75% -> 48%, not -> 0%), matching ADR-014's half-compliance on the address
+        rule. Every bucket must therefore carry at least one positive instruction,
+        not consist solely of prohibitions."""
+        for scale in ("narrow", "wide"):
+            for v in (0.0, 0.3, 0.5, 0.7, 1.0):
+                text = pb.render_dial("assertiveness", v, scale)
+                sentences = [s.strip() for s in text.split(".") if s.strip()]
+                positive = [s for s in sentences
+                            if not s.lower().startswith(("never", "do not", "don't"))]
+                assert positive, f"{scale}@{v} is prohibitions only: {text}"
