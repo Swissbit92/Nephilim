@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 
 from fastapi import APIRouter, HTTPException
 
@@ -40,6 +41,81 @@ router = APIRouter(tags=["chat"])
 logger = logging.getLogger(__name__)
 
 
+#: Reply paths that do NOT run the post-generation rule check, named so the gap is a
+#: recorded decision rather than an implied guarantee. Verified 2026-09-29 by reading
+#: every reply path in this module and in QueryHandlerService.
+_RULE_CHECK_UNCOVERED_PATHS = (
+    "greet() — builds its response dict inline",
+    "QueryHandlerService._finalize_response — the brave and wallet lanes",
+)
+
+
+def _regenerate_once_on_violation(
+    card,
+    system: str,
+    user_compiled: str,
+    user_message: str,
+    answer: str,
+    metadata,
+    *,
+    log_context: str,
+) -> tuple[str, bool]:
+    """At most ONE regeneration when a post-generation rule check fired.
+
+    Returns `(answer, still_violating)`. `still_violating` is True when the reply being
+    returned breaks a rule — either because enforcement is off, or because the retry also
+    failed. The caller does not have to act on it, but it is not hidden.
+
+    THE CAP IS THE ABSENCE OF A LOOP, copied deliberately from
+    ToolBrainService._synthesize_with_refusal_retry: straight-line code with one extra
+    `_complete_or_503`, so "at most once" is provable by reading rather than by trusting a
+    counter. `config/graph.py` and ADR-014 have both promised exactly one retry since
+    2026-09-26 while no loop existed at all, so the promise is written in code here before
+    anything can widen it.
+
+    THE REINFORCEMENT GOES ON THE USER TURN, not the system prompt. `build_system_prompt`
+    is `lru_cache`d on the persona selector, so mutating `system` would either poison that
+    cache or bypass it; and it would move llama.cpp's prefix-cache divergence point to the
+    very start of a ~3.5K-token prefix, making the retry pay full prefill. Appending to
+    `user_compiled` keeps the whole system prefix byte-identical. It also matches the
+    convention already used for `build_constraint_reminder` and the `[Remember: ...]`
+    self-reminder, which are bracketed lines on the user turn for the same recency reason.
+
+    WHAT IS RETURNED ON FINAL FAILURE: attempt 2, not attempt 1. A reply that was
+    regenerated under an explicit correction is the better of the two even when the
+    checker still objects, and silently preferring attempt 1 would make the retry
+    unobservable from the outside.
+    """
+    try:
+        violations = check_reply(answer, user_message)
+    except Exception as exc:  # noqa: BLE001 — a checker must never fail a turn
+        logger.warning("%s rule check skipped (non-fatal): %s", log_context, exc)
+        return answer, False
+    if not violations:
+        return answer, False
+
+    if not get_settings().graph.enforce_rules:
+        # Detected and reported, deliberately not corrected. This is the shipped default.
+        logger.info("%s %d violation(s) detected, enforcement OFF (GRAPH_ENFORCE_RULES)",
+                    log_context, len(violations))
+        return answer, True
+
+    line = reinforcement_for(violations[0])
+    logger.info("%s regenerating once: %s", log_context, violations[0].rule)
+    t0 = time.time()
+    try:
+        reinforced = user_compiled + "\n\n" + line
+        retry = _complete_or_503(card, system, reinforced, log_context=log_context)
+    except Exception as exc:  # noqa: BLE001 — a failed retry must not fail the turn
+        logger.warning("%s regeneration failed (%s); keeping attempt 1", log_context, exc)
+        return answer, True
+
+    still = bool(check_reply(retry, user_message))
+    logger.info("%s regeneration took %.1fs; still violating=%s",
+                log_context, time.time() - t0, still)
+    return retry, still
+
+
 def _build_llm_response(
     answer: str,
     user_message: str,
@@ -52,7 +128,8 @@ def _build_llm_response(
     answer, was_rewritten = post_process_first_person(answer, persona_name)
 
     # POST-GENERATION RULE CHECKS. Detection runs unconditionally; only REGENERATION is
-    # gated on GRAPH_ENFORCE_RULES.
+    # gated on GRAPH_ENFORCE_RULES, and that happens at the generation sites rather than
+    # here (this function has the verdict but not the inputs needed to call the model).
     #
     # WHY IT LIVES HERE. check_reply and reinforcement_for were imported at the top of
     # this module and NEVER CALLED -- the commit that claimed to "enforce address in
@@ -60,18 +137,27 @@ def _build_llm_response(
     # continue-on-error so nothing flagged it. Meanwhile _rule_tiers/gwen.yaml demoted
     # her address rule to LAST of five hard walls with the justification "enforced in
     # code, so it needs the prompt least of all", and the render budget then dropped it
-    # from the prompt entirely. Three layers deferring to each other, none of them
-    # running. This is the one place every reply passes through, so a check placed here
-    # cannot be forgotten by a new call site.
+    # from the prompt entirely. Three layers deferring to each other, none running.
+    #
+    # ⚠️ CORRECTION TO AN EARLIER VERSION OF THIS COMMENT, which claimed this was "the
+    # one place every reply passes through". IT IS NOT, and the claim was checked and
+    # found false: `greet()` builds its response dict inline, and
+    # QueryHandlerService._finalize_response serves the brave and wallet lanes. Neither
+    # calls this function, so neither is covered. What this function IS is the one place
+    # every LLM-LANE reply passes through, which is where the address rule lives. The
+    # gap is named in `_RULE_CHECK_UNCOVERED_PATHS` below rather than left implied.
     #
     # DETECTION IS NOT GATED because it cannot change a reply -- it only records. Making
     # it conditional would reproduce the original defect: a violation nobody can see.
     try:
         violations = check_reply(answer, user_message)
-        if violations:
-            metadata.rule_violations = [v.rule for v in violations]
-            for v in violations:
-                logger.warning("[Rules] %s violated: %s", v.rule, v.detail)
+        # ALWAYS assigned, never only-on-violation. `metadata` is a single object shared
+        # across a regeneration attempt, so an `if violations:` with no else would leave
+        # attempt 1's verdict standing on a compliant attempt 2 -- reporting a violation
+        # that the retry had already fixed.
+        metadata.rule_violations = [v.rule for v in violations]
+        for v in violations:
+            logger.warning("[Rules] %s violated: %s", v.rule, v.detail)
     except Exception as exc:  # noqa: BLE001 — a checker must never fail a turn
         logger.warning("[Rules] post-generation check skipped (non-fatal): %s", exc)
 
@@ -656,6 +742,11 @@ def chat(body: ChatBody):
             f"(persona={persona_key} intent={intent.value})")
         answer = _complete_or_503(card, system, user_compiled, log_context=f"[Chat] {persona_key} no-tools:")
         answer = _apply_groundedness_gate(card, body.message, answer, metadata)
+        # Covers /sessions/{id}/chat, /regenerate, /continue and /narrate too: all four
+        # funnel through handle_session_chat -> this function, and none generates its own.
+        answer, _still = _regenerate_once_on_violation(
+            card, system, user_compiled, body.message, answer, metadata,
+            log_context=f"[Rules] {persona_key}:")
         return _build_llm_response(answer, body.message, persona_name, metadata, word_substitutions=card.get("word_substitutions"))
 
     brave_tools = [t for t in tools if t.get("function", {}).get("name", "") == "brave_web_search"]

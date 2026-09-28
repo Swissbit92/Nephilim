@@ -113,6 +113,7 @@ def attribution_accuracy(
     correct = 0
     total = 0
     per_persona: Dict[str, float] = {}
+    per_item: Dict[str, list] = {}
     confusion: Dict[str, Dict[str, int]] = {}
 
     for p in active:
@@ -133,6 +134,13 @@ def attribution_accuracy(
             total += 1
             confusion.setdefault(p, {}).setdefault(best_q, 0)
             confusion[p][best_q] += 1
+            # PER-ITEM outcomes, which the loop has always computed and then discarded.
+            # A paired gate needs them: exact McNemar counts discordant ITEMS, and
+            # `confusion` aggregates by (true, predicted) with no index, so it cannot say
+            # WHICH probe flipped. Additive -- no existing key changes, so the
+            # byte-identical-output tests still hold.
+            per_item.setdefault(p, []).append(
+                {"i": i, "predicted": best_q, "correct": best_q == p})
             if best_q == p:
                 correct += 1
                 p_correct += 1
@@ -144,6 +152,10 @@ def attribution_accuracy(
         "confusion": confusion,
         "n": total,
         "random_baseline": round(1.0 / len(personas), 4),
+        # Per-item correctness, for a PAIRED gate. Appended last so every existing key
+        # keeps its position and value -- test_frozen_gallery's byte-identical assertions
+        # compare the scored numbers, not the key set.
+        "per_item": per_item,
     }
     if frozen:
         # Mark the run as a frozen-gallery run so compare_baselines / readers can
