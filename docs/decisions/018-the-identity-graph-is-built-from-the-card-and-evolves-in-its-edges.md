@@ -1,6 +1,6 @@
 ---
 title: The identity graph is built from the card and evolves in its edges
-status: Proposed
+status: Accepted
 created: 2026-09-28
 last_reviewed_on: 2026-09-28
 review_in: 12 months
@@ -181,6 +181,68 @@ it into the prompt the same way the last attempt was wired, and reading the resu
 voice collapse as a storage-layer problem when it is the same closed line reopened under
 a new name. The mitigation is the scope boundary above, stated as a decision rather than
 an intention.
+
+## Built 2026-09-28, and the A/B that justified it
+
+**118 identity nodes** from gwen's card — 29 `LoreEntry`, 41 `Trait`, 22 `Boundary`,
+26 `Expertise` — behind `IdentityRepository.apply_card`, which is both the build and the
+rebuild because the difference between them is whether a node already exists, and MERGE
+already knows that. Two methods would be two paths that must agree.
+
+**The A/B measured the split as load-bearing rather than assuming it:**
+
+| arm | annotations survived a card edit | content refreshed |
+|---|---|---|
+| A — one unconditional `SET`, the semantics `seed_rules` has today | **0 of 3** | yes |
+| B — the content/annotation split | **3 of 3** | yes |
+
+Both refreshed content, so the difference is only the thing under test. Under ADR-012
+arm A is not an inconvenience; it is permanent loss with no second copy.
+
+Preservation is **structural**: annotation properties are named only in the `ON CREATE`
+branch, so the rebuild path cannot reach them. A property cannot be wiped by a statement
+that never mentions it.
+
+### Four bugs found before it shipped, three from research and one mine
+
+1. **`SET n += $map` DELETES a key whose value is null** (Neo4j's SET docs). The
+   annotation defaults carried `last_referenced: None`, which would have deleted the key
+   rather than initialising it. Properties are now assigned individually — also immune to
+   `SET n = $map`, which replaces the whole property set and is one character away. A test
+   greps for both forms and was watched failing on a real one.
+2. **The resurrection trap.** Soft-expiring a node while keeping its label meant a later
+   rebuild's MERGE on the same positional key would bind the *expired* node and bring it
+   back; Neo4j's own MERGE docs demonstrate a pattern binding six nodes and updating all
+   six. Fixed with a `:CurrentIdentity` secondary label that MERGE matches on — mirroring
+   `:CurrentRule` for the same reason, since Neo4j has no partial index and no `WHERE`
+   inside a MERGE pattern. An expired node keeps its primary label and its edge, so
+   history stays traversable.
+3. **118 separate transactions** where a sole copy wants one. Neo4j confirms
+   `IN TRANSACTIONS` does not roll back already-committed batches, which is the wrong
+   failure mode here.
+4. **Coverage was measured at the wrong granularity, and that one was mine.** The
+   key-level check reported 33-of-33 card fields complete while **nine leaves went
+   nowhere** — seven sliders whose exclusion reason lived only in a code comment, and two
+   genuinely forgotten (`behavior.relationship_to_user`,
+   `behavior.clarifying_questions`), both real identity content. The check now works at
+   leaf level: **244 leaves, 118 consumed, 126 excluded, 0 unaccounted.** A coverage claim
+   coarser than the data is technically true and misleading, which is worse than none.
+
+### The completeness check reports three states, not two
+
+PASS / FAIL / **COULD NOT DETERMINE**, on Nagios's convention — a check that cannot verify
+anything must not return success. All four failure paths were watched firing: a new card
+key, a new leaf under an already-modelled key, a stale exclusion, and an unreadable card.
+
+Stale exclusions are flagged, the same family as mypy's unused-ignore and ESLint's
+unused-disable-directive: an exclusion is a recorded decision, and one about a field that
+no longer exists is misleading rather than inert.
+
+### Still true, and still deliberate
+
+Nothing is wired into her prompt. `reinforce()` is her only write and it names three
+annotation properties and nothing else, so it cannot reach content even when called oddly
+— the same discipline as the hard-wall guard, applied by omission rather than validation.
 
 ## Related
 
