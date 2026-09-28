@@ -9,6 +9,19 @@ applies_to: nephilim
 
 # ADR-014: The rule store is a Neo4j projection — superseding the ADR-001 and ADR-006 rejections
 
+> **ONE ARGUMENT IN THIS ADR IS RETIRED, 2026-09-28.** Its adoption case rested partly on
+> the graph being a droppable projection — *"a service whose loss costs capability rather
+> than data is a different risk from one whose loss costs data."* That is no longer true:
+> [ecosystem ADR-012](../../../docs/decisions/012-the-graph-is-the-system-of-record-for-persona-identity-superseding-the-projection-model.md)
+> makes the graph the system of record for persona identity. The decision to adopt Neo4j
+> stands; that particular justification for it does not, and is withdrawn here rather than
+> left standing in a document that now describes something else.
+>
+> This ADR's own **revisit trigger has fired** — "if the projection is ever read when it
+> cannot be rebuilt from the card plus SQLite, this decision has been violated rather than
+> revisited." A supersession is card- and SQLite-independent. ADR-012 is the revisit.
+
+
 ## Context
 
 **The knowledge graph is decided at the ecosystem level and is not reopened here.**

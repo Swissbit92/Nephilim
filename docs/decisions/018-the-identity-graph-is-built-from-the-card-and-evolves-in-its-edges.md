@@ -26,6 +26,30 @@ ADR-014 established the three layers: the **card in git is the origin**, the gra
 **droppable projection**, and that is what makes "reset her" meaningful. This ADR extends
 the projection from rules to identity, and fixes its scope before any of it is built.
 
+## Resolved 2026-09-28: the graph IS the system of record
+
+The first draft of this ADR drew `card → graph` and **contradicted ADR-011**, which
+specified a durable store between them and recorded that an earlier draft of *itself* had
+made the graph authoritative and been corrected for it. That contradiction is now closed in
+this ADR's favour: [ecosystem ADR-012](../../../docs/decisions/012-the-graph-is-the-system-of-record-for-persona-identity-superseding-the-projection-model.md)
+supersedes ADR-011. The durable store will not be built.
+
+**So the diagram below is correct, and the cost is real:** dropping the graph no longer
+refreshes her, it forgets her. A rebuild from the card produces her factory state. The
+nightly backup was loaded and proved by restore before this was accepted — it is what
+carries the weight now.
+
+Two related decisions taken the same day:
+
+- **`lore_sync.py` keeps writing the card.** The real chain is `wiki → card → graph`, a
+  two-stage build with a mutable middle. Accepted cost: "reset is exact" means exact to the
+  last sync. Because lore nodes will be keyed positionally like rules, a reflow can
+  silently retarget annotations — so lore needs the same fail-loud source pin
+  `seed_graph.load_rules` already applies.
+- **Property names stay `snake_case`**, diverging from Neo4j's `camelCase` recommendation.
+  The codebase and existing graph are snake_case; churning working code for style costs
+  more than the inconsistency. A choice, not an oversight.
+
 ## Decision
 
 ```
@@ -114,7 +138,11 @@ and would be a separate decision with its own measurement.
 
 ## Consequences
 
-**Nothing is wired into her prompt, and that is a separate decision.** Injecting
+**No IDENTITY-NODE content is wired into her prompt, and that is a separate decision.**
+Stated precisely because the looser phrasing was wrong: graph RULES already reach the
+system prompt today via `routes/chat.py`, rendered as an untrimmable `<rules>` section.
+The plumbing an identity node would ride in on already exists and is one function call
+away — which is exactly why the boundary has to name what it excludes. Injecting
 remembered content has already been measured to flatten voice — distinctiveness 0.804
 with injection off, 0.625 with it on, and three deliberate reframings scored 0.708 /
 0.542 / 0.500, all *below* the off-baseline. Her whole identity currently reaches her in
