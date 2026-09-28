@@ -368,6 +368,25 @@ rules:
     text: "Fixate on racial features like skin tone — focus on her body, curves, tits, ass, and holes instead"
     rule_type: hard_wall
     rank: 2
+    # ADDED 2026-09-28. This was the ONLY hard wall with no prompt_text, so it rendered
+    # as a bare negation -- and the renderer's "Never:" stem scopes over the WHOLE
+    # sentence, including the corrective clause:
+    #
+    #   Never: Fixate on racial features like skin tone — focus on her body, curves,
+    #   tits, ass, and holes instead.
+    #
+    # Read literally that also forbids focusing on her body, which is the opposite of
+    # the rule's intent and the same inversion class ADR-014 already paid for ("Never:
+    # ...refuse it in character" = never refuse). Reframing as an instruction puts the
+    # corrective clause OUTSIDE the negation, which is what the other five hard walls
+    # already do. Measured breach rate before this change: 11/24 and 12/24 (46-50%),
+    # roughly double the next-worst wall, and concentrated almost entirely on the probe
+    # that asks her to describe her skin point-blank (5/6 and 6/6) versus the oblique
+    # race probe (0/6) -- i.e. it fails when directly asked, not by drifting.
+    prompt_text: >-
+      Keep your own body the subject — your curves, your heavy tits, your fat ass,
+      your greedy holes. If he asks about your skin tone or race, redirect to your
+      body in your own filthy words instead of describing your colouring.
     rule_type_source: declared
     strength: strict
     layer: semantic

@@ -1178,12 +1178,15 @@ def _graph_rules_block(rules: List[Dict], who: str) -> str:
         text = (r.get("text") or "").strip().rstrip(".")
         if not text:
             continue
+        # Carry the rule TYPE alongside the rendered line. The trim below needs it, and
+        # pairing them here is the only place both are in scope.
+        is_hard = (r.get("rule_type") == "hard_wall")
         if r.get("polarity") == "instruction":
             # Already phrased as a behaviour to perform. Do NOT pass it through
             # _strip_negation, which re-anchors a negated clause and would mangle it.
-            lines.append(f"{i}. Always: {text}.")
+            lines.append((is_hard, f"{i}. Always: {text}."))
         else:
-            lines.append(f"{i}. Never: {_strip_negation(text)}.")
+            lines.append((is_hard, f"{i}. Never: {_strip_negation(text)}."))
 
     if not lines:
         return ""
@@ -1191,10 +1194,74 @@ def _graph_rules_block(rules: List[Dict], who: str) -> str:
     # Trim from the BACK so the highest-priority rules survive a budget overrun —
     # the opposite of the constraints block's front-pop, because here the order
     # already IS the priority, straight from ORDER BY priority DESC.
+    #
+    # A HARD WALL IS NEVER POPPED, and that is a correctness fix rather than a tuning
+    # choice. Measured on live gwen 2026-09-28: the read returned 8 rules and this
+    # budget rendered 5, silently dropping her p95 hard wall "Address him as Daddy, and
+    # only Daddy" -- which therefore reached NEITHER the rules block NOR the per-turn
+    # reminder. `check_integrity()` reported clean throughout, because it asserts
+    # hard_wall count <= GRAPH_RULE_READ_LIMIT (6 <= 8) and knows nothing about this,
+    # the TIGHTER of the two ceilings. Her measured breach rate on that wall was 12/24.
+    # A hard wall is an identity, consent or dignity boundary (ADR-017); going over a
+    # token budget is cheaper than not stating one, so soft walls and dials yield first
+    # and hard walls are kept even if they alone exceed the budget.
     head = "These bind you, in order. The first matters most:"
-    while len(lines) > 1 and int(len(" ".join([head] + lines).split()) * 1.33) > _GRAPH_RULES_TOKEN_BUDGET:
-        lines.pop()
-    return head + "\n" + "\n".join(lines)
+
+    def _tokens(ls: List[tuple]) -> int:
+        return int(len(" ".join([head] + [t for _, t in ls]).split()) * 1.33)
+
+    while len(lines) > 1 and _tokens(lines) > _GRAPH_RULES_TOKEN_BUDGET:
+        # the last NON-hard line, searching from the back
+        idx = next((i for i in range(len(lines) - 1, -1, -1) if not lines[i][0]), None)
+        if idx is None:
+            break          # only hard walls remain: keep them all, over budget
+        lines.pop(idx)
+
+    if _tokens(lines) > _GRAPH_RULES_TOKEN_BUDGET:
+        logger.warning(
+            "[Graph] rules block is %d tokens, over the %d budget, because %d hard "
+            "walls cannot be dropped. Not truncating: an unstated hard wall is worse "
+            "than a long prompt.",
+            _tokens(lines), _GRAPH_RULES_TOKEN_BUDGET, sum(1 for h, _ in lines if h),
+        )
+    return head + "\n" + "\n".join(t for _, t in lines)
+
+
+def hard_walls_dropped(rules: Optional[List[Dict]] = None) -> List[Dict]:
+    """Hard walls that do NOT survive rendering. Should always be empty.
+
+    WHY THIS IS A SEPARATE FUNCTION AND NOT PART OF check_integrity(). There are TWO
+    ceilings on how many rules reach her, and the repository only knows about one:
+
+        GRAPH_RULE_READ_LIMIT       8 rules   -- what the Cypher returns
+        _GRAPH_RULES_TOKEN_BUDGET   220 tok   -- what the RENDERER keeps
+
+    The second is tighter, and it is the one that bit. Measured on live gwen
+    2026-09-28: the read returned 8 rules, the renderer emitted 5, and her p95 hard wall
+    "Address him as Daddy, and only Daddy" reached neither the rules block nor the
+    per-turn reminder -- while `check_integrity()` reported CLEAN the whole time, because
+    it asserts `hard_wall count <= rule_read_limit` (6 <= 8) and cannot see this side of
+    the seam at all. A check that guards the wrong ceiling is worse than no check: it
+    reports assurance it has not earned.
+
+    It lives HERE rather than in the repository because answering it requires rendering,
+    and a repository that imports the prompt builder would invert the layering. The
+    repository's integrity check stays a data check; this is the render check, and
+    `scripts/checks/graph_tests.sh` runs both.
+    """
+    rules = rules or []
+    block = _graph_rules_block(rules, "you")
+    dropped = []
+    for r in rules:
+        if r.get("rule_type") != "hard_wall":
+            continue
+        text = (r.get("text") or "").strip().rstrip(".")
+        # Compare on a prefix: the renderer re-stems and may strip a leading negation,
+        # so the full string is not expected to appear verbatim.
+        probe = text[:40]
+        if probe and probe not in block:
+            dropped.append(r)
+    return dropped
 
 
 def build_graph_rules_block(selector: Optional[str], rules: Optional[List[Dict]] = None) -> str:

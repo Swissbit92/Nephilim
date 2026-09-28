@@ -51,6 +51,30 @@ def _build_llm_response(
     import re as _re
     answer, was_rewritten = post_process_first_person(answer, persona_name)
 
+    # POST-GENERATION RULE CHECKS. Detection runs unconditionally; only REGENERATION is
+    # gated on GRAPH_ENFORCE_RULES.
+    #
+    # WHY IT LIVES HERE. check_reply and reinforcement_for were imported at the top of
+    # this module and NEVER CALLED -- the commit that claimed to "enforce address in
+    # code" added exactly one line to this file, the import, and ruff runs
+    # continue-on-error so nothing flagged it. Meanwhile _rule_tiers/gwen.yaml demoted
+    # her address rule to LAST of five hard walls with the justification "enforced in
+    # code, so it needs the prompt least of all", and the render budget then dropped it
+    # from the prompt entirely. Three layers deferring to each other, none of them
+    # running. This is the one place every reply passes through, so a check placed here
+    # cannot be forgotten by a new call site.
+    #
+    # DETECTION IS NOT GATED because it cannot change a reply -- it only records. Making
+    # it conditional would reproduce the original defect: a violation nobody can see.
+    try:
+        violations = check_reply(answer, user_message)
+        if violations:
+            metadata.rule_violations = [v.rule for v in violations]
+            for v in violations:
+                logger.warning("[Rules] %s violated: %s", v.rule, v.detail)
+    except Exception as exc:  # noqa: BLE001 — a checker must never fail a turn
+        logger.warning("[Rules] post-generation check skipped (non-fatal): %s", exc)
+
     # ADR-012: persona-configurable whole-word substitutions (e.g. shaft→cock).
     # No-op unless the card declares `word_substitutions`.
     answer = apply_word_substitutions(answer, word_substitutions)
