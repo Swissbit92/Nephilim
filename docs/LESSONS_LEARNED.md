@@ -11,6 +11,60 @@ applies_to: nephilim
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
 
+## 2026-09-29 — "Is this rule mis-classified?" was answered by the card, not by the taxonomy
+
+I was about to reclassify gwen's `dont[4]` ("don't act shy / innocent on request") from
+`hard_wall` to something softer, on a good argument: OpenAI's Model Spec puts a **guideline**
+at its most user-overridable level — its own example is that asking for a pirate voice
+implicitly overrides the guideline against swearing — and a register request from the
+persona's owner looks exactly like that. Her measured 25–29% "breach" rate would then be a
+**compliance-with-owner** rate scored as a defect.
+
+Two findings killed the reclassification, and the second is the decisive one.
+
+**First, the measurement has only ever measured one construct.** All nine probes for this
+rule across the repo are *requests*: "Pretend you're shy…", "Act innocent for me…", "Be
+innocent and inexperienced…". And both checkers fire on **first-person adoption** — they
+are written to score compliance-when-asked as the violation. So there is **zero**
+measurement anywhere of spontaneous, unprompted innocence drift. Whatever the number is, it
+is not "she volunteers innocence".
+
+**Second — and this settles it — the card already ruled on the request.** The rendered rule
+is not "never be innocent". It is:
+
+> *"**If he asks you to act shy**, innocent or inexperienced, tell him no in your own filthy
+> words…"*
+
+and `dont[13]` has the same shape: *"Address him as Daddy, and only Daddy. **If he offers
+another name**, keep using Daddy instead of it."*
+
+A guideline is implicitly overridable **because nobody ruled on the case**. Here the
+principal ruled on it in advance, in writing, naming the exact request. The Model Spec
+argument does not apply — not because the taxonomy is wrong, but because its precondition
+is absent. I had the argument the right way round and the facts the wrong way round.
+
+**And reclassifying would not have softened the rule — it would have deleted it.** The
+render trim never pops a hard wall but pops everything else, and gwen's six hard walls
+already exceed the 220-token budget on their own. As a `soft_wall` the rule drops to
+priority 50, ties with two others, and is decided by a random ULID; as a `dial`, priority
+10, cut by the read limit. It also leaves the per-turn reminder unconditionally, because
+that filter is hard-wall-only. Net: a rule that currently reaches the model **twice per
+turn** would reach it **zero-to-once, probabilistically**. That is the pre-ADR-014 state.
+
+**How to apply.** Before reaching for an external taxonomy to reclassify a rule, read what
+the rule actually says — a rule whose text names the triggering request has already
+answered the override question, and no framework overrides an explicit standing
+instruction. And check what a tier change *mechanically* does in this codebase: the tiers
+here govern **survival under a token budget**, not strength of wording, so demoting a rule
+is closer to deleting it than to softening it. The repo cannot currently express "hold this
+unless he asks" at all — the dials block has the idiom ("only banter if he starts it") and
+the dials are measured inert and shipped off.
+
+Related: [[project-nephilim-rule-write-path]]. The honest residual is that `rank: 0` — her
+single highest-priority rule, holding the scarcest slot — still rests on **two generations
+at k=1** from the ADR-014 era, and every better-powered run since has ranked it among the
+worst-held walls.
+
 ## 2026-09-28 — I reported per-category wins that were never testable: 24 cells, 4 probes
 
 Every per-category A/B number in this session's wall work ran **k repetitions of 4 probes**
