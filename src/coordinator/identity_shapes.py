@@ -46,7 +46,8 @@ IDENTITY_ORIGINS: FrozenSet[str] = frozenset({"card", "learned", "conversation",
 # constraint available on Community to keep it honest, and one more thing to keep
 # consistent on every rebuild. Revisit when a single `kind` passes ~15-20 nodes.
 LORE_KINDS: FrozenSet[str] = frozenset({"lore", "signature_move"})
-TRAIT_KINDS: FrozenSet[str] = frozenset({"behaviour", "psychological", "emotional"})
+TRAIT_KINDS: FrozenSet[str] = frozenset({"behaviour", "psychological", "emotional",
+                                         "style", "tic"})
 BOUNDARY_KINDS: FrozenSet[str] = frozenset({"ethics", "content", "personal"})
 EXPERTISE_LEVELS: FrozenSet[str] = frozenset({"strong", "familiar", "avoid"})
 

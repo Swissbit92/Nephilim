@@ -121,12 +121,21 @@ class IdentityRepository:
 
         persona_id = card.get("key") or "unknown"
         now = now_iso()
+        # `display_name` is a scalar label rather than a fact, so it is a PROPERTY here
+        # rather than its own node -- but it must be stored, because prompt_builder
+        # renders it as the name in "You are {who}, ..." and cv_summarizer seeds the
+        # generated <identity> paragraph with its first token. Under ADR-012 the graph is
+        # the system of record; a rendered field held only in the card is a field that
+        # dropping the card would lose. It is SET unconditionally (not ON CREATE) so a
+        # renamed persona propagates -- it is card-owned content, never her annotation.
         write(self._driver,
               "MERGE (p:Persona {persona_id: $pid}) "
-              "ON CREATE SET p.created_at = $now",
-              self._database, pid=persona_id, now=now)
+              "ON CREATE SET p.created_at = $now "
+              "SET p.display_name = $display_name",
+              self._database, pid=persona_id, now=now,
+              display_name=(card.get("display_name") or persona_id))
 
-        # ONE transaction for the whole rebuild. At 116 nodes there is no size
+        # ONE transaction for the whole rebuild. At ~128 nodes there is no size
         # argument for batching, and batching would trade away the property that
         # matters most for a system of record: Neo4j's docs confirm that with
         # `CALL { } IN TRANSACTIONS`, inner transactions that already committed are NOT
