@@ -20,6 +20,7 @@ from .config import get_settings
 from .cv_summarizer import get_or_build_cv_summary
 from .lore_loader import get_persona_lore_context
 from .ollama_utils import assert_model_available, require_model_configured
+from .identity_source import overlay_from_graph as _overlay_identity_from_graph
 from .persona_loader import resolve_persona_to_card
 
 # Setup logger
@@ -964,6 +965,22 @@ def _lean_world_block(card: Dict) -> str:
     return "\n".join(lines)
 
 
+#: Cap for the `example_dialogues` FALLBACK. Unchanged at 3, deliberately: gwen carries
+#: ten example_dialogues, so raising this would have silently taken her shipped prompt
+#: from three exemplars to six -- and every other persona with more than three too. A
+#: global raise looked harmless and was not.
+_MAX_FALLBACK_EXEMPLARS = 3
+
+#: Cap for CURATED `voice_signature.exemplars`, which a card must opt into by declaring
+#: them. Higher than the fallback so a refusal exemplar can be ADDED rather than swapped
+#: in: declaring exemplars REPLACES the fallback wholesale, so at a cap of 3 supplying one
+#: refusal exemplar silently deleted all three of her existing voice examples -- which
+#: would make an A/B two variables at once, the second being "her voice examples were
+#: removed". The schema allows 8 (VoiceSignature.exemplars max_length); 6 leaves headroom.
+#: A card that declares nothing is unaffected and renders byte-identically.
+_MAX_CURATED_EXEMPLARS = 6
+
+
 def _lean_voice_examples_block(card: Dict, who: str) -> str:
     """Voice-last exemplars (recency re-anchor).
 
@@ -973,11 +990,14 @@ def _lean_voice_examples_block(card: Dict, who: str) -> str:
     """
     vs = card.get("voice_signature") or {}
     exemplars = vs.get("exemplars") if isinstance(vs, dict) else None
-    if not (isinstance(exemplars, list) and exemplars):
+    if isinstance(exemplars, list) and exemplars:
+        cap = _MAX_CURATED_EXEMPLARS
+    else:
         exemplars = card.get("example_dialogues", []) or []
+        cap = _MAX_FALLBACK_EXEMPLARS
 
     rendered: List[str] = []
-    for ex in exemplars[:3]:
+    for ex in exemplars[:cap]:
         if not isinstance(ex, dict):
             continue
         user_q = ex.get("user", "")
@@ -990,7 +1010,12 @@ def _lean_voice_examples_block(card: Dict, who: str) -> str:
     return header + "\n\n" + "\n\n".join(rendered)
 
 
-@lru_cache(maxsize=64)
+# maxsize raised 64 -> 128 when the prewarm was fixed to warm all three call shapes.
+# 9 personas x 3 shapes is 27 entries, but a selector has more than one accepted
+# spelling ("Eeva" and "nephilim_eeva" both resolve), so the real ceiling is a multiple
+# of that and 64 was close enough to evict the entries the prewarm had just paid for.
+# A prompt is ~4KB, so 128 entries is ~0.5MB -- cheaper than one avoidable LLM call.
+@lru_cache(maxsize=128)
 def _build_system_prompt_lean(selector: Optional[str], include_examples: bool = True) -> str:
     """Build the persona system prompt (ADR-005 Phase B — the only builder).
 
@@ -998,7 +1023,22 @@ def _build_system_prompt_lean(selector: Optional[str], include_examples: bool = 
     lore dump. ~900-1,200 tokens (vs the retired legacy builder's ~2,400-2,900).
     Safety and wallet anti-hallucination guards are preserved.
     """
-    card = resolve_persona_to_card(selector)
+    # ADR-012: the graph is the system of record, so the identity content is READ from
+    # it when GRAPH_IDENTITY_SOURCE is on, falling back to the card on every failure.
+    # The overlay is byte-identical to the card (test_graph_sourced_identity.py), so this
+    # adds ZERO tokens -- it deliberately does NOT inject identity-node text, which
+    # ADR-018 measured as a voice regression (0.804 -> 0.625) and closed.
+    #
+    # WHY A GRAPH READ INSIDE AN lru_cache IS SAFE *TODAY* AND WHY THAT IS GUARDED:
+    # a cached prompt can serve stale graph state, which is exactly why the RULES read
+    # was kept out of this function (see build_graph_rules_block). Identity is different
+    # only because ADR-018 defers the write path -- "no write path from chat exists" --
+    # so nothing mutates these nodes mid-session. That is a property of the current
+    # system, not a law, so test_graph_sourced_identity.py asserts it mechanically: if a
+    # chat-time identity write appears, the guard fails and tells you to move this read
+    # out to the route the way the rules read already is.
+    card, _identity_source = _overlay_identity_from_graph(
+        resolve_persona_to_card(selector), selector)
     if not card:
         name = "Persona"
         style = "helpful, concise"
@@ -1007,7 +1047,7 @@ def _build_system_prompt_lean(selector: Optional[str], include_examples: bool = 
         name = (card.get("display_name") or card.get("key") or "Persona")
         style = (card.get("style") or "helpful & concise")
         try:
-            identity = get_or_build_cv_summary(selector).get("summary", "") or _summarize(name, style, card.get("lore", []))
+            identity = get_or_build_cv_summary(selector, card).get("summary", "") or _summarize(name, style, card.get("lore", []))
         except Exception:
             identity = _summarize(name, style, card.get("lore", []))
 

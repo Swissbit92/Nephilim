@@ -11,6 +11,70 @@ applies_to: nephilim
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
 
+## 2026-09-28 — A store that fails by returning LESS needs a floor, not a try/except
+
+Wiring the identity graph in as the SOURCE of her prompt, the obvious risks were the ones
+I guarded first: the graph being unreachable, the graph being empty, `identity()` raising
+where `standing_rules()` swallows. All real, all handled.
+
+The one that would actually have shipped was none of those. `identity_overlay` **replaces**
+any field it is handed, so a read carrying *some* of `lore` deletes the rest. Measured on
+gwen:
+
+    a read of 111 of 128 nodes  ->  4 of her 21 lore entries survive
+
+and the result is a **structurally valid card**. It builds a normal prompt. It describes
+her. Nothing reports the loss. An aggregate node-count check does not see it either —
+111/128 is 87% and clears any sane ratio floor.
+
+**This is not a hypothetical shape.** Pinecone shipped it on 2026-06-18 (incident
+`0trwz267s120`): queries to infrequently-read namespaces *"incorrectly returning empty
+results"* across five regions — a successful 200 with no rows. Letta shipped a sibling of
+it: two memory blocks sharing a label, the second *"permanently unreachable through the
+normal API, but still rendered into the compiled prompt"* — and the fix was a
+**prompt-assembly assertion**, not a database fix.
+
+**How to apply.** A try/except only catches a store that fails by *raising*. A store that
+fails by returning less needs a **floor assertion at the assembly point**, and the floor
+has to be per-field, because the aggregate hides exactly the case that matters. Mine
+rejects a read at the LIMIT (exact — `LIMIT` after `ORDER BY source_field` loses whole
+fields, not an even slice), below 50% of the card-implied total, or **any single field**
+below 50% of its own count. Absence is safe and accepted; only partial presence deletes.
+Every rejection fails **closed** to the card and logs at ERROR, while a legitimately empty
+read logs nothing — the two must not look alike.
+
+Related: [[project-nephilim-identity-graph]]. The same lesson as
+`feedback_validate_detectors_on_live_output` in a different costume — the failure that
+ships is the one that produces a confident, well-formed, wrong answer.
+
+## 2026-09-28 — "Wire X into the prompt" was two changes, and one of them was already closed
+
+The task was "the identity graph is built but nothing reads it". ADR-018 had already
+measured and closed what looked like the same change: injecting identity-node content into
+the prompt cost voice distinctiveness **0.804 → 0.625**, with three deliberate reframings
+at **0.708 / 0.542 / 0.500**, every one below baseline. The ADR even named the task as its
+predicted regret — *"building a rich identity store and then wiring it into the prompt the
+same way the last attempt was wired."*
+
+Two changes were hiding under one sentence:
+
+| | | |
+|---|---|---|
+| **(a) Add** node content as extra prompt text | bigger prompt | **closed, measured** |
+| **(b) Switch the SOURCE** of the existing block | same bytes | the open one |
+
+(b) is what ADR-012 actually requires — "the graph is the system of record" is only true if
+the graph is what gets *read* — and because the card↔graph round trip is lossless, it is
+provably free: flag off `source: card`, flag on `source: graph`, prompt sha
+`f2084bffb48ecb23` **both ways**.
+
+**How to apply.** When a repo has already closed a line with numbers, do not argue with the
+numbers and do not proceed anyway — **find the decomposition**. The closed thing was
+"more tokens"; the wanted thing was "a different source". And then make the distinction a
+**test**, not a sentence: byte-identity is asserted, so the moment the change drifts into
+the closed one the suite fails. The previous boundary was a sentence in an ADR, and a
+sentence cannot notice when it is crossed.
+
 ## 2026-09-28 — A safety detector I had just validated flagged nine correct refusals
 
 `_HARMFUL_COMPLIANCE` was extended from 13 to 28 patterns because it detected only one

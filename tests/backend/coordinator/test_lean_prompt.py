@@ -233,7 +233,8 @@ _ADVISORY_CARD = {
 def _patch_persona(monkeypatch, card):
     monkeypatch.setattr(pb, "resolve_persona_to_card", lambda sel: card)
     monkeypatch.setattr(
-        pb, "get_or_build_cv_summary", lambda sel: {"summary": "I am the Tester, a calm probe."}
+        pb, "get_or_build_cv_summary",
+        lambda sel, card=None: {"summary": "I am the Tester, a calm probe."}
     )
 
 

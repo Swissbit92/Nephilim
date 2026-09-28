@@ -455,7 +455,8 @@ def reusable_cached_summary(key: str, card: Dict) -> Tuple[Optional[Dict], bool]
     return None, False
 
 
-def get_or_build_cv_summary(selector: Optional[str]) -> Dict:
+def get_or_build_cv_summary(selector: Optional[str],
+                            card: Optional[Dict] = None) -> Dict:
     """
     Get or build CV summary for persona.
 
@@ -464,6 +465,21 @@ def get_or_build_cv_summary(selector: Optional[str]) -> Dict:
 
     Args:
         selector: Persona key/name
+        card: an ALREADY-RESOLVED card to summarise instead of re-reading from disk.
+            Exists so the graph can be the source of record (ADR-012). Without it this
+            function re-resolved the card itself, which meant a graph-sourced identity
+            reached every structured block of the prompt EXCEPT this paragraph — the
+            prompt would have described her from the card while the rest of it described
+            her from the graph, and nothing would have reported the disagreement.
+            Passing the card makes one source win for the whole prompt.
+
+            COST, stated rather than hidden: the fingerprint is computed from whatever
+            card arrives here, so once an operator edits a graph node the hash moves and
+            this regenerates the paragraph through the LLM at temperature 0.9 and saves
+            it to a TRACKED file that cannot be reproduced. That is acceptable only
+            because ADR-018 defers the chat-time write path — no model-driven edit can
+            trigger it today. If a chat-time identity write is ever added, this becomes a
+            non-reproducible write on a user turn and must be revisited.
 
     Returns:
         Summary dict with 'key', 'hash', 'updated', 'summary' fields
@@ -471,7 +487,8 @@ def get_or_build_cv_summary(selector: Optional[str]) -> Dict:
     Raises:
         RuntimeError: If no personas available or lock timeout
     """
-    card = resolve_persona_to_card(selector)
+    if card is None:
+        card = resolve_persona_to_card(selector)
     if not card:
         raise RuntimeError("No personas available.")
     key = (card.get("key") or "Persona").split()[0].capitalize()
