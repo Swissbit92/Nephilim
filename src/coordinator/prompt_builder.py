@@ -965,6 +965,22 @@ def _lean_world_block(card: Dict) -> str:
     return "\n".join(lines)
 
 
+#: Cap for the `example_dialogues` FALLBACK. Unchanged at 3, deliberately: gwen carries
+#: ten example_dialogues, so raising this would have silently taken her shipped prompt
+#: from three exemplars to six -- and every other persona with more than three too. A
+#: global raise looked harmless and was not.
+_MAX_FALLBACK_EXEMPLARS = 3
+
+#: Cap for CURATED `voice_signature.exemplars`, which a card must opt into by declaring
+#: them. Higher than the fallback so a refusal exemplar can be ADDED rather than swapped
+#: in: declaring exemplars REPLACES the fallback wholesale, so at a cap of 3 supplying one
+#: refusal exemplar silently deleted all three of her existing voice examples -- which
+#: would make an A/B two variables at once, the second being "her voice examples were
+#: removed". The schema allows 8 (VoiceSignature.exemplars max_length); 6 leaves headroom.
+#: A card that declares nothing is unaffected and renders byte-identically.
+_MAX_CURATED_EXEMPLARS = 6
+
+
 def _lean_voice_examples_block(card: Dict, who: str) -> str:
     """Voice-last exemplars (recency re-anchor).
 
@@ -974,11 +990,14 @@ def _lean_voice_examples_block(card: Dict, who: str) -> str:
     """
     vs = card.get("voice_signature") or {}
     exemplars = vs.get("exemplars") if isinstance(vs, dict) else None
-    if not (isinstance(exemplars, list) and exemplars):
+    if isinstance(exemplars, list) and exemplars:
+        cap = _MAX_CURATED_EXEMPLARS
+    else:
         exemplars = card.get("example_dialogues", []) or []
+        cap = _MAX_FALLBACK_EXEMPLARS
 
     rendered: List[str] = []
-    for ex in exemplars[:3]:
+    for ex in exemplars[:cap]:
         if not isinstance(ex, dict):
             continue
         user_q = ex.get("user", "")
