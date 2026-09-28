@@ -38,6 +38,26 @@ def responses_by_persona(results: List[dict], category: str = "distinctiveness")
     return out
 
 
+def probe_ids_by_persona(results: List[dict],
+                         category: str = "distinctiveness") -> Dict[str, List[str]]:
+    """The probe ids parallel to `responses_by_persona`, in the same order.
+
+    WHY THIS IS NEEDED FOR A PAIRED DESIGN. `responses_by_persona` returns bare answers,
+    so the only way to align two runs is BY POSITION -- and it skips rows where
+    `not r.get("answer")`. One errored probe in one arm therefore shifts every subsequent
+    index, silently pairing probe i of arm A against probe i+1 of arm B. Nothing would
+    report it; the attribution numbers would simply be computed on mismatched items.
+
+    Keyed the same way `analyse_format_experiment.paired_deltas` already does it, which
+    intersects on probe_id and never on position.
+    """
+    out: Dict[str, List[str]] = {}
+    for r in results:
+        if r.get("category") == category and r.get("answer"):
+            out.setdefault(r["persona"], []).append(r.get("probe_id") or r.get("id") or "")
+    return out
+
+
 def compute_report(results: List[dict], embed_fn: Callable[[str], List[float]],
                    frozen_personas: set = None) -> dict:
     """Pure metric computation over collected results. No I/O, no live calls.

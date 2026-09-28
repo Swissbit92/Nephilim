@@ -33,7 +33,14 @@ _BASELINE_DIR = Path(__file__).parent / "baselines"
 
 # Bump when the prompt builder changes in a way that moves persona voices, so a
 # gallery frozen under the old builder is flagged stale.
-PROMPT_BUILDER_VERSION = "lean-v1"
+# BUMPED 2026-09-29, "lean-v1" -> "lean-v2". The constant's own contract is "bump when
+# the prompt builder changes in a way that moves persona voices", and it had not moved
+# since 2026-08-10 despite FOUR changes that do: ADR-014 graph rules (a new <rules>
+# section), ADR-015 bubble boundaries, the 2026-09-22 sampler repair, and ADR-019's
+# graph-sourced identity plus the hard-wall render fix that put a sixth rule back in the
+# prompt. So check_staleness's prompt_builder_version comparison has been silently
+# passing on every prompt change in seven weeks -- a guard that cannot fire.
+PROMPT_BUILDER_VERSION = "lean-v2"
 
 # Manifest schema version. Bump when a field is ADDED to the comparability set, so
 # every artifact written before the bump is explicitly incomparable rather than
@@ -73,6 +80,29 @@ def sampling_fingerprint(sampling: Optional[dict]) -> str:
     if not sampling:
         return UNRECORDED
     return _sha16(json.dumps(sampling, sort_keys=True, separators=(",", ":")))
+
+
+def sampling_fingerprint_v2(sampling: Optional[dict],
+                            sampling_env: Optional[dict] = None) -> str:
+    """Fingerprint over BOTH per-persona samplers and the transport environment.
+
+    `sampling_fingerprint` hashes per-persona settings only, so `context_window`,
+    `max_output_tokens` and `completion_backend` could all change while Guard 0 in
+    compare_baselines still reported "samplers match". That is a hole in the guard rather
+    than a gap in what is recorded -- `sampling_env` has been captured all along and
+    simply never hashed. It matters most for `completion_backend`, because this module's
+    own docstring notes that on the legacy path `min_p` never reaches the wire unless the
+    backend is `http`: two runs could differ in whether a sampler took effect AT ALL and
+    still fingerprint identically.
+
+    Kept as a SEPARATE function rather than changing the original, because the existing
+    hash is baked into every tracked artifact and silently redefining it would make every
+    historical comparison incommensurable without saying so.
+    """
+    if not sampling:
+        return UNRECORDED
+    payload = {"sampling": sampling, "sampling_env": sampling_env or {}}
+    return _sha16(json.dumps(payload, sort_keys=True, separators=(",", ":")))
 
 
 def persona_def_hash(persona_key: str, persona_dir: Optional[Path] = None) -> Optional[str]:
