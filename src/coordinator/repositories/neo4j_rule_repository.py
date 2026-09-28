@@ -573,6 +573,161 @@ class Neo4jRuleRepository:
             self._database, rule_id=rule_id,
         )
 
+    def rules_as_of(self, persona_id: str, *,
+                    system_time: Optional[str] = None,
+                    valid_time: Optional[str] = None,
+                    limit: int = 64) -> list[dict[str, Any]]:
+        """Rules on the two temporal axes independently. THE bi-temporal query.
+
+        The schema has carried both axes since ADR-014 and nothing could ask a question
+        that used them:
+
+          ``system_time``  — what the system BELIEVED at that moment.
+                             Bounded by created_at / expired_at.
+          ``valid_time``   — what was TRUE of the persona at that moment.
+                             Bounded by valid_from / valid_to.
+
+        WHY THESE ARE NOT THE SAME QUESTION, and why one timestamp cannot answer both.
+        The axes diverge whenever recording lags reality, which for a rule learned from
+        conversation is the normal case, not the edge case:
+
+          * A LATE-ARRIVING CORRECTION. She says on the 28th that she stopped wanting
+            something three weeks ago. `valid_to` is the 7th; `expired_at` is the 28th.
+            Asking "what applied on the 14th" must answer NO, while "what did we believe
+            on the 14th" must answer YES. A single timestamp collapses those into one
+            wrong answer, and which one you get depends on which meaning the author of
+            the query happened to have in mind.
+          * AUDIT versus BEHAVIOUR. "Why did she say that on Tuesday" is a system-time
+            question — it asks what she was reading. "Was that rule in force on Tuesday"
+            is a valid-time question. Conflating them makes a supersession
+            indistinguishable from a correction, which is exactly the distinction an
+            audit trail exists to preserve.
+
+        Both default to now, which reproduces ``standing_rules`` for the live case.
+        Passing neither is therefore not an error and not a special case.
+
+        A NULL on EITHER valid-time bound means UNBOUNDED, not "same as system time".
+        The first draft used ``coalesce(r.valid_from, r.created_at)``, which is a smell
+        and asymmetric with its own other half: NULL ``valid_to`` was already treated as
+        an open END, so treating NULL ``valid_from`` as ``created_at`` silently asserted
+        "this rule became valid exactly when we happened to write it down". For any row
+        that hit that fallback the table quietly degraded to transaction-time-only, with
+        nothing marking the degradation — and a valid-time query would EXCLUDE a legacy
+        rule that may genuinely have applied earlier, making "we know it started later"
+        indistinguishable from "we do not know when it started".
+
+        NOTE ON STRING COMPARISON: these are lexicographic comparisons on ISO-8601
+        timestamps, which is only valid because ``now_iso()`` is fixed-width and UTC
+        (see graph_ids). A naive-local or variable-width timestamp anywhere in this
+        store would silently turn every comparison here into nonsense.
+        """
+        if self._driver is None:
+            return []
+        st = system_time or now_iso()
+        vt = valid_time or now_iso()
+        return read(
+            self._driver,
+            """
+            MATCH (p:Persona {persona_id: $persona_id})-[:HAS_RULE]->(r:Rule)
+            WHERE r.created_at <= $st
+              AND (r.expired_at IS NULL OR r.expired_at > $st)
+              AND (r.valid_from IS NULL OR r.valid_from <= $vt)
+              AND (r.valid_to   IS NULL OR r.valid_to   >  $vt)
+            RETURN r.rule_id    AS rule_id,
+                   r.text       AS text,
+                   r.rule_type  AS rule_type,
+                   r.polarity   AS polarity,
+                   r.priority   AS priority,
+                   r.origin     AS origin,
+                   r.created_at AS created_at,
+                   r.expired_at AS expired_at,
+                   r.valid_from AS valid_from,
+                   r.valid_to   AS valid_to
+            ORDER BY r.priority DESC, r.rule_id ASC
+            LIMIT $limit
+            """,
+            self._database, persona_id=persona_id, st=st, vt=vt, limit=int(limit),
+        )
+
+    def correct_rule(self, old_rule_id: str, text: str, *,
+                     allow_hard_wall: bool = False) -> dict[str, Any]:
+        """Fix a MIS-RECORDING: "we wrote that down wrong, it was never true".
+
+        The method ADR-014's docstring promised and never had. The difference from
+        ``supersede_rule`` is the whole point and it is one line of Cypher:
+
+            supersede  -> the rule CHANGED.      Sets expired_at AND valid_to.
+            correct    -> the rule was MIS-TYPED. Sets expired_at ONLY.
+
+        SCOPE, AND THE FAILURE MODE TO WATCH. This is a CONTENT-ONLY correction. It
+        cannot express "the text was wrong AND the dates were wrong", and a caller who
+        needs that will reach for this method anyway because it is the only correction
+        primitive here — silently inheriting a wrong validity window as though it were
+        still correct. If that case arrives, it needs its own operation; do not widen
+        this one. A separate third case also exists and is not covered: "this rule was
+        recorded as applying but never applied at all", which is a zero-width
+        valid-time collapse, not a correction.
+
+        A correction leaves ``valid_to`` alone because the world did not change — only
+        our record of it did. The new row inherits the old ``valid_from``, so a
+        valid-time query still reports the rule as having applied continuously, while a
+        system-time query can still show exactly what we wrongly believed and for how
+        long. Using ``supersede_rule`` for a typo destroys that distinction: it asserts
+        the rule stopped applying at the moment someone noticed the typo.
+        """
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("a correction needs replacement text")
+        if self._driver is None:
+            return {"corrected": False, "reason": "graph unavailable"}
+        existing = read(
+            self._driver,
+            "MATCH (r:Rule {rule_id: $rid}) WHERE r.expired_at IS NULL "
+            "RETURN r.rule_type AS rule_type",
+            self._database, rid=old_rule_id,
+        )
+        if not existing:
+            return {"corrected": False, "reason": "no live rule with that id"}
+        if (existing[0]["rule_type"] or DEFAULT_RULE_TYPE) == "hard_wall" and not allow_hard_wall:
+            raise HardWallImmutable(
+                f"rule {old_rule_id} is a hard_wall. Even a correction to one goes "
+                f"through the card in git, so the change leaves a reviewable commit."
+            )
+        now = now_iso()
+        rows = write(
+            self._driver,
+            """
+            MATCH (old:Rule {rule_id: $old_rule_id})
+            WHERE old.expired_at IS NULL
+            MATCH (p:Persona {persona_id: old.persona_id})
+            CREATE (new:Rule:CurrentRule {
+                rule_id:          $new_rule_id,
+                persona_id:       old.persona_id,
+                text:             $text,
+                source_field:     old.source_field,
+                source_index:     old.source_index,
+                rule_type:        old.rule_type,
+                rule_type_source: old.rule_type_source,
+                polarity:         coalesce(old.polarity, 'prohibition'),
+                origin:           old.origin,
+                priority:         old.priority,
+                valid_from:       old.valid_from,
+                valid_to:         old.valid_to,
+                created_at:       $now,
+                expired_at:       null
+            })
+            SET old.expired_at = $now
+            REMOVE old:CurrentRule
+            CREATE (p)-[:HAS_RULE]->(new)
+            CREATE (new)-[:CORRECTS]->(old)
+            RETURN new.rule_id AS new_rule_id
+            """,
+            self._database, old_rule_id=old_rule_id, new_rule_id=new_id(),
+            text=text, now=now,
+        )
+        if not rows:
+            return {"corrected": False, "reason": "no live rule with that id"}
+        return {"corrected": True, "new_rule_id": rows[0]["new_rule_id"]}
+
     # ---- integrity ------------------------------------------------------
 
     def check_integrity(self) -> dict[str, Any]:
