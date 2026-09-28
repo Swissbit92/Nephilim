@@ -68,6 +68,25 @@ ORIGINS: frozenset[str] = frozenset({"card", "conversation", "inferred"})
 # operation the reframing exists to avoid.
 POLARITIES: frozenset[str] = frozenset({"prohibition", "instruction"})
 
+
+# A hard wall must never sort below this. Tier priorities are 100 / 50 / 10
+# (scripts/utils/seed_graph.py), and `rank` is folded INTO priority at seed time
+# rather than stored, so a supersession that passes `priority` can silently drop a
+# hard wall into the soft-wall band and out of the read limit. seed_graph asserts
+# against that for seeds; nothing asserted against it for supersessions.
+_HARD_WALL_PRIORITY_FLOOR = 90
+
+
+class HardWallImmutable(RuntimeError):
+    """Raised when something tries to change a hard wall through a writable path.
+
+    A distinct type rather than ValueError, so a caller can catch exactly this and
+    turn it into a refusal-to-propose instead of a 500. It is deliberately NOT a
+    subclass of ValueError: a vocabulary error means "you passed nonsense", this
+    means "you passed something valid that you are not allowed to do".
+    """
+
+
 #: The fail-closed default. An unclassified rule is a HARD WALL, never a movable
 #: one, because the costs are asymmetric: a soft wall wrongly held as hard is an
 #: annoyance the operator notices and corrects, while a hard wall wrongly treated
@@ -403,25 +422,91 @@ class Neo4jRuleRepository:
 
     def supersede_rule(self, old_rule_id: str, text: str, *,
                        rule_type: Optional[str] = None,
+                       polarity: Optional[str] = None,
                        priority: Optional[int] = None,
                        origin: str = "conversation",
-                       valid_from: Optional[str] = None) -> dict[str, Any]:
+                       valid_from: Optional[str] = None,
+                       allow_hard_wall: bool = False) -> dict[str, Any]:
         """Replace a rule without destroying it. Sets BOTH clocks.
 
         A supersession asserts two different things and they are easy to conflate:
         `expired_at` says the system stopped BELIEVING this row, and `valid_to`
         says the rule stopped APPLYING in the world. A pure correction — "I
-        recorded that wrong, it was never true" — sets only `expired_at` and must
-        leave `valid_to` alone, which is why that is a separate method and not a
-        flag on this one.
+        recorded that wrong, it was never true" — would set only `expired_at` and
+        leave `valid_to` alone. THAT METHOD DOES NOT EXIST YET; an earlier version
+        of this docstring said it did.
 
         The old row keeps every property and loses only the :CurrentRule label,
         which drops it out of the read index while leaving it fully traversable.
+
+        HARD WALLS ARE REFUSED unless ``allow_hard_wall=True``, which no
+        conversation-sourced path may pass. Before 2026-09-28 this method could
+        change one three ways, all silent and all reproduced against the live
+        graph: rewrite its text while keeping the hard_wall label, demote it to
+        soft_wall, or push its priority below the read limit so it falls out of
+        the prompt entirely. The check is here in application code because it
+        CANNOT be in the database — this is Neo4j Community with no APOC
+        installed (verified: zero apoc procedures), so there are no triggers and
+        no property-existence constraints, only uniqueness. Anyone with direct
+        Cypher access still bypasses this; that is why ``check_integrity`` also
+        LOOKS for a superseded hard wall after the fact.
+
+        POLARITY IS NOW CARRIED. It used to be absent from the CREATE map, so a
+        superseded `instruction` read back as a `prohibition` (the read does
+        ``coalesce(r.polarity, 'prohibition')``) and rendered as "Never: <text>".
+        Reproduced live on 2026-09-28: "If he asks you to act innocent, refuse in
+        your own filthy words" came out as `1. Never: If he asks you to act
+        innocent, refuse in your own filthy words` — i.e. NEVER REFUSE. That is
+        the same inversion class that once flipped four of gwen's six hard walls,
+        and it was reachable through this method from the day it was written.
         """
+        # VOCABULARY FIRST, driver second. A caller passing origin="banana" has a bug
+        # whether or not the graph happens to be up, and returning "graph unavailable"
+        # would mask it. It also matters for authority: a validation step that can be
+        # skipped by the database being down is not a validation step.
+        if rule_type is not None and rule_type not in RULE_TYPES:
+            raise ValueError(f"rule_type {rule_type!r} not in controlled vocabulary "
+                             f"{sorted(RULE_TYPES)}")
+        if polarity is not None and polarity not in POLARITIES:
+            raise ValueError(f"polarity {polarity!r} not in controlled vocabulary "
+                             f"{sorted(POLARITIES)}")
+        if origin not in ORIGINS:
+            raise ValueError(f"origin {origin!r} not in controlled vocabulary "
+                             f"{sorted(ORIGINS)}")
+
         if self._driver is None:
             return {"superseded": False, "reason": "graph unavailable"}
-        if rule_type is not None and rule_type not in RULE_TYPES:
-            raise ValueError(f"rule_type {rule_type!r} not in {sorted(RULE_TYPES)}")
+
+        # Read the target BEFORE writing. The authority check needs the OLD row's
+        # type: the dangerous call is the one that leaves rule_type alone and only
+        # replaces the text of a hard wall.
+        existing = read(
+            self._driver,
+            "MATCH (r:Rule {rule_id: $rid}) WHERE r.expired_at IS NULL "
+            "RETURN r.rule_type AS rule_type, r.polarity AS polarity, "
+            "r.priority AS priority, r.persona_id AS persona_id",
+            self._database,
+            rid=old_rule_id,
+        )
+        if not existing:
+            return {"superseded": False, "reason": "no live rule with that id"}
+        old_type = existing[0]["rule_type"] or DEFAULT_RULE_TYPE
+
+        if old_type == "hard_wall" and not allow_hard_wall:
+            raise HardWallImmutable(
+                f"rule {old_rule_id} is a hard_wall and cannot be superseded through "
+                f"this path. Hard walls are identity, consent and dignity boundaries; "
+                f"they change by editing the persona card in git and re-seeding, which "
+                f"leaves a reviewable commit. Pass allow_hard_wall=True only from an "
+                f"operator-initiated path, never from anything model-generated."
+            )
+        if rule_type == "hard_wall" and old_type != "hard_wall" and not allow_hard_wall:
+            raise HardWallImmutable(
+                f"refusing to PROMOTE rule {old_rule_id} from {old_type!r} to "
+                f"'hard_wall' through this path. A promotion is as much an identity "
+                f"change as a demotion, and a model-proposed one would let a learned "
+                f"preference acquire the authority of a consent boundary."
+            )
         now = now_iso()
         vf = valid_from or now
         rows = write(
@@ -440,6 +525,7 @@ class Neo4jRuleRepository:
                 rule_type_source: CASE WHEN $rule_type IS NULL
                                        THEN coalesce(old.rule_type_source, 'default')
                                        ELSE 'declared' END,
+                polarity:         coalesce($polarity, old.polarity, 'prohibition'),
                 origin:           $origin,
                 priority:         coalesce($priority, old.priority),
                 valid_from:       $valid_from,
@@ -456,7 +542,7 @@ class Neo4jRuleRepository:
             """,
             self._database,
             old_rule_id=old_rule_id, new_rule_id=new_id(), text=text,
-            rule_type=rule_type, priority=priority, origin=origin,
+            rule_type=rule_type, polarity=polarity, priority=priority, origin=origin,
             valid_from=vf, now=now, default_type=DEFAULT_RULE_TYPE,
         )
         if not rows:
@@ -536,10 +622,73 @@ class Neo4jRuleRepository:
             """,
             self._database,
         )
+                # Query 4 — a hard wall that was CHANGED. The database cannot prevent this
+        # (Community, no APOC, no triggers, no property-existence constraints — only
+        # uniqueness), so the next best thing is to SEE it. Walks the SUPERSEDES chain
+        # for any live rule whose predecessor was a hard wall, plus any live hard wall
+        # whose priority has been pushed out of its tier's band.
+        changed_hard_walls = read(
+            self._driver,
+            """
+            MATCH (new:Rule)-[:SUPERSEDES]->(old:Rule {rule_type: 'hard_wall'})
+            RETURN new.rule_id AS rule_id, old.rule_id AS superseded_rule_id,
+                   old.rule_type AS was, new.rule_type AS now_is,
+                   new.origin AS origin
+            LIMIT 50
+            """,
+            self._database,
+        )
+        demoted_by_priority = read(
+            self._driver,
+            """
+            MATCH (r:CurrentRule {rule_type: 'hard_wall'})
+            WHERE r.priority < $floor
+            RETURN r.rule_id AS rule_id, r.priority AS priority
+            LIMIT 50
+            """,
+            self._database,
+            floor=_HARD_WALL_PRIORITY_FLOOR,
+        )
+        # Query 5 — two live rules for one card slot. Also unpreventable here: the
+        # only constraint Community gives is uniqueness on rule_id, and a slot is
+        # (persona_id, source_field, source_index).
+        duplicate_slots = read(
+            self._driver,
+            """
+            MATCH (r:CurrentRule)
+            WHERE r.source_field IS NOT NULL AND r.source_index IS NOT NULL
+            WITH r.persona_id AS persona_id, r.source_field AS f,
+                 r.source_index AS i, collect(r.rule_id) AS ids
+            WHERE size(ids) > 1
+            RETURN persona_id, f AS source_field, i AS source_index, ids
+            LIMIT 50
+            """,
+            self._database,
+        )
+
         return {
             "checked": True,
             "bad_vocabulary": bad_vocab,
+            "changed_hard_walls": changed_hard_walls,
+            "demoted_hard_walls": demoted_by_priority,
+            "duplicate_slots": duplicate_slots,
             "label_drift": label_drift,
             "orphans": orphans,
-            "clean": not (bad_vocab or label_drift or orphans),
+            # A hard-wall change is a BREACH only when it did not come from the card.
+            # An operator editing gwen.json and re-seeding is the sanctioned route and
+            # leaves a git commit; that must not make integrity permanently dirty — the
+            # polarity bug already taught this repo what a permanently-dirty checker is
+            # worth (nothing: it gets ignored). A conversation- or inferred-origin
+            # supersession of a hard wall is the thing that should never be true.
+            "hard_wall_breaches": [
+                r for r in changed_hard_walls if r.get("origin") != "card"
+            ],
+            "clean": not (
+                bad_vocab
+                or label_drift
+                or orphans
+                or duplicate_slots
+                or demoted_by_priority
+                or [r for r in changed_hard_walls if r.get("origin") != "card"]
+            ),
         }
