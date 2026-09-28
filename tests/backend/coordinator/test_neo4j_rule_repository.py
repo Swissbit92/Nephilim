@@ -171,31 +171,72 @@ class TestTheReadIsDeterministic:
         assert len(got) == 1 and got[0]["rule_type"] == "hard_wall"
 
 
+def _soft(repo):
+    """The soft_wall rule from a 2-rule seed.
+
+    These tests exercise supersession MECHANICS, which are orthogonal to wall type.
+    They used to seed `_rules(1)` -- whose single rule is a hard_wall -- and so began
+    failing the moment ADR-017 made hard walls unsupersedable through this path. The
+    break was invisible for a while because this whole module SKIPS unless
+    NEO4J_BASE_URL is exported, and tests/conftest.py strips the prod .env to keep runs
+    hermetic. A green suite therefore said nothing about these.
+    """
+    return [r for r in repo.standing_rules(TEST_PERSONA, limit=99)
+            if r["rule_type"] == "soft_wall"][0]
+
+
 class TestSupersession:
     def test_superseding_sets_both_clocks_and_keeps_the_old_row(self, repo):
         """A supersession asserts TWO things: expired_at says the system stopped
         BELIEVING the row, valid_to says the rule stopped APPLYING. Conflating
         them makes 'what did I believe before X' unanswerable."""
-        repo.seed_rules(TEST_PERSONA, _rules(1))
-        old = repo.standing_rules(TEST_PERSONA)[0]
+        repo.seed_rules(TEST_PERSONA, _rules(2))
+        old = _soft(repo)
         out = repo.supersede_rule(old["rule_id"], "the replacement")
         assert out["superseded"]
 
         live = repo.standing_rules(TEST_PERSONA, limit=99)
-        assert len(live) == 1 and live[0]["text"] == "the replacement"
+        assert {r["text"] for r in live} == {"rule 1", "the replacement"}
 
         chain = repo.history(out["new_rule_id"])
         assert len(chain) == 2, "the superseded row was destroyed, not retired"
         prev = chain[1]
-        assert prev["text"] == "rule 1"
+        assert prev["text"] == old["text"]
         assert prev["expired_at"] is not None, "stopped believing it — not recorded"
         assert prev["valid_to"] is not None, "stopped applying — not recorded"
 
     def test_a_superseded_rule_cannot_be_superseded_again(self, repo):
-        repo.seed_rules(TEST_PERSONA, _rules(1))
-        old = repo.standing_rules(TEST_PERSONA)[0]["rule_id"]
+        repo.seed_rules(TEST_PERSONA, _rules(2))
+        old = _soft(repo)["rule_id"]
         repo.supersede_rule(old, "v2")
         assert repo.supersede_rule(old, "v3")["superseded"] is False
+
+    def test_a_hard_wall_cannot_be_superseded_through_this_path(self, repo):
+        """ADR-017's guard, pinned. Its absence is why the two tests above broke
+        silently: nothing asserted the behaviour that had just been added, so the
+        only signal was two unrelated tests failing in a module that does not run."""
+        from src.coordinator.repositories.neo4j_rule_repository import HardWallImmutable
+
+        repo.seed_rules(TEST_PERSONA, _rules(2))
+        hard = [r for r in repo.standing_rules(TEST_PERSONA, limit=99)
+                if r["rule_type"] == "hard_wall"][0]
+        with pytest.raises(HardWallImmutable):
+            repo.supersede_rule(hard["rule_id"], "a model-authored replacement")
+
+        # and it is still live and unchanged
+        still = [r for r in repo.standing_rules(TEST_PERSONA, limit=99)
+                 if r["rule_id"] == hard["rule_id"]]
+        assert len(still) == 1 and still[0]["text"] == hard["text"]
+
+    def test_an_operator_path_may_supersede_a_hard_wall(self, repo):
+        """The escape hatch exists and works — otherwise the guard is a wall with
+        no door, and the next person deletes the guard instead of using it."""
+        repo.seed_rules(TEST_PERSONA, _rules(2))
+        hard = [r for r in repo.standing_rules(TEST_PERSONA, limit=99)
+                if r["rule_type"] == "hard_wall"][0]
+        out = repo.supersede_rule(hard["rule_id"], "an operator-authored replacement",
+                                  allow_hard_wall=True)
+        assert out["superseded"]
 
 
 class TestIntegrity:

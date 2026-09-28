@@ -90,10 +90,13 @@ EXCLUDED_LEAVES: Dict[str, str] = {
                       "SEMANTIC_PLATFORM.md states exemplars are not seeded.",
     "voice.signoff": "voice exemplar: a canned closing line -- see voice.greeting.",
     **{f"emotional_profile.sliders.{d}": (
-        "a slider is a NUMBER, and a number modelled as a node is a value pretending to "
-        "be a thing. ADR-016 also measured them inert as behaviour controls. They belong "
-        "on the Persona node or on a :Baseline, which evo.cq02 demands and this "
-        "milestone defers — deferred with a reason, not dropped."
+        "a slider is a NUMBER, and a number modelled as a node is a value pretending "
+        "to be a thing. ADR-016 also measured them inert as behaviour controls. NOT a "
+        "node, but no longer deferred: IdentityRepository._capture_baseline writes the "
+        "shipped values onto an immutable :Baseline (ON CREATE only) and "
+        "_set_current_dials keeps the live values on the Persona node, so evo.cq01's "
+        "diff is answerable from the graph alone. Excluded from NODES, present in the "
+        "graph."
     ) for d in ("warmth", "assertiveness", "playfulness", "skepticism",
                 "competitiveness", "manipulativeness", "sluttiness")},
 }
