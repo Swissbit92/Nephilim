@@ -40,6 +40,13 @@ logger = logging.getLogger(__name__)
 SOURCE_CARD = "card"
 SOURCE_GRAPH = "graph"
 
+#: Personas already announced as graph-sourced. The prompt is byte-identical either way,
+#: so NOTHING in the output reveals which source won -- which makes this the only way an
+#: operator can confirm the flag is doing anything. Logged ONCE per persona rather than
+#: per turn: the builder is lru_cached so a per-turn log would be misleading anyway, and
+#: an INFO line on every turn is how a useful signal becomes noise that gets filtered.
+_ANNOUNCED: set = set()
+
 
 def _overlay(dst: Dict[str, Any], src: Dict[str, Any]) -> None:
     """Merge `src` into `dst` in place, recursing into dicts only.
@@ -130,6 +137,14 @@ def overlay_from_graph(card: Optional[Dict[str, Any]],
             )
             return card, SOURCE_CARD
 
+        if persona_id not in _ANNOUNCED:
+            _ANNOUNCED.add(persona_id)
+            logger.info(
+                "[Graph] identity SOURCED FROM GRAPH for %s (%d nodes, %s) — "
+                "the prompt is byte-identical to the card build; this line is the only "
+                "way to tell the flag is active",
+                persona_id, len(nodes), why,
+            )
         return identity_overlay(card, nodes), SOURCE_GRAPH
     except Exception as exc:  # noqa: BLE001 — a prompt must never fail on a store blip
         logger.warning(
