@@ -32,6 +32,7 @@ fi
 MODULES=(
   tests/backend/coordinator/test_neo4j_rule_repository.py
   tests/backend/coordinator/test_identity_baseline.py
+  tests/backend/coordinator/test_live_hard_walls_render.py
 )
 
 out=$(./.venv/bin/python -m pytest "${MODULES[@]}" -o addopts= -q "$@" 2>&1)

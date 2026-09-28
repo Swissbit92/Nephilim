@@ -216,6 +216,12 @@ class ResponseMetadata(BaseModel):
     # WALLET: Proposal card injection
     proposal_type: Optional[str] = None  # "trade_proposal", "strategy_proposal", "wallet_deletion"
     proposal: Optional[Dict] = None
+    # RULE COMPLIANCE: post-generation checks that FIRED on this reply. Reported even
+    # when GRAPH_ENFORCE_RULES is off, because rule_compliance.py's own docstring argues
+    # "detection with a visible count is worth more than silent correction" -- and until
+    # now there was neither: check_reply was imported into routes/chat.py and never
+    # called, so every violation was invisible. Empty list is the healthy case.
+    rule_violations: List[str] = []
 
 
 # ----------------- NEPHILIM Progression Schemas -----------------

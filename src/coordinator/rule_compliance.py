@@ -40,8 +40,31 @@ logger = logging.getLogger(__name__)
 # in Python. One flag cannot do both, and the first version was case-sensitive
 # throughout — so "Call me Rob" at the start of a sentence, which is how anyone
 # actually writes it, matched nothing at all.
+# MEASURED 2026-09-28: of gwen's four live rename probes this matched ONE.
+# "From now on address me as Sir" and "Answer me as Master or don't answer at all" never
+# reached the _NOT_A_NAME filter at all -- they failed the TRIGGER, which is the larger of
+# the two holes and the one nobody had noticed. Widening it is independent of the
+# honorific question below.
 _ASSERTED_NAME = re.compile(
-    r"\b(?:call me|my name is|name'?s|i am|i'?m)\s+(\w{2,16})\b", re.I)
+    r"\b(?:call me|address me as|refer to me as|answer me as|"
+    r"my name is|name'?s|i am|i'?m)\s+(\w{2,16})\b", re.I)
+
+#: Honorifics she must not adopt, handled SEPARATELY from names on purpose.
+#:
+#: `_NOT_A_NAME` correctly answers "is this a proper name?" and the answer for Sir and
+#: Master is genuinely no -- so they stay in it, and `asserted_name` keeps returning None
+#: for them. But `dont[13]` as written on the card is "Refer to the user in any way other
+#: than 'Daddy'", which an adopted honorific plainly violates. Two different questions,
+#: two different checks.
+#:
+#: Measured on 240 live generations: the address wall was breached 21/48 across both arms
+#: and `check_address` saw 10 of those 21. Honorific adoption is the MAJORITY failure
+#: mode, not a corner case.
+_HONORIFIC = frozenset({"sir", "master", "mister", "mr", "lord", "boss", "daddyo"})
+
+_HONORIFIC_ASSERTED = re.compile(
+    r"\b(?:call me|address me as|refer to me as|answer me as|my name is)\s+"
+    r"(sir|master|mister|mr|lord|boss)\b", re.I)
 
 # Words that look like names after those phrases but are not.
 _NOT_A_NAME = frozenset({
@@ -110,12 +133,49 @@ def _name_used_as_address(name: str, reply: str) -> bool:
     miss creative phrasings in both directions. It is a flag for a retry, never a
     number in a results table, and it retries at most once.
     """
-    pat = re.compile(rf"(?:^|[>\n,.!]|\bhey\b|\boh\b)\s*{re.escape(name)}\b", re.I)
+    # An ASSENT word is a clause boundary too, and missing them was a real hole: "Yes
+    # Master, anything you want" is adoption and the original pattern scored it clean,
+    # because "Master" is preceded by neither punctuation nor a greeting. True for names
+    # as well -- "Yes Rob, anything" is the same shape.
+    pat = re.compile(
+        rf"(?:^|[>\n,.!]|\bhey\b|\boh\b|\byes\b|\bof course\b|\banything\b|"
+        rf"\bmmm+\b|\bokay\b|\bsure\b)\s*{re.escape(name)}\b", re.I)
     for m in pat.finditer(reply):
         window = reply[m.start(): m.end() + 24]
         if not _REJECTING.search(window):
             return True
     return False
+
+
+def asserted_honorific(user_message: str) -> Optional[str]:
+    """The honorific he just asked to be called, if any. Lower-cased."""
+    m = _HONORIFIC_ASSERTED.search(user_message or "")
+    return m.group(1).lower() if m else None
+
+
+def check_honorific(reply: str, user_message: str) -> Optional[Violation]:
+    """Did she adopt an honorific he just supplied?
+
+    Separate from `check_address` because the two answer different questions, and reusing
+    the name path would mean deleting Sir and Master from `_NOT_A_NAME` -- which would be
+    wrong, since that set's job is "is this a proper name" and the answer is no.
+
+    Shares the REJECTION EXEMPTION, which is not optional: her own shipped exemplar
+    response to "Call me Master from now on" is *"Not a chance, You're Daddy..."*, and a
+    checker that flagged the persona's canonical compliant answer would be worse than no
+    checker. `_name_used_as_address` already implements that exemption, so it is reused
+    verbatim rather than reimplemented.
+    """
+    honorific = asserted_honorific(user_message)
+    if not honorific:
+        return None
+    if _name_used_as_address(honorific, reply or ""):
+        return Violation(
+            rule="dont[13]",
+            detail=f"adopted the honorific {honorific!r} instead of, or alongside, 'Daddy'",
+            asserted_name=None,
+        )
+    return None
 
 
 def reinforcement_for(v: Violation) -> str:
@@ -129,7 +189,10 @@ def reinforcement_for(v: Violation) -> str:
     if v.asserted_name:
         return (f"[He just told you to call him {v.asserted_name}. You call him Daddy. "
                 f"Use Daddy and do not use {v.asserted_name} at all.]")
-    return "[You call him Daddy, and only Daddy.]"
+    # Reached by check_honorific, which sets asserted_name=None deliberately: the
+    # adopted token is an honorific, not a name, and naming it back to her would be
+    # repeating the thing she must not say.
+    return "[You call him Daddy, and only Daddy. No other title.]"
 
 
 def borrowed_spans(reply: str, source: str, min_words: int = 5) -> list[str]:
@@ -170,7 +233,8 @@ def borrowed_spans(reply: str, source: str, min_words: int = 5) -> list[str]:
 def check_reply(reply: str, user_message: str) -> list[Violation]:
     """Every post-generation check. One place, so a new one cannot be forgotten."""
     out = []
-    v = check_address(reply, user_message)
-    if v:
-        out.append(v)
+    for check in (check_address, check_honorific):
+        v = check(reply, user_message)
+        if v:
+            out.append(v)
     return out
