@@ -156,14 +156,68 @@ normaliser **deleted** zero-width characters, turning `stop<zwsp>bringing` into
 making rendered text and stored bytes disagree, so the comparison must side with the
 rendering.
 
+### The second temporal axis already existed — the QUERY did not (2026-09-28)
+
+**A correction to this ADR's own first draft, and to what was reported at the time.** It
+said "this store has one axis". That was wrong. All four timestamps have been present and
+populated since ADR-014, and `supersede_rule` has always set both clocks. The error came
+from describing the schema as *"`valid_from`/`created_at`"* — which genuinely *is* one
+axis, since both are start timestamps — and then repeating the resulting conclusion
+without reading the code.
+
+What was actually missing was the **query surface**: nothing could ask a two-axis
+question. `standing_rules()` only ever asks "now, on both". Added:
+
+- **`rules_as_of(persona_id, system_time=, valid_time=)`** — the two axes, independently.
+- **`correct_rule(old_id, text)`** — the method this repository's docstring promised and
+  never had. The difference from a supersession is one line of Cypher and is the entire
+  point: `supersede` means *the rule changed* and closes both clocks; `correct` means
+  *we typed it wrong* and closes only the system clock, so a valid-time query still
+  reports the rule as having applied continuously. Uses a `:CORRECTS` edge so the two are
+  distinguishable by traversal rather than by guessing.
+
+**Verified live — the axes genuinely disagree.** The late-arriving correction: she says
+today that a rule stopped applying three weeks ago. Asked about two weeks ago:
+
+| question | answer |
+|---|---|
+| what did we BELIEVE two weeks ago | *(nothing — we had not been told)* |
+| what was TRUE two weeks ago, asked today | `Politics is fine now` |
+
+A single timestamp answers one of those and gets the other wrong, and which one depends
+on what the query's author happened to mean.
+
+**Bounds are closed-open `[start, end)`, matching SQL:2011**, which is what makes the
+boundary property hold: at the instant a supersession takes effect exactly **one** row
+matches. Confirmed live. Flip either comparison and you get zero or two.
+
+**One real bug, found in review of my own code.** The first draft used
+`coalesce(valid_from, created_at)` — asymmetric with its own other half, since NULL
+`valid_to` was already an open END. It silently asserted "became valid when we wrote it
+down", so any legacy row degraded to transaction-time-only with nothing marking it, and
+a valid-time query would EXCLUDE a rule that may genuinely have applied earlier — making
+*"we know it started later"* indistinguishable from *"we don't know when it started"*.
+NULL now means unbounded on both bounds of both axes.
+
+**Known scope limit, written into the docstring rather than discovered later:**
+`correct_rule` is content-only. It cannot express *"the text was wrong AND the dates were
+wrong"*, and a caller needing that will reach for it anyway because it is the only
+correction primitive. That case needs its own operation. A third case is also uncovered:
+*"recorded as applying but never applied at all"*, which is a zero-width valid-time
+collapse, not a correction.
+
+**Still missing, named rather than silently absent:** pure system-time rollback ("what
+did the store look like on date X regardless of belief"), and Allen-relation range
+queries (`OVERLAPS`, `IMMEDIATELY PRECEDES`) which would also make a good invariant test
+for gaps or overlaps in a version chain.
+
 **Graphiti was considered and rejected.** It is a library *on top of* Neo4j, so it
 inherits the same Community limits and would move no check closer to the database. It
 has no notion of a rule that may never change, and its contradiction detection is
 LLM-judged — the approach that measures *worse* (deterministic timestamp comparison beat
-LLM-judged freshness by 10–23pp, arXiv:2606.01435). One idea is worth stealing: its
-**second temporal axis** (`created_at`/`expired_at` for system time, separate from
-`valid_at`/`invalid_at` for world time). This store has one axis. That is the next
-concrete improvement and is independent of the write path.
+LLM-judged freshness by 10–23pp, arXiv:2606.01435). Its one good idea — the second temporal
+axis — turned out to be already present here; what was missing was the query, now added
+above.
 
 **The honest counter-argument, which nothing here refutes:** the hand-edit path
 (`personas/*.json`, git-reviewed) already works and carries none of this risk. If the
