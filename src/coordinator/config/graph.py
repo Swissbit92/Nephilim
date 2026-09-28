@@ -128,6 +128,31 @@ class GraphSettings(BaseSettings):
         alias="GRAPH_RULE_READ_LIMIT",
     )
 
+    identity_source: bool = Field(
+        default=False,
+        description=(
+            "Read the persona's IDENTITY from the graph instead of the card. OFF means "
+            "the card is the source, as it has always been. "
+            "WHAT THIS IS NOT: it does not add identity-node content to the prompt. "
+            "ADR-018 measured that and closed it -- voice distinctiveness 0.804 with "
+            "injection off, 0.625 with it on, and three reframings at 0.708 / 0.542 / "
+            "0.500, all below baseline. This flag changes only WHERE the same content "
+            "is read from, and the prompt is asserted byte-identical either way "
+            "(test_graph_sourced_identity.py). Zero tokens are added. "
+            "WHY IT EXISTS: ADR-012 says the graph is the system of record and the card "
+            "is an origin plus a reset target. That was untrue while nothing read the "
+            "graph -- dropping it would have cost nothing, which is the opposite of a "
+            "system of record. With this ON, an edit to a graph node reaches her; with "
+            "it OFF the graph is inert storage. "
+            "FAILS OPEN BY DESIGN: an unreachable graph, an empty graph, or a persona "
+            "with no identity nodes all fall back to the card rather than raising. "
+            "IdentityRepository.identity() does NOT swallow outages the way "
+            "standing_rules() does, so the guard lives in identity_source.py. "
+            "Set GRAPH_IDENTITY_SOURCE=true to enable."
+        ),
+        alias="GRAPH_IDENTITY_SOURCE",
+    )
+
     enforce_rules: bool = Field(
         default=False,
         description=(

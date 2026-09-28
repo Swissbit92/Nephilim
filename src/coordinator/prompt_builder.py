@@ -20,6 +20,7 @@ from .config import get_settings
 from .cv_summarizer import get_or_build_cv_summary
 from .lore_loader import get_persona_lore_context
 from .ollama_utils import assert_model_available, require_model_configured
+from .identity_source import overlay_from_graph as _overlay_identity_from_graph
 from .persona_loader import resolve_persona_to_card
 
 # Setup logger
@@ -990,7 +991,12 @@ def _lean_voice_examples_block(card: Dict, who: str) -> str:
     return header + "\n\n" + "\n\n".join(rendered)
 
 
-@lru_cache(maxsize=64)
+# maxsize raised 64 -> 128 when the prewarm was fixed to warm all three call shapes.
+# 9 personas x 3 shapes is 27 entries, but a selector has more than one accepted
+# spelling ("Eeva" and "nephilim_eeva" both resolve), so the real ceiling is a multiple
+# of that and 64 was close enough to evict the entries the prewarm had just paid for.
+# A prompt is ~4KB, so 128 entries is ~0.5MB -- cheaper than one avoidable LLM call.
+@lru_cache(maxsize=128)
 def _build_system_prompt_lean(selector: Optional[str], include_examples: bool = True) -> str:
     """Build the persona system prompt (ADR-005 Phase B — the only builder).
 
@@ -998,7 +1004,22 @@ def _build_system_prompt_lean(selector: Optional[str], include_examples: bool = 
     lore dump. ~900-1,200 tokens (vs the retired legacy builder's ~2,400-2,900).
     Safety and wallet anti-hallucination guards are preserved.
     """
-    card = resolve_persona_to_card(selector)
+    # ADR-012: the graph is the system of record, so the identity content is READ from
+    # it when GRAPH_IDENTITY_SOURCE is on, falling back to the card on every failure.
+    # The overlay is byte-identical to the card (test_graph_sourced_identity.py), so this
+    # adds ZERO tokens -- it deliberately does NOT inject identity-node text, which
+    # ADR-018 measured as a voice regression (0.804 -> 0.625) and closed.
+    #
+    # WHY A GRAPH READ INSIDE AN lru_cache IS SAFE *TODAY* AND WHY THAT IS GUARDED:
+    # a cached prompt can serve stale graph state, which is exactly why the RULES read
+    # was kept out of this function (see build_graph_rules_block). Identity is different
+    # only because ADR-018 defers the write path -- "no write path from chat exists" --
+    # so nothing mutates these nodes mid-session. That is a property of the current
+    # system, not a law, so test_graph_sourced_identity.py asserts it mechanically: if a
+    # chat-time identity write appears, the guard fails and tells you to move this read
+    # out to the route the way the rules read already is.
+    card, _identity_source = _overlay_identity_from_graph(
+        resolve_persona_to_card(selector), selector)
     if not card:
         name = "Persona"
         style = "helpful, concise"
@@ -1007,7 +1028,7 @@ def _build_system_prompt_lean(selector: Optional[str], include_examples: bool = 
         name = (card.get("display_name") or card.get("key") or "Persona")
         style = (card.get("style") or "helpful & concise")
         try:
-            identity = get_or_build_cv_summary(selector).get("summary", "") or _summarize(name, style, card.get("lore", []))
+            identity = get_or_build_cv_summary(selector, card).get("summary", "") or _summarize(name, style, card.get("lore", []))
         except Exception:
             identity = _summarize(name, style, card.get("lore", []))
 

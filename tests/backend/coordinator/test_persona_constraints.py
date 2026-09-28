@@ -56,7 +56,8 @@ def _identity_without_a_live_model(monkeypatch):
     into the next test and a real one into this.
     """
     monkeypatch.setattr(
-        pb, "get_or_build_cv_summary", lambda selector: {"summary": _STUB_IDENTITY}
+        pb, "get_or_build_cv_summary",
+        lambda selector, card=None: {"summary": _STUB_IDENTITY}
     )
     pb._build_system_prompt_lean.cache_clear()
     yield

@@ -277,7 +277,16 @@ def initialize_all():
                 if not key:
                     continue
                 try:
+                    # BOTH call shapes, deliberately. lru_cache keys on the call's
+                    # (args, kwargs) shape, so f(key) and f(key, include_examples=True)
+                    # are DISTINCT entries -- measured: 0 hits, 2 misses. The chat route
+                    # calls build_system_prompt(persona, include_examples=...) with a
+                    # KEYWORD (routes/chat.py), so warming only the positional form left
+                    # the hot path cold and every first turn per persona paid a full
+                    # build -- which can include an LLM call for the CV summary.
                     _build_sp(key)
+                    _build_sp(key, include_examples=True)
+                    _build_sp(key, include_examples=False)
                     logger.debug(f"[Prewarm] System prompt cached for '{key}'")
                 except Exception as exc:
                     logger.debug(f"[Prewarm] Skipped '{key}': {exc}")
