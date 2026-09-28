@@ -59,9 +59,27 @@ edition, and Neo4j's own manual states that in Community *"there are no roles, b
 users have implied administrator privileges."* So: no triggers, no row-level security,
 no property-existence constraints — only uniqueness.
 
-**Consequence, stated rather than hidden: anyone with direct Cypher access bypasses
-every guard here, permanently.** The application layer is the boundary because the
-edition forces it, not because it was chosen.
+The application layer is the boundary because the edition forces it, not because it was
+chosen.
+
+**And that is the intended threat model, not a residual risk — corrected 2026-09-28.**
+An earlier draft of this section called direct Cypher access a limitation "stated rather
+than hidden". It is not a limitation. The operator SHOULD be able to change a hard wall;
+gwen should not. The boundary being in application code puts it in exactly the right
+place: it sits across the only path she can reach, and leaves the operator's own access
+untouched. A database-level lock would have been *worse*, because it would have
+constrained the human as well.
+
+What this does mean is that the guard is only as good as the code paths it covers, which
+is why hard walls are unnameable from `propose()` by construction and why
+`check_integrity()` detects a tampered hard wall — not to police the operator, but to
+make an accidental or buggy write visible.
+
+**Also decided (2026-09-28): hard walls STAY in the graph.** The alternative — keeping
+them only in the card and rendering them through the trim-exempt block — would make them
+unreachable rather than guarded, and was offered. Declined deliberately: the graph is
+where they are read from, versioned, and integrity-checked, and the guard already covers
+the only path that matters.
 
 So `check_integrity()` now also **detects** what it cannot prevent: a hard wall that
 was superseded, one pushed below its priority band, and two live rules for one card
