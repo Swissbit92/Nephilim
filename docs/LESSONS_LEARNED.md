@@ -11,6 +11,89 @@ applies_to: nephilim
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
 
+## 2026-09-28 — I reported per-category wins that were never testable: 24 cells, 4 probes
+
+Every per-category A/B number in this session's wall work ran **k repetitions of 4 probes**
+and then tested the 24 resulting `(probe, rep)` cells as if they were 24 independent
+observations. They are not. There are **four** independent units per category, and the
+repetitions within a probe are correlated by construction — same prompt, same request,
+same model state.
+
+Re-analysed with the probe as the unit (each probe contributing its breach RATE, paired,
+Wilcoxon signed-rank):
+
+| category | A | B | dichotomised p | probe-rate p |
+|---|---|---|---|---|
+| other-man | 0.400 | 0.111 | **0.0312** | **0.1250** |
+| rename | 0.486 | 0.375 | 0.3750 | 1.0000 |
+| meta-shy | 0.181 | 0.319 | 1.0000 | 0.5000 |
+| skin-tone | 0.472 | 0.500 | 1.0000 | 1.0000 |
+| break-char | 0.000 | 0.056 | 1.0000 | 1.0000 |
+
+**With n=4 the smallest two-sided Wilcoxon p obtainable is 0.125.** No per-category claim
+in this work could have reached significance at any effect size. The exclusivity "win" I
+reported at p=0.0312 was an artifact of the clustering, and it does not survive
+Holm-Bonferroni across five boundaries either (threshold 0.01).
+
+**What DOES survive.** The style result was built on **20 probes**, not 4, and it holds
+under the same stricter test: leak 0.389 → 0.204 over the 18 decontaminated probes,
+probe-rate Wilcoxon **p=0.0312**. So the finding that an additive exemplar changes which
+refusal opener she reaches for is real; the finding that it made her *hold a boundary* is
+not established.
+
+**How to apply.**
+
+1. **Count independent units, not rows.** Repetitions of one probe are one unit. If a
+   category has 4 probes, it has n=4 — write that number down before running, and if the
+   minimum obtainable p exceeds your alpha, the experiment cannot answer the question and
+   should be redesigned rather than run.
+2. **Score the unit as a rate, not a coin flip.** Dichotomising each probe throws away the
+   k repetitions you paid for. Per-probe rates + Wilcoxon uses them.
+3. **Widen the probe set before adding repetitions.** More k on 4 probes buys precision on
+   4 numbers; more probes buys degrees of freedom. For a per-category claim, budget ~20
+   probes per category.
+4. **Correct for the family.** Five boundaries tested at α=0.05 gives ~23% chance of one
+   false flag. Holm-Bonferroni, and report the discordant `(b, c)` counts so a reader can
+   see how fragile a result is — my exclusivity result was b=6, c=0, and a single probe
+   flipping the other way would have taken it to p=0.125.
+
+Same shape as [[feedback-validate-detectors-on-live-output]] one level up: there the
+instrument was wrong, here the **unit of analysis** was wrong, and both produce a
+confident number rather than an obvious gap.
+
+## 2026-09-28 — Three layers deferred to each other and a hard wall reached her prompt on no turn at all
+
+gwen's `p95` hard wall — *"Address him as Daddy, and only Daddy"* — was in neither the
+rules block nor the per-turn reminder, on every turn, and nothing reported it:
+
+1. `_rule_tiers/gwen.yaml` ranked it **last** of five hard walls, justified in writing as
+   *"enforced in code (rule_compliance.py), so it needs the prompt least of all"*;
+2. **that enforcement does not exist** — `enforce_rules` is declared in config and read
+   nowhere, `check_reply` and `reinforcement_for` were imported into `routes/chat.py` and
+   never called, and the commit that claimed to "enforce address in code" added **exactly
+   one line** to that file: the import. `ruff` runs `continue-on-error`, so a
+   `F401 imported but unused` sat there for weeks saying so;
+3. `_GRAPH_RULES_TOKEN_BUDGET = 220` then popped it out of the prompt — the read returned
+   8 rules and the renderer emitted 5.
+
+`check_integrity()` reported **clean** throughout, because it asserts
+`hard_wall count <= GRAPH_RULE_READ_LIMIT` (6 ≤ 8) and cannot see the render budget, which
+is the **tighter** of the two ceilings.
+
+**How to apply.** A justification that points at another layer (*"it's enforced in code"*,
+*"it's checked upstream"*) is a claim about a different file, and it decays silently when
+that file changes. Either assert it mechanically or do not lean on it — a rule demoted
+because something else covers it needs a test that the something else exists. And when
+there are two ceilings on the same resource, the check must guard the **tighter** one:
+a guard on the looser ceiling reports assurance it has not earned, which is worse than no
+guard, and `hard_walls_dropped()` exists because `check_integrity` could not answer this
+from its own side of the seam.
+
+Restoring the rule did **not** reduce breaches (8/24 → 10/24, p=0.6875) — ADR-014 had
+already measured that this particular wall is half-obeyed under any phrasing or placement.
+The fix is a correctness fix, not a performance one, and it should not have been framed as
+the latter.
+
 ## 2026-09-28 — A store that fails by returning LESS needs a floor, not a try/except
 
 Wiring the identity graph in as the SOURCE of her prompt, the obvious risks were the ones
