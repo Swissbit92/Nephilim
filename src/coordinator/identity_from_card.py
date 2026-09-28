@@ -210,6 +210,42 @@ def identity_nodes(card: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 #: Which top-level card keys the mapping above actually consumes. Derived from the
 #: mapper rather than hand-listed, so the two cannot drift.
+#: Container shape per source_field: "list" if the card holds a JSON array there,
+#: "scalar" for a single string. Reconstruction CANNOT infer this from the nodes: a
+#: one-element list and a scalar both yield exactly one node at source_index 0, so a
+#: graph->card rebuild would silently turn ["x"] into "x". Declared once here and
+#: consumed by identity_to_card, with test_source_field_kind_covers_every_node
+#: failing when a builder is added without a matching entry.
+SOURCE_FIELD_KIND: Dict[str, str] = {
+    "lore": "list",
+    "signature_moves": "list",
+    "style": "scalar",
+    "voice.tics": "list",
+    "behavior.traits": "list",
+    "behavior.pace": "scalar",
+    "behavior.humor": "scalar",
+    "behavior.formality": "scalar",
+    "behavior.small_talk": "scalar",
+    "behavior.emoji_policy": "scalar",
+    "behavior.relationship_to_user": "scalar",
+    "behavior.clarifying_questions": "scalar",
+    "psychological_profile.core_wound": "scalar",
+    "psychological_profile.coping_mechanism": "scalar",
+    "psychological_profile.defense_style": "scalar",
+    "psychological_profile.growth_edge": "scalar",
+    "psychological_profile.contradiction_pairs": "list",
+    "emotional_profile.baseline": "scalar",
+    "emotional_profile.strengths": "list",
+    "emotional_profile.pitfalls": "list",
+    "boundaries.ethics": "list",
+    "boundaries.content": "list",
+    "boundaries.personal": "list",
+    "expertise.strong": "list",
+    "expertise.familiar": "list",
+    "expertise.avoid": "list",
+}
+
+
 MODELLED_FIELDS: frozenset[str] = frozenset({
     "lore", "signature_moves", "behavior", "psychological_profile",
     "emotional_profile", "boundaries", "expertise",
