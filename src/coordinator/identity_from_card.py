@@ -62,6 +62,13 @@ EXCLUDED_FIELDS: Dict[str, str] = {
     "bg": "background asset path for the frontend",
     "word_substitutions": "render-time text filter",
     # ── consumer layer: already a documented non-goal ────────────────────────
+    "voice_signature": "voice exemplars and diction cues — CONSUMER LAYER, the same class "
+                       "as example_dialogues and voice.greeting/signoff. Added to gwen "
+                       "2026-09-28 to carry an in-voice refusal exemplar (measured: leak "
+                       "39% -> 20%, p=0.0063). Deliberately NOT identity: it is a "
+                       "demonstration of HOW she says things, not a fact about her, and "
+                       "it is also fingerprint-exempt in cv_summarizer precisely so that "
+                       "editing it cannot regenerate <identity> through an LLM.",
     "example_phrases": "voice exemplar — see voice",
     "example_dialogues": "voice exemplar — see voice",
     "dialogue_prefs": "render-shape preference consumed by prompt_builder directly",
