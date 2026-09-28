@@ -46,7 +46,8 @@ IDENTITY_ORIGINS: FrozenSet[str] = frozenset({"card", "learned", "conversation",
 # constraint available on Community to keep it honest, and one more thing to keep
 # consistent on every rebuild. Revisit when a single `kind` passes ~15-20 nodes.
 LORE_KINDS: FrozenSet[str] = frozenset({"lore", "signature_move"})
-TRAIT_KINDS: FrozenSet[str] = frozenset({"behaviour", "psychological", "emotional"})
+TRAIT_KINDS: FrozenSet[str] = frozenset({"behaviour", "psychological", "emotional",
+                                         "style", "tic"})
 BOUNDARY_KINDS: FrozenSet[str] = frozenset({"ethics", "content", "personal"})
 EXPERTISE_LEVELS: FrozenSet[str] = frozenset({"strong", "familiar", "avoid"})
 
@@ -146,6 +147,32 @@ EXPERTISE = Shape(
 )
 
 SHAPES: Dict[str, Shape] = {s.label: s for s in (LORE_ENTRY, TRAIT, BOUNDARY, EXPERTISE)}
+
+#: The seven declared dials, in card order. Named explicitly rather than read from the
+#: card so a card that gains or loses a dial is a DECISION rather than a silent schema
+#: change -- the baseline's whole job is to be comparable over time.
+SLIDER_NAMES: tuple[str, ...] = (
+    "warmth", "assertiveness", "playfulness", "skepticism",
+    "competitiveness", "manipulativeness", "sluttiness",
+)
+
+#: The :Baseline label is NOT a Shape. A Shape carries the content/annotation split and
+#: is rebuilt from the card on every apply_card; a baseline is the opposite of that -- it
+#: is written ONCE and never again, because a starting point that gets refreshed is not a
+#: starting point. evolution.yaml names it the day-1 irreversible item in its domain:
+#: "change cannot be measured against a starting point that was never recorded", and no
+#: later work recovers it. So it is deliberately outside SHAPES, where the rebuild
+#: machinery cannot reach it.
+BASELINE_LABEL = "Baseline"
+
+#: The baseline's edge, declared here rather than in EDGES on purpose. EDGES is the
+#: shape-edge table and test_every_shape_has_exactly_one_edge_with_typed_endpoints
+#: asserts it maps 1:1 onto SHAPES -- an invariant worth keeping, since an untyped or
+#: orphan relation is the modelling defect Noy & McGuinness warn about. :Baseline is not
+#: a Shape, so its edge does not belong in that table; it is named here so the type is
+#: still declared in one place rather than living only inside a Cypher string.
+BASELINE_EDGE = "HAS_BASELINE"
+
 
 #: Relationship types, one per shape, with TYPED ENDPOINTS. The endpoint types are the
 #: load-bearing part: Noy & McGuinness name an unconstrained range ("do not make the

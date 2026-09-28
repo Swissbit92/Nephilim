@@ -51,13 +51,16 @@ TWO TRAPS, BOTH GUARDED RATHER THAN NOTED.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
 from ..graph_driver import read, write
 from ..graph_ids import new_id, now_iso
 from ..identity_from_card import identity_nodes
-from ..identity_shapes import EDGES, SHAPES, Shape
+from ..identity_shapes import (BASELINE_EDGE, BASELINE_LABEL, EDGES, SHAPES,
+                               SLIDER_NAMES, Shape)
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +75,19 @@ ANNOTATION_DEFAULTS: Dict[str, Any] = {
 }
 
 _LABEL_TO_EDGE = {tgt: rel for rel, (_src, tgt) in EDGES.items()}
+
+
+def _card_fingerprint(card: Dict[str, Any]) -> str:
+    """Stable digest of the card as shipped, stored with the baseline.
+
+    Deliberately NOT cv_summarizer._fingerprint: that one EXCLUDES five presentation
+    keys so a theme change does not force an LLM to rewrite <identity>. A baseline wants
+    the opposite -- to record exactly which card version was live when the snapshot was
+    taken -- so it hashes everything.
+    """
+    return hashlib.sha256(
+        json.dumps(card, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()[:16]
 
 
 class IdentityRepository:
@@ -121,12 +137,24 @@ class IdentityRepository:
 
         persona_id = card.get("key") or "unknown"
         now = now_iso()
+        # `display_name` is a scalar label rather than a fact, so it is a PROPERTY here
+        # rather than its own node -- but it must be stored, because prompt_builder
+        # renders it as the name in "You are {who}, ..." and cv_summarizer seeds the
+        # generated <identity> paragraph with its first token. Under ADR-012 the graph is
+        # the system of record; a rendered field held only in the card is a field that
+        # dropping the card would lose. It is SET unconditionally (not ON CREATE) so a
+        # renamed persona propagates -- it is card-owned content, never her annotation.
         write(self._driver,
               "MERGE (p:Persona {persona_id: $pid}) "
-              "ON CREATE SET p.created_at = $now",
-              self._database, pid=persona_id, now=now)
+              "ON CREATE SET p.created_at = $now "
+              "SET p.display_name = $display_name",
+              self._database, pid=persona_id, now=now,
+              display_name=(card.get("display_name") or persona_id))
 
-        # ONE transaction for the whole rebuild. At 116 nodes there is no size
+        self._capture_baseline(persona_id, card, now)
+        self._set_current_dials(persona_id, card)
+
+        # ONE transaction for the whole rebuild. At ~128 nodes there is no size
         # argument for batching, and batching would trade away the property that
         # matters most for a system of record: Neo4j's docs confirm that with
         # `CALL { } IN TRANSACTIONS`, inner transactions that already committed are NOT
@@ -236,6 +264,113 @@ class IdentityRepository:
             """,
             self._database, pid=persona_id, kind=kind, limit=int(limit),
         )
+
+    def _capture_baseline(self, persona_id: str, card: Dict[str, Any],
+                          now: str) -> None:
+        """Snapshot the shipped dials ONCE, the first time this persona is applied.
+
+        evolution.yaml calls this its day-1 irreversible item, and the reason is not
+        ceremony: "Have you changed since we met?" (evo.cq01) is a diff against a
+        starting point, so a starting point that was never recorded makes every
+        evolution question permanently unanswerable -- and no later work recovers it,
+        because by then the starting point has already moved.
+
+        EVERY property is set under ON CREATE. That is the entire mechanism: a rebuild
+        after a card edit binds the existing :Baseline and writes nothing, so the
+        snapshot cannot be refreshed into meaninglessness by the routine path. A
+        baseline that a rebuild updates is not a baseline.
+        """
+        if self._driver is None:
+            return
+        sliders = ((card.get("emotional_profile") or {}).get("sliders") or {})
+        dials = {n: sliders.get(n) for n in SLIDER_NAMES if sliders.get(n) is not None}
+        sets = " ".join(f"b.dial_{n} = ${n}," for n in dials)
+        write(
+            self._driver,
+            f"""
+            MATCH (p:Persona {{persona_id: $pid}})
+            MERGE (p)-[:{BASELINE_EDGE}]->(b:{BASELINE_LABEL} {{persona_id: $pid}})
+            ON CREATE SET {sets}
+                          b.captured_at = $now,
+                          b.card_fingerprint = $fingerprint,
+                          b.dial_names = $dial_names
+            """,
+            self._database, pid=persona_id, now=now,
+            fingerprint=_card_fingerprint(card),
+            dial_names=list(dials), **dials,
+        )
+
+    def _set_current_dials(self, persona_id: str, card: Dict[str, Any]) -> None:
+        """Her CURRENT dial values, on the Persona node, refreshed every apply.
+
+        The baseline alone cannot answer evo.cq01 -- a diff needs both ends. Holding
+        current values here rather than reading them from the card keeps the comparison
+        answerable from the graph alone, which is what ADR-012 asks for. These are
+        card-owned content today; when she can move a dial, this is the property that
+        moves, and the :Baseline stays where it is.
+        """
+        if self._driver is None:
+            return
+        sliders = ((card.get("emotional_profile") or {}).get("sliders") or {})
+        dials = {n: sliders.get(n) for n in SLIDER_NAMES if sliders.get(n) is not None}
+        if not dials:
+            return
+        sets = ", ".join(f"p.dial_{n} = ${n}" for n in dials)
+        write(self._driver,
+              f"MATCH (p:Persona {{persona_id: $pid}}) SET {sets}",
+              self._database, pid=persona_id, **dials)
+
+    def baseline(self, persona_id: str) -> Optional[Dict[str, Any]]:
+        """The recorded starting point, or None if this persona was never applied."""
+        if self._driver is None:
+            return None
+        # Named projections, never `RETURN b`: graph_driver refuses a whole Node at the
+        # serialisation seam because Record.data() flattens it and drops labels silently.
+        dial_proj = ", ".join(f"b.dial_{n} AS {n}" for n in SLIDER_NAMES)
+        rows = read(
+            self._driver,
+            f"""
+            MATCH (p:Persona {{persona_id: $pid}})-[:{BASELINE_EDGE}]->(b:{BASELINE_LABEL})
+            RETURN b.captured_at AS captured_at,
+                   b.card_fingerprint AS card_fingerprint,
+                   {dial_proj}
+            """,
+            self._database, pid=persona_id)
+        if not rows:
+            return None
+        row = rows[0]
+        return {
+            "captured_at": row["captured_at"],
+            "card_fingerprint": row["card_fingerprint"],
+            "dials": {n: row[n] for n in SLIDER_NAMES if row.get(n) is not None},
+        }
+
+    def dial_drift(self, persona_id: str) -> Dict[str, Any]:
+        """Current dials minus baseline dials -- the raw material for evo.cq01.
+
+        Returns the per-dial delta rather than a verdict. "Has she changed?" answered as
+        a bare boolean is what lets a persona at temperature 0.9 confabulate growth;
+        evolution.yaml's negative fixture is explicit that an affirmative answer which
+        resolves to nothing is a FAILURE, so this returns the resolvable numbers.
+        """
+        base = self.baseline(persona_id)
+        if base is None or self._driver is None:
+            return {"available": False, "reason": "no baseline recorded"}
+        dial_proj = ", ".join(f"p.dial_{n} AS {n}" for n in SLIDER_NAMES)
+        rows = read(self._driver,
+                    f"MATCH (p:Persona {{persona_id: $pid}}) RETURN {dial_proj}",
+                    self._database, pid=persona_id)
+        if not rows:
+            return {"available": False, "reason": "persona not found"}
+        current = rows[0]
+        drift = {}
+        for name, was in base["dials"].items():
+            now_v = current.get(name)
+            if was is not None and now_v is not None and now_v != was:
+                drift[name] = {"baseline": was, "current": now_v,
+                               "delta": round(now_v - was, 6)}
+        return {"available": True, "captured_at": base["captured_at"],
+                "changed": drift, "unchanged": len(base["dials"]) - len(drift)}
 
     def reinforce(self, node_id: str, *, salience_delta: float = 0.1) -> Dict[str, Any]:
         """Her one write. Touches ANNOTATION properties only, by construction.

@@ -39,9 +39,12 @@ from .identity_shapes import BOUNDARY, EXPERTISE, LORE_ENTRY, TRAIT, Shape
 EXCLUDED_FIELDS: Dict[str, str] = {
     # ── plumbing: configuration, not identity ────────────────────────────────
     "key": "routing identifier, not a fact about her",
-    "display_name": "presentation label; the Persona node's persona_id is the identity",
+    "display_name": "rendered as the name in 'You are {who}, ...' and as the first-name "
+                    "seed for the generated <identity> paragraph, so it IS identity "
+                    "prose — but it is a single scalar label, not a fact, and it is "
+                    "stored as a PROPERTY on the Persona node by apply_card() rather "
+                    "than as its own node. Accounted for there, not dropped.",
     "coordinator_label": "routing label for the multi-persona coordinator",
-    "style": "frontend theme selector, not identity",
     "nsfw": "capability flag read at request time",
     "rarity": "progression metadata, not identity",
     "celestial_order": "progression metadata",
@@ -59,10 +62,6 @@ EXCLUDED_FIELDS: Dict[str, str] = {
     "bg": "background asset path for the frontend",
     "word_substitutions": "render-time text filter",
     # ── consumer layer: already a documented non-goal ────────────────────────
-    "voice": "style/voice exemplars are CONSUMER LAYER and stay in the card. "
-             "SEMANTIC_PLATFORM.md states they are not seeded, and seed_graph.py "
-             "enforces it via its layer filter. Excluded by existing decision, not by "
-             "oversight here.",
     "example_phrases": "voice exemplar — see voice",
     "example_dialogues": "voice exemplar — see voice",
     "dialogue_prefs": "render-shape preference consumed by prompt_builder directly",
@@ -86,11 +85,18 @@ EXCLUDED_FIELDS: Dict[str, str] = {
 #: granularity than the data is technically true and practically misleading, which is
 #: worse than no claim.
 EXCLUDED_LEAVES: Dict[str, str] = {
+    # voice.tics IS consumed (see _voice_nodes) -- these two are the exemplars.
+    "voice.greeting": "voice exemplar: a canned opening line, CONSUMER LAYER. "
+                      "SEMANTIC_PLATFORM.md states exemplars are not seeded.",
+    "voice.signoff": "voice exemplar: a canned closing line -- see voice.greeting.",
     **{f"emotional_profile.sliders.{d}": (
-        "a slider is a NUMBER, and a number modelled as a node is a value pretending to "
-        "be a thing. ADR-016 also measured them inert as behaviour controls. They belong "
-        "on the Persona node or on a :Baseline, which evo.cq02 demands and this "
-        "milestone defers — deferred with a reason, not dropped."
+        "a slider is a NUMBER, and a number modelled as a node is a value pretending "
+        "to be a thing. ADR-016 also measured them inert as behaviour controls. NOT a "
+        "node, but no longer deferred: IdentityRepository._capture_baseline writes the "
+        "shipped values onto an immutable :Baseline (ON CREATE only) and "
+        "_set_current_dials keeps the live values on the Persona node, so evo.cq01's "
+        "diff is answerable from the graph alone. Excluded from NODES, present in the "
+        "graph."
     ) for d in ("warmth", "assertiveness", "playfulness", "skepticism",
                 "competitiveness", "manipulativeness", "sluttiness")},
 }
@@ -125,6 +131,19 @@ def identity_nodes(card: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     pid = card.get("key") or "unknown"
     out: List[Dict[str, Any]] = []
+
+    # `style` and `voice.tics` reach her prompt directly. prompt_builder renders
+    # `style` as the first sentence of the identity block and cv_summarizer feeds both
+    # to the LLM that generates <identity>. The first pass excluded them as
+    # presentation, which was wrong: under ADR-012 the graph is the system of record, so
+    # anything that reaches her prompt must be IN it or dropping the card loses it.
+    style = card.get("style")
+    if isinstance(style, str) and style.strip():
+        out.append(_node(TRAIT, pid, "style", 0, style, kind="style"))
+
+    for i, entry in enumerate((card.get("voice") or {}).get("tics") or []):
+        if isinstance(entry, str) and entry.strip():
+            out.append(_node(TRAIT, pid, "voice.tics", i, entry, kind="tic"))
 
     for i, entry in enumerate(card.get("lore") or []):
         if isinstance(entry, str) and entry.strip():
@@ -194,7 +213,50 @@ def identity_nodes(card: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 #: Which top-level card keys the mapping above actually consumes. Derived from the
 #: mapper rather than hand-listed, so the two cannot drift.
+#: Container shape per source_field: "list" if the card holds a JSON array there,
+#: "scalar" for a single string. Reconstruction CANNOT infer this from the nodes: a
+#: one-element list and a scalar both yield exactly one node at source_index 0, so a
+#: graph->card rebuild would silently turn ["x"] into "x". Declared once here and
+#: consumed by identity_to_card, with test_source_field_kind_covers_every_node
+#: failing when a builder is added without a matching entry.
+SOURCE_FIELD_KIND: Dict[str, str] = {
+    "lore": "list",
+    "signature_moves": "list",
+    "style": "scalar",
+    "voice.tics": "list",
+    "behavior.traits": "list",
+    "behavior.pace": "scalar",
+    "behavior.humor": "scalar",
+    "behavior.formality": "scalar",
+    "behavior.small_talk": "scalar",
+    "behavior.emoji_policy": "scalar",
+    "behavior.relationship_to_user": "scalar",
+    "behavior.clarifying_questions": "scalar",
+    "psychological_profile.core_wound": "scalar",
+    "psychological_profile.coping_mechanism": "scalar",
+    "psychological_profile.defense_style": "scalar",
+    "psychological_profile.growth_edge": "scalar",
+    "psychological_profile.contradiction_pairs": "list",
+    "emotional_profile.baseline": "scalar",
+    "emotional_profile.strengths": "list",
+    "emotional_profile.pitfalls": "list",
+    "boundaries.ethics": "list",
+    "boundaries.content": "list",
+    "boundaries.personal": "list",
+    "expertise.strong": "list",
+    "expertise.familiar": "list",
+    "expertise.avoid": "list",
+}
+
+
 MODELLED_FIELDS: frozenset[str] = frozenset({
     "lore", "signature_moves", "behavior", "psychological_profile",
     "emotional_profile", "boundaries", "expertise",
+    # Added after the first pass excluded these as presentation. They are not:
+    # prompt_builder.py renders `style` as the literal first sentence of the identity
+    # block ("You are Gwen, seductive, analytical, devoted."), and cv_summarizer.py
+    # feeds both `style` and `voice.tics` to the LLM that writes <identity>. Under
+    # ADR-012 the graph is the system of record, so a field that reaches her prompt
+    # and is absent from the graph is a field that dropping the card would lose.
+    "style", "voice",
 })
