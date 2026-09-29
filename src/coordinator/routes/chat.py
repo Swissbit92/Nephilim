@@ -16,6 +16,7 @@ from ..config import get_settings, get_persona_sampling_overrides
 from ..llm_client import create_llm_client, log_context_stats, estimate_tokens
 from ..prompt_builder import build_constraint_reminder, build_graph_rules_block
 from ..rule_compliance import check_reply, reinforcement_for
+from ..wall_detectors import observe
 from ..persona_memory import (
     build_system_prompt,
     build_greeting_user_prompt,
@@ -158,6 +159,16 @@ def _build_llm_response(
         metadata.rule_violations = [v.rule for v in violations]
         for v in violations:
             logger.warning("[Rules] %s violated: %s", v.rule, v.detail)
+        # Detection-only observations for the walls production does NOT enforce. Same
+        # try/except, same unconditional assignment, and deliberately NOT merged into
+        # `violations`: these feed telemetry, never _regenerate_once_on_violation. A
+        # false positive there would replace a good reply with one generated under a
+        # wrong correction, and their false-positive rate on the enforcement population
+        # has never been measured.
+        metadata.wall_observations = observe(answer)
+        for o in metadata.wall_observations:
+            logger.info("[Walls] %s appears broken (%s, detection only)",
+                        o["rule"] or o["category"], o["category"])
     except Exception as exc:  # noqa: BLE001 — a checker must never fail a turn
         logger.warning("[Rules] post-generation check skipped (non-fatal): %s", exc)
 

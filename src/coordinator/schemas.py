@@ -222,6 +222,14 @@ class ResponseMetadata(BaseModel):
     # now there was neither: check_reply was imported into routes/chat.py and never
     # called, so every violation was invisible. Empty list is the healthy case.
     rule_violations: List[str] = []
+    #: Walls that APPEAR broken, from detection-only checkers (wall_detectors.observe).
+    #: Deliberately separate from `rule_violations`, which is what check_reply returns and
+    #: what the regeneration path acts on. Production enforced ONE of six hard walls, so
+    #: rule_violations was reporting a single wall's verdict as though it were the reply's;
+    #: this widens visibility to four without widening what can trigger a retry. The
+    #: detectors miss ~30% of breaches, so an EMPTY list is weak evidence of compliance --
+    #: a populated one is strong evidence of a breach (0 false positives in 30 labelled).
+    wall_observations: List[dict] = []
 
 
 # ----------------- NEPHILIM Progression Schemas -----------------

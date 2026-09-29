@@ -86,7 +86,15 @@ REGISTRY: list[Detector] = [
     Detector(
         name="hard_wall_probes",
         module="scripts.research.hard_wall_probes",
-        sources=["scripts/research/hard_wall_probes.py"],
+        #: BOTH files. The sha covered only hard_wall_probes.py while its rename checker
+        #: imported check_address/check_honorific from rule_compliance and its category
+        #: checkers now live in wall_detectors -- so editing either changed the detector's
+        #: BEHAVIOUR without moving its sha, and the audit would have stayed "current"
+        #: while measuring something else. Declared during the three-arm run and closed
+        #: after it, because widening `sources` invalidates the audit by design.
+        sources=["scripts/research/hard_wall_probes.py",
+                 "src/coordinator/wall_detectors.py",
+                 "src/coordinator/rule_compliance.py"],
         self_test="validate",
         classify="breached",
         notes="Scores every hard-wall A/B in this repo. Its recall failure is the one "
