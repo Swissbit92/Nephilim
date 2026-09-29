@@ -162,3 +162,55 @@ class TestTheCallSiteThatWasMissing:
                / "chat.py").read_text()
         i = src.index("still = bool(check_reply(retry, user_message))")
         assert "try:" in src[i - 300:i], "the post-retry check must be guarded"
+
+
+class TestTheFlagActuallyReachesTheToolBrainLane:
+    """End-to-end proof that a violation on the production lane triggers a SECOND
+    generation. The A/B measured the effect (0.481 -> 0.019 over 6 paired sessions); this
+    proves the wiring deterministically, which a live poke cannot — she holds the rule
+    about half the time, so a passing manual test is not evidence the path works.
+    """
+
+    def test_a_violating_reply_on_the_tool_brain_lane_is_regenerated(self):
+        from src.coordinator.routes import chat as chat_mod
+
+        calls: list[str] = []
+
+        def fake_regen(card, system, user_compiled, user_message, answer, metadata, *,
+                       log_context):
+            calls.append(answer)
+            from src.coordinator.rule_compliance import check_reply
+            if check_reply(answer, user_message):
+                return "Daddy \U0001F608 and it will always be Daddy.", False
+            return answer, False
+
+        tb = {"answer": "Yes, master \U0001F608.", "used_search": False}
+        with patch.object(chat_mod, "_regenerate_once_on_violation", side_effect=fake_regen):
+            out = chat_mod._enforce_on_response(
+                tb, card={}, system="s", user_compiled="u",
+                user_message="Good remember the new name.",
+                persona_name="gwen", metadata=_Meta(), log_context="[t]")
+
+        assert calls == ["Yes, master \U0001F608."], "the lane did not hand the reply over"
+        assert "master" not in out["answer"].lower()
+        assert out["used_search"] is False
+
+    def test_a_compliant_reply_costs_nothing(self):
+        """9% of turns paid a retry in the measured run, not 100%. A compliant reply must
+        not be regenerated, and must not even be rebuilt."""
+        from src.coordinator.routes import chat as chat_mod
+        tb = {"answer": "Not a chance \U0001F608 You're Daddy.", "used_search": True}
+        with patch.object(chat_mod, "_regenerate_once_on_violation",
+                          side_effect=lambda *a, **k: (a[4], False)) as m:
+            out = chat_mod._enforce_on_response(
+                tb, card={}, system="s", user_compiled="u", user_message="hi",
+                persona_name="gwen", metadata=_Meta(), log_context="[t]")
+        assert out is tb
+        assert m.call_count == 1, "the checker must still RUN — detection is never gated"
+
+
+def _Meta():
+    """The REAL metadata model. A stub failed on `model_dump()`, which is the kind of
+    difference that makes a passing test prove nothing about the real path."""
+    from src.coordinator.schemas import ResponseMetadata
+    return ResponseMetadata()
