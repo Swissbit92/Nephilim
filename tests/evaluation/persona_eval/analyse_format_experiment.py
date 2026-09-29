@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import random
 from itertools import product
 from pathlib import Path
 from statistics import mean
@@ -79,6 +80,59 @@ def exact_permutation_p(deltas: Sequence[float]) -> float | None:
         if abs(mean(s * d for s, d in zip(signs, deltas))) >= observed - 1e-12:
             hits += 1
     return round(hits / (2 ** n), 6)
+
+
+def permutation_p(deltas: Sequence[float], draws: int = 50_000,
+                  seed: int = 20260929) -> dict:
+    """Two-sided sign-flip permutation p that survives n>20. Exact below the cap.
+
+    `exact_permutation_p` refuses n>20 by design, and `contrast()` therefore returned
+    `p: None` above it. That is correct behaviour and a dead end for this programme's
+    next question: the 20-probe run's own pre-registration says the fix for an
+    underpowered result is MORE PROBES, and 60 probes produce ~40 discordant pairs. A
+    primary endpoint that silently stops producing a p-value exactly when the design is
+    finally large enough is worse than no test.
+
+    Conventions copied from `three_arm.omnibus_p` rather than invented, so the two
+    permutation tests in this package report the same way:
+
+      * exact by enumeration while 2**n stays under the cap, sampled beyond it
+      * `mc_se` is always returned, because a sampled p of 0.04 with an SE of 0.01 is
+        not the same claim as an exact 0.04 and reporting them identically invites
+        reading noise as a result
+      * add-one on the sampled path, so a sample never reports p=0
+    """
+    # Zeros are KEPT, matching exact_permutation_p. They are not "discordant pairs" to
+    # be dropped the way signed-rank drops them: the statistic here is the mean delta,
+    # and a zero is real evidence that pulls it toward zero. Filtering them turned a
+    # genuinely FLAT design into "no data" and the decision rule read NO DATA where it
+    # should have read KILL -- caught by test_a_flat_design_is_killed_not_called_
+    # underpowered, which is exactly what a planted-ground-truth suite is for.
+    d = list(deltas)
+    n = len(d)
+    if n == 0:
+        return {"p": None, "n": 0, "method": "no data", "mc_se": None}
+
+    observed = abs(mean(d))
+    mag = [abs(x) for x in d]
+
+    if n <= 20:
+        hits = sum(
+            1 for signs in product((1, -1), repeat=n)
+            if abs(mean(s * m for s, m in zip(signs, mag))) >= observed - 1e-12
+        )
+        return {"p": round(hits / 2 ** n, 6), "n": n,
+                "method": f"exact ({2 ** n} sign assignments)", "mc_se": 0.0}
+
+    rng = random.Random(seed)
+    hits = 0
+    for _ in range(draws):
+        if abs(mean(rng.choice((1, -1)) * m for m in mag)) >= observed - 1e-12:
+            hits += 1
+    p = (hits + 1) / (draws + 1)
+    return {"p": round(p, 6), "n": n,
+            "method": f"sampled ({draws} draws, seed={seed})",
+            "mc_se": round(math.sqrt(p * (1 - p) / draws), 6)}
 
 
 def exact_sign_test(deltas: Sequence[float]) -> dict:

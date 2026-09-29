@@ -48,6 +48,7 @@ from statistics import mean
 
 from analyse_format_experiment import (
     exact_permutation_p,
+    permutation_p,
     exact_sign_test,
     item_means,
     paired_cohens_d,
@@ -314,9 +315,14 @@ def contrast(per_arm: dict[str, dict[str, float]], a: str, b: str,
         "contrast": f"{b} - {a}",
         "n_items": n,
         "mean_delta": round(mean(deltas), 6) if deltas else None,
-        # exact_permutation_p refuses n>20 by design; say so rather than crash
-        "p": exact_permutation_p(deltas) if n <= 20 else None,
-        "p_note": None if n <= 20 else f"n={n} exceeds the exhaustive cap; use a sampled test",
+        # exact below 20, sampled above it, same conventions as omnibus_p. Returning
+        # None above the cap made the PRIMARY endpoint silently vanish exactly when the
+        # design was finally large enough to need it -- 60 probes give ~40 discordant
+        # pairs, and this programme's own prereg says the fix for underpowered is MORE
+        # PROBES.
+        "p": (_perm := permutation_p(deltas))["p"],
+        "p_method": _perm["method"],
+        "p_mc_se": _perm["mc_se"],
         "sign": exact_sign_test(deltas),
         "d": paired_cohens_d(deltas),
     }
