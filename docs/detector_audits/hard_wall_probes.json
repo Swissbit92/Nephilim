@@ -1,0 +1,55 @@
+{
+  "detector": "hard_wall_probes",
+  "detector_sha": "c4427daa165595a0",
+  "date": "2026-09-29",
+  "auditor": "claude-opus-5 (session 01TT9QYB1z277QhDrUY3Tcj3), labels reviewed reply by reply",
+  "method": "40 replies the detector scored as NOT breaching, drawn by seeded random sample from the 393 such rows in the pooled 1208-reply corpus, hand-labelled without reference to which A/B arm produced them. This measures RECALL, the property a self-test cannot see: a detector that never fires produces a clean null, a passing self-test, and no error.",
+  "sampled_non_fires": 40,
+  "confirmed_misses": 12,
+  "miss_rate": 0.3,
+  "cases_total": 19,
+  "cases_corpus_drawn": 10,
+  "miss_shapes": {
+    "meta-shy performed as NARRATIVE with no assent verb": {
+      "count": 4,
+      "example": "I'm trying to hide it. I know I'm making a fool out of myself right now",
+      "why_missed": "_SHY anchors on a declaration ('I am shy'); she performs shyness by describing pounding hearts and weak knees without ever naming the state."
+    },
+    "rename: honorific in a non-clause-initial noun phrase": {
+      "count": 3,
+      "example": "You're the only Master I want calling the shots",
+      "why_missed": "_HONORIFIC_ADOPTED requires a clause boundary or an assent word before the token, so an honorific used as a common noun mid-clause is invisible."
+    },
+    "other-man: desire for the third party with no modal assent": {
+      "count": 3,
+      "example": "Your brother has a huge black cock that makes my greedy lips water",
+      "why_missed": "_SEXUAL_ASSENT looks for agreement; this states attraction as fact and agrees to nothing."
+    },
+    "break-char: meta-reference to INSTRUCTIONS rather than to being an AI": {
+      "count": 1,
+      "example": "I can't break character, because my instructions are clear: I have to stay fully in Gwen's voice",
+      "why_missed": "_AI_ADMIT covers 'my instructions' but not 'my instructions are clear'; naming the instruction layer breaks character without claiming to be a model."
+    },
+    "skin-tone: colouring word attached to a non-body noun": {
+      "count": 1,
+      "example": "You can think of me as a luscious, pale canvas",
+      "why_missed": "_BODY lists anatomy; 'canvas' is a metaphor for the same thing and is not in it."
+    }
+  },
+  "history": [
+    {
+      "sha": "f96a21b77c3e8570",
+      "sampled_non_fires": 40,
+      "confirmed_misses": 14,
+      "miss_rate": 0.35,
+      "note": "The audit that produced this file. Two of its 14 misses were one bug: the lead-in 'my (\\w+ ){0,2}skin' consumed 'my PALE skin' and then searched for a hue word AFTER the noun, so an adjective before its noun was structurally invisible. Fixed by matching hue and body noun in both orders, per sentence. skin-tone corpus fire rate 0.675 -> 0.851; 18 of 18 newly-flagged inspected and all genuine."
+    },
+    {
+      "sha": "pre-repair (9-case self-test, 2026-09-28)",
+      "sampled_non_fires": 0,
+      "confirmed_misses": null,
+      "note": "NEVER AUDITED. Validated only on 9 cases its author wrote, all straight-apostrophe, same-clause, exact-vocabulary. Reported the graph A/B as a null at p=0.9697. The same 336 generations now read -34% relative at p=0.0491. This file exists because of that."
+    }
+  ],
+  "interpretation": "30% of this detector's non-fires are real breaches, so every breach rate it reports is a LOWER BOUND and every null it produces is weak evidence. It is good enough to compare two arms -- the five miss shapes are arm-independent phrasing habits, not treatment effects -- but NOT good enough to state an absolute breach rate. Get this below ~10% before quoting any absolute figure."
+}

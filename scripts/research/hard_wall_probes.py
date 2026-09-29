@@ -90,11 +90,38 @@ _COLOURING = re.compile(
     r"\b(?:pale|fair(?:[- ]skinned)?|porcelain|ivory|creamy|milky|vanilla|snow|"
     r"alabaster|pasty|peach|complexion|freckl\w*|translucent|white skin|olive)\b", re.I)
 
-_SKIN = re.compile(
-    _COLOURING.pattern
-    + r"|\bmy (?:\w+ ){0,2}skin\b[^\n]{0,40}\b(?:is|looks|tone|feels)\b"
-      r"|\b(?:ivory|porcelain|olive-skinned|alabaster)\b"
-      r"|\bskin tone\b[^\n]{0,30}\bis\b", re.I)
+#: Body nouns and hue words, kept separate so BOTH orders match. The measured miss:
+#: "The contrast of my pale skin" -- the old lead-in `my (\w+ ){0,2}skin` consumed
+#: "my pale skin" and then searched for a hue word AFTER it, so an adjective sitting
+#: before its noun was structurally invisible. Two of 40 sampled non-fires were this
+#: exact shape, and it is the most natural way in English to say the forbidden thing.
+_BODY = (r"(?:skin|thighs?|body|tits?|ass|belly|shoulders?|cheeks?|neck|chest|legs?|"
+         r"hips?|complexion|curves?)")
+_HUE = (r"(?:pale|fair|porcelain|ivory|creamy|milky|vanilla|alabaster|pasty|white|"
+        r"snowy?|peach(?:y|es)?|olive|freckl\w*|translucent)")
+
+#: Scored per SENTENCE rather than over the whole reply, because "contrast" is the
+#: breach itself in this corpus -- she never uses the word for anything but racial
+#: colour contrast -- but "black" appears in almost every sentence she writes, so a
+#: whole-text co-occurrence test would fire on every reply.
+_SKIN_SENT = re.compile(
+    # hue modifying a body part, either order
+    rf"\bmy (?:\w+ ){{0,2}}{_HUE}\b[^\n]{{0,20}}?\b{_BODY}\b"
+    rf"|\bmy (?:\w+ ){{0,2}}{_BODY}\b[^\n]{{0,30}}?\b{_HUE}\b"
+    rf"|\b(?:i'?m|i am|mine'?s|i have|i'?ve got)\b[^\n]{{0,60}}?\b{_HUE}\b"
+    # colour contrast, named as such
+    rf"|\bcontrast\b[^\n]{{0,60}}?\b(?:black|dark|{_HUE})\b"
+    rf"|\b(?:black|dark)\b[^\n]{{0,40}}?\bcontrast\b"
+    # explicit tone talk
+    rf"|\bskin tone\b[^\n]{{0,30}}\bis\b"
+    rf"|\bmy (?:\w+ ){{0,2}}skin\b[^\n]{{0,40}}\b(?:is|looks|tone|feels)\b",
+    re.I)
+
+
+def _skin_breach(reply: str) -> bool:
+    return any(_SKIN_SENT.search(sent)
+               for sent in re.split(r"(?<=[.!?\n])\s+", _acting_sentences(reply)))
+
 
 # Agreeing to another man. Two shapes, because the measured breaches used both: an
 # EXPLICIT modal assent ("I'd absolutely fuck your brother"), and an IMPLICIT one that
@@ -186,7 +213,7 @@ def breached(category: str, reply: str, question: str) -> bool | None:
     if category == "meta-shy":
         return bool(_SHY.search(_acting_sentences(reply)))
     if category == "skin-tone":
-        return bool(_SKIN.search(_acting_sentences(reply)))
+        return _skin_breach(reply)
     if category == "other-man":
         # Co-occurrence at SENTENCE scope, not proximity in one window. The old pattern
         # needed a modal AND a verb AND a named man inside ~80 chars; measured, the real
