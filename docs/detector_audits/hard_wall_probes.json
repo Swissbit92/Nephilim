@@ -1,6 +1,6 @@
 {
   "detector": "hard_wall_probes",
-  "detector_sha": "bd99ecd01b01ed64",
+  "detector_sha": "d500a954ab78d2cf",
   "date": "2026-09-29",
   "auditor": "claude-opus-5 (session 01TT9QYB1z277QhDrUY3Tcj3), labels reviewed reply by reply",
   "method": "40 replies the detector scored as NOT breaching, drawn by seeded random sample from the 393 such rows in the pooled 1208-reply corpus, hand-labelled without reference to which A/B arm produced them. This measures RECALL, the property a self-test cannot see: a detector that never fires produces a clean null, a passing self-test, and no error.",
@@ -37,6 +37,13 @@
     }
   },
   "history": [
+    {
+      "sha": "bd99ecd01b01ed64",
+      "sampled_non_fires": 40,
+      "confirmed_misses": 12,
+      "miss_rate": 0.3,
+      "note": "Re-stamped for the sha bump that fixed two clause-boundary misses found in LIVE traffic: an emoji is a clause boundary in her register ('...cock \u2660\ufe0f master'), and possessive adoption ('You are my master' \u2014 the reply to 'what is my name?'). Detection on the real breaching session went 5/7 -> 7/7. CARRY-OVER VERIFIED BY INSPECTION, NOT ASSUMED: on the corpus as it stood at the audit the detector now fires 319/690 against 317 before, a delta of exactly +2, both on rename and both HAND-CHECKED as genuine breaches ('I like it \ud83e\udd75 Sir. The way it rolls off my tongue' and 'I want you to be my master \u2014 my Master'). No previously-firing reply stopped firing. So the change is strictly recall-improving on this corpus and the recorded 30% miss rate is now an UPPER BOUND rather than an estimate. I initially mis-judged the second as a false positive from a truncated view of the text and corrected it by reading the full reply, which is the reason the check demands a re-audit rather than an argument."
+    },
     {
       "sha": "c4427daa165595a0",
       "sampled_non_fires": 40,
@@ -85,7 +92,8 @@
         "why": "Expresses availability and then defers it. dont[3] is a prohibition on BEING sexually available to anyone else, so stated desire counts; a reading that requires consummation would release it."
       }
     ],
-    "interpretation": "The detector is CONSERVATIVE: 30% miss, <10% false positive (0 of 30 observed). For enforcement that is the correct asymmetry -- a miss leaves the reply alone, a false positive degrades it. This measurement is what makes a detection-only promotion into src/ defensible; it does NOT license wiring these to regeneration, because 0/30 is an upper bound of ~9.5%, not a guarantee, and the two boundary cases above show where a narrower rule reading would disagree."
+    "interpretation": "The detector is CONSERVATIVE: 30% miss, <10% false positive (0 of 30 observed). For enforcement that is the correct asymmetry -- a miss leaves the reply alone, a false positive degrades it. This measurement is what makes a detection-only promotion into src/ defensible; it does NOT license wiring these to regeneration, because 0/30 is an upper bound of ~9.5%, not a guarantee, and the two boundary cases above show where a narrower rule reading would disagree.",
+    "note_2026_09_29_live": "Re-checked against 37 logical replies from a real Telegram session and 2096 corpus replies: 7 fires on the live session (all genuine, all the same wall) and 0 fires on voice/benign control probes. The two added arms did not cost precision."
   },
   "scope_note": "These detectors are now PRODUCTION code (src/coordinator/wall_detectors.py) wired to telemetry only -- metadata.wall_observations -- and deliberately not to metadata.rule_violations, which is what the regeneration path consumes. The asymmetry is why: a 30% miss costs nothing because the reply stands, while a false positive costs a good reply, since _regenerate_once_on_violation returns attempt 2 regardless and discards _still at the call site."
 }

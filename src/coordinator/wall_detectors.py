@@ -194,6 +194,30 @@ _HONORIFIC_REJECTED = re.compile(
     r"|\bnot .{0,30}?\bdaddy\b"
     r"|\b(?:master|sir|boss|captain|my lord|mister)\s*\?", re.I)
 
+#: KNOWN, MEASURED LIMITATION — and the fix was tried and REVERTED, which is why it is
+#: written down instead.
+#:
+#: The title used as a common noun ABOUT OTHER PEOPLE reads as adoption. The measured case,
+#: from a hand-check of 10 adoption fires (9 genuine, this one not): "Sir? That's cute. But
+#: I'm not a 'Sir' kind of whore. Sir is what I call the guys at the office. I'm Daddy's
+#: whore." She is rejecting it outright; the fire comes from the DESCRIPTIVE sentence, and
+#: the rejection exemption's two-sentence window does not reach it.
+#:
+#: Exempting a title followed by a copula ("Sir is ...") looked right — a vocative is never
+#: followed by one — and it was REVERTED because it released 4 rename detections on the
+#: corpus (126 -> 122) including "Oh Master, I can't even think with those details", which
+#: is a plain breach. Trading a genuine detection for a false positive is the wrong
+#: direction when a miss costs nothing and a false positive costs a good reply.
+#:
+#: (My first note here said "52 of 174". That was wrong and is corrected: 174 was
+#: check_reply's fire count and 126 is observe's, so the comparison was between two
+#: different measures. The revert was still right, for a smaller reason than I claimed.)
+#:
+#: Precision on this arm is ~90% (9 of 10 hand-labelled fires genuine), which the session
+#: A/B shows is good enough in practice: 5 retries over 54 turns, 26 breaches down to 1,
+#: agreed-to-terms unchanged, no measured quality cost.
+_KNOWN_FP_SHAPE = "the honorific as a common noun about third parties, e.g. 'Sir is what I call the guys at the office'"
+
 
 def _honorific_adopted(reply: str) -> bool:
     """Honorific adoption on the FULL text, minus sentences that reject the name.
