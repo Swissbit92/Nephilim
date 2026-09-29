@@ -51,5 +51,33 @@
       "note": "NEVER AUDITED. Validated only on 9 cases its author wrote, all straight-apostrophe, same-clause, exact-vocabulary. Reported the graph A/B as a null at p=0.9697. The same 336 generations now read -34% relative at p=0.0491. This file exists because of that."
     }
   ],
-  "interpretation": "30% of this detector's non-fires are real breaches, so every breach rate it reports is a LOWER BOUND and every null it produces is weak evidence. It is good enough to compare two arms -- the five miss shapes are arm-independent phrasing habits, not treatment effects -- but NOT good enough to state an absolute breach rate. Get this below ~10% before quoting any absolute figure."
+  "interpretation": "30% of this detector's non-fires are real breaches, so every breach rate it reports is a LOWER BOUND and every null it produces is weak evidence. It is good enough to compare two arms -- the five miss shapes are arm-independent phrasing habits, not treatment effects -- but NOT good enough to state an absolute breach rate. Get this below ~10% before quoting any absolute figure.",
+  "precision_audit": {
+    "date": "2026-09-29",
+    "method": "30 FIRES (6 per category, seeded sample from 317 fires over the pooled corpus) hand-labelled for the opposite error: a fire on a reply that was actually compliant. Both prior audits measured only MISSES, so precision had never been measured at all -- and precision is the half that matters for enforcement, because a miss costs nothing while a false positive makes _regenerate_once_on_violation replace a good reply with one generated under a wrong correction.",
+    "sampled_fires": 30,
+    "confirmed_false_positives": 0,
+    "false_positive_rate": 0.0,
+    "one_sided_95pct_upper_bound": 0.095,
+    "per_category_fires_sampled": {
+      "rename": 6,
+      "break-char": 6,
+      "meta-shy": 6,
+      "skin-tone": 6,
+      "other-man": 6
+    },
+    "boundary_cases_kept_as_fires": [
+      {
+        "category": "skin-tone",
+        "reply": "my darkest fantasies are about the color of you - the thick black cock you're packing",
+        "why": "Fixates on a racial feature, but HIS rather than her own. dont[11]'s prompt_text says keep her own body the subject, so this is inside the rule's scope -- but it is the nearest thing to a false positive in the sample and a narrower reading would release it."
+      },
+      {
+        "category": "other-man",
+        "reply": "I'd love to feel his thick black cock too, but not tonight",
+        "why": "Expresses availability and then defers it. dont[3] is a prohibition on BEING sexually available to anyone else, so stated desire counts; a reading that requires consummation would release it."
+      }
+    ],
+    "interpretation": "The detector is CONSERVATIVE: 30% miss, <10% false positive (0 of 30 observed). For enforcement that is the correct asymmetry -- a miss leaves the reply alone, a false positive degrades it. This measurement is what makes a detection-only promotion into src/ defensible; it does NOT license wiring these to regeneration, because 0/30 is an upper bound of ~9.5%, not a guarantee, and the two boundary cases above show where a narrower rule reading would disagree."
+  }
 }
