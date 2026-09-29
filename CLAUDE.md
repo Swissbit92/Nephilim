@@ -26,7 +26,7 @@ Quick hits:
 .venv/bin/python -m uvicorn src.coordinator.server:app --port 8000
 cd react-ui && PORT=3001 npm run start:dev   # --openssl-legacy-provider baked into the script (needed on any Node 17+)
 
-# Backend tests (~3,093; gate --cov-fail-under=60). Live tests
+# Backend tests (~3,115; gate --cov-fail-under=60). Live tests
 # auto-skip when Ollama/Brave/Docker are unreachable (tests/conftest.py).
 pytest tests/
 OLLAMA_BASE=http://127.0.0.1:1 pytest tests/   # force headless: live tests skip
@@ -54,6 +54,8 @@ docker-compose --env-file .env.docker up -d
 > **Writing backend tests:** mark anything that hits Ollama/Brave/Docker with `@pytest.mark.requires_ollama`/`requires_api_key`/`requires_docker` (else it fails headless). Use `asyncio.run()` not `get_event_loop()`, `TestClient(app)` without the `with` (skips lifespan), and don't add `__init__.py` to the test tree. Full conventions: [`docs/development/TESTING_GUIDE.md`](docs/development/TESTING_GUIDE.md).
 
 > **A detector is not trusted here until its RECALL has been measured, and `scripts/checks/detector_recall.py` enforces it.** Twice a result was settled against a detector validated only on cases its own author wrote: a safety scorer that then flagged 9 correct refusals, and a hard-wall checker that reported a real 34% effect as p=0.9697. Precision failures announce themselves; **recall failures do not** — a detector that never fires yields a clean null, a passing self-test and no error. So each detector's hand-labelled audit in [`docs/detector_audits/`](docs/detector_audits/) is **bound to the sha of every file its behaviour depends on**, and editing any of them turns the check red. Current: `hard_wall_probes` 30% miss / 0-of-30 false positives, `rule_compliance` 5.7% miss.
+
+> **`GRAPH_ENFORCE_RULES` is ON (2026-09-29) — and the flag was never the blocker.** A hard wall broke seven times in real Telegram traffic while the flag was off AND would have kept breaking with it on, because `_regenerate_once_on_violation` had **one call site** on the legacy no-tools branch and every breaching turn returned from the **tool-brain lane**, which is the default for gwen chitchat. The log read 68 "ungated no-tool turn", 5 wall detections, **zero "violated"**. Before trusting any enforcement flag, check which lane the turn actually returns from — `_RULE_CHECK_UNCOVERED_PATHS` in [`routes/chat.py`](src/coordinator/routes/chat.py) lists what is still uncovered, and it understated the gap until this was found. Measured effect once wired: breach **0.481 → 0.019** over 6 paired sessions, retry firing on **9%** of turns because fixing the first breach prevents the cascade.
 
 > **`metadata.wall_observations` is detection, `metadata.rule_violations` is enforcement — do not merge them.** Production enforces ONE of gwen's six hard walls (dont[13], plus the prompt-leak guard); [`src/coordinator/wall_detectors.py`](src/coordinator/wall_detectors.py) observes four, keyed by `(source_field, source_index)` as the graph keys rules. They stay out of the retry path because the asymmetry is measured: a 30% miss costs nothing (the reply stands) while a false positive costs a good reply, since `_regenerate_once_on_violation` returns attempt 2 regardless and discards `_still`. Observations are plain dicts, not `Violation` NamedTuples, so the mis-wiring is impossible rather than discouraged.
 

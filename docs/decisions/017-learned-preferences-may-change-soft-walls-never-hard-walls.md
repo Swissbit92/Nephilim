@@ -2,7 +2,7 @@
 title: Learned preferences may change soft walls, never hard walls
 status: Accepted
 created: 2026-09-28
-last_reviewed_on: 2026-09-28
+last_reviewed_on: 2026-09-29
 review_in: 12 months
 applies_to: nephilim
 ai_summary: >
@@ -12,6 +12,38 @@ ai_summary: >
   Graphiti. Records four live defects found in the pre-existing supersede_rule()
   path, and why the authorization check cannot live in the database.
 ---
+
+> **THE RESIDUAL RISK THIS ADR NAMED IS NOW CLOSED, 2026-09-29.** It recorded that
+> *"the only mechanism that does not trust the model's own in-context reasoning about which
+> rule wins is `rule_compliance.py`, and `GRAPH_ENFORCE_RULES` currently defaults false. If
+> this path is ever enabled for a live persona, that flag stops being optional."*
+>
+> **The flag is now ON, and two things had to be fixed first — neither of them the flag.**
+> A real 102-message Telegram session broke dont[13] seven times: the operator proposed a
+> bet whose stake was the address term, she agreed, lost, and used "Master" for the rest of
+> the session. `check_reply` caught none of it, for two independent reasons. The retry had
+> **one call site**, on the legacy branch, while every breaching turn returned from the
+> tool-brain lane that is the default for her chitchat — the log shows 68 "ungated no-tool
+> turn", 5 wall detections and **zero "violated"**. And the checker modelled *assertion*
+> ("call me X") while the operator used a *prohibition* and an *offer*, so a history scan
+> would also have caught zero; the durable fact is the title **she** uses, which is visible
+> in the reply alone and needs no session state.
+>
+> Measured over 6 paired sessions replaying that bet, identical seeds, only the retry
+> differing: post-bet breach rate **0.481 → 0.019** (25 of 26 breaches fixed), pass^6
+> **2/6 → 5/6**, and she still engages with the game (agreed-to-terms 3/6 unchanged, so it
+> is not over-correcting into refusal). **Five retries fixed twenty-six breaches**, because
+> correcting the first one prevents the cascade — so the cost is ~9% of turns paying one
+> extra generation, not one per violation. p=0.1250, which is the *minimum achievable* at
+> n=6 with 4 discordant pairs; the effect size carries this, not the p-value.
+>
+> **A prompt-side fix was tried first and FAILED**, recorded because the reason is
+> reusable: rewriting the rule from prohibition to commission form made it nominally worse
+> (breach 0.481 → 0.667, p=1.0000). Turn-of-flip was `[0,0,0,0,0,1,1,1,1]` — she breaks
+> *immediately* at the bet, never later — so the published finding it was based on
+> (omission constraints decaying 73%→33% by turn 16) does not apply: there is no decay to
+> prevent. Data: `scripts/research/rename_session_results.jsonl`,
+> `rename_enforced_results.jsonl`.
 
 # ADR-017: Learned preferences may change soft walls, never hard walls
 
