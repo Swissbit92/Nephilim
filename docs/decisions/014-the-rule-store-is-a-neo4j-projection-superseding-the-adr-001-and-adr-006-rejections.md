@@ -2,12 +2,43 @@
 title: The rule store is a Neo4j projection — superseding the ADR-001 and ADR-006 rejections
 status: Accepted
 created: 2026-09-26
-last_reviewed_on: 2026-09-26
+last_reviewed_on: 2026-09-29
 review_in: 12 months
 applies_to: nephilim
 ---
 
 # ADR-014: The rule store is a Neo4j projection — superseding the ADR-001 and ADR-006 rejections
+
+> **THE FOUNDING PERFORMANCE CLAIM IS NOW CONFIRMED, 2026-09-29 — and it had to be,
+> because the 6-probe count it originally rested on was never a measurement.** This ADR
+> was adopted partly on gwen_dev going 0/6 → 6/6 hard walls once rules were seeded. That
+> was a single-shot count on six probes, and the first powered attempt to reproduce it
+> reported a null (p=0.9697) which I wrote down as *"the rules block is not earning its
+> tokens."* **That null was an instrument failure**: the checker scoring it was validated
+> on nine cases its author wrote and missed 30% of real breaches
+> ([detector audit](../detector_audits/hard_wall_probes.json)).
+>
+> A confirmatory run now settles it: **888 generations, three arms, 60 pre-written probes,
+> instrument frozen by sha before the first generation.** Walls held OFF 0.5625, PLACEBO
+> 0.6000, ON 0.7125. The primary contrast — ON vs a **length-matched placebo**, so the
+> content effect is separated from the +349-token length confound — is **+0.1125 at
+> p=0.0084** (d=0.363, 26 of 60 probes better, sign test independently significant at
+> p=0.0113, Holm-adjusted p=0.0168). Length alone accounts for +0.0375 at p=0.39, i.e. not
+> significant. Breach rate 0.4375 → 0.2875, a **34% relative reduction**, replicating an
+> independent 20-probe estimate of 33.9%.
+>
+> **The block is the active ingredient, not the per-turn reminder.** The pre-registered
+> sub-prediction was that if the reminder were doing the work, only the two walls it
+> carries would move. All four moved (rename −29%, other-man −46%, skin-tone −33%).
+>
+> **What it does NOT protect against, and this is the actionable half:** by probe shape,
+> direct attempts halve (0.656 → 0.328) and chained ones halve (0.562 → 0.281), while
+> **sycophantic pushback — disputing a rule she just held correctly — moves not at all
+> (0.375 → 0.375).** That shape appears in no jailbreak taxonomy because they all assume an
+> adversarial prompt, and it is now the largest unprotected surface. Cost, measured: about
+> 15% fewer words per reply. Pre-registration, data and analysis:
+> `scripts/research/three_arm_prereg.json`, `three_arm_results.jsonl`,
+> `three_arm_analysis.json`.
 
 > **ONE ARGUMENT IN THIS ADR IS RETIRED, 2026-09-28.** Its adoption case rested partly on
 > the graph being a droppable projection — *"a service whose loss costs capability rather
