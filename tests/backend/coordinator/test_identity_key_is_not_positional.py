@@ -141,3 +141,17 @@ def test_a_node_with_no_source_key_is_expired_not_skipped():
     i = src.index("REMOVE n:CurrentIdentity")
     window = src[max(0, i - 700):i]
     assert "IS NULL" in window and "NOT [n.source_field, n.source_key] IN $live" in window
+
+
+def test_the_read_projection_returns_the_key_it_is_keyed_by():
+    """A key nothing can read is a key nothing can target.
+
+    `identity()` projected source_field and source_index but not source_key, so a caller
+    holding read nodes could not address them the way the MERGE does — and `reinforce()`
+    plus any future write path must. Caught by checking the live read rather than the
+    card-derived nodes, which is where the two diverge.
+    """
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[3] / "src" / "coordinator" / "repositories"
+           / "identity_repository.py").read_text()
+    assert "n.source_key AS source_key" in src
