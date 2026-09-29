@@ -112,6 +112,17 @@ class IdentityRepository:
                   f"CREATE INDEX {label.lower()}_persona_read IF NOT EXISTS "
                   f"FOR (n:{label}) ON (n.persona_id, n.source_field)",
                   self._database)
+            # The MERGE key, ENFORCED rather than trusted. Composite property-uniqueness
+            # IS available in Community -- only property-EXISTENCE, property-TYPE and KEY
+            # constraints are Enterprise-only, which is a distinction worth stating
+            # because the repo previously recorded uniqueness as "all Community gives us".
+            # Without this, a source_key collision silently folds two card entries into
+            # one node and takes the annotations of whichever it matched.
+            write(self._driver,
+                  f"CREATE CONSTRAINT {label.lower()}_source_key_unique IF NOT EXISTS "
+                  f"FOR (n:{label}) REQUIRE (n.persona_id, n.source_field, n.source_key) "
+                  f"IS UNIQUE",
+                  self._database)
         # Register the nullable annotation key so a read does not emit UNRECOGNIZED
         # notifications. Same reason as the rule store's _REGISTER_KEYS: setting a
         # property to null DELETES it, so a key only ever null never enters the registry.
@@ -196,7 +207,7 @@ class IdentityRepository:
                 UNWIND $specs AS s
                 MERGE (n:{label}:CurrentIdentity {{persona_id: s.persona_id,
                                                    source_field: s.source_field,
-                                                   source_index: s.source_index}})
+                                                   source_key: s.source_key}})
                   ON CREATE SET n.node_id = s.node_id,
                                 n.created_at = s.created_at,
                                 n.salience = 0.0,
@@ -204,6 +215,7 @@ class IdentityRepository:
                 SET n.text        = s.text,
                     n.origin      = s.origin,
                     n.source_hash = s.source_hash,
+                    n.source_index = s.source_index,
                     n.valid_from  = coalesce(n.valid_from, s.valid_from),
                     n.kind        = s.kind,
                     n.level       = s.level,
@@ -223,12 +235,15 @@ class IdentityRepository:
         # than delete: the graph is the system of record, so a hard delete is the one
         # operation with no recovery, and an annotation pointing at a deleted node is
         # worse than one pointing at an expired node.
-        live_keys = [[n["source_field"], n["source_index"]] for n in nodes]
+        # Keyed the SAME WAY as the MERGE. Keyed on source_index this compared a live
+        # node against a REORDERED position, so a pure reorder marked surviving nodes
+        # as absent from the card and expired them.
+        live_keys = [[n["source_field"], n["source_key"]] for n in nodes]
         expired = write(
             self._driver,
             """
             MATCH (p:Persona {persona_id: $pid})-[]->(n:CurrentIdentity)
-            WHERE NOT [n.source_field, n.source_index] IN $live
+            WHERE NOT [n.source_field, n.source_key] IN $live
             SET n.expired_at = $now, n.valid_to = coalesce(n.valid_to, $now)
             REMOVE n:CurrentIdentity
             RETURN count(n) AS n

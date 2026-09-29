@@ -114,6 +114,45 @@ def _hash(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:16]
 
 
+def _source_key(text: str) -> str:
+    """The MERGE key for an identity node: derived from CONTENT, not from position.
+
+    `source_index` used to be in the key, so an operator reordering a card list silently
+    moved every annotation after the edit point onto a different entry. Measured on gwen:
+    moving one of 21 lore entries from last to first changed the text under ALL 21 lore
+    keys. Nothing detected it -- `source_hash` is written by the same MERGE that matched
+    the wrong node, and a reorder changes no leaf so the completeness check sees nothing.
+
+    The asymmetry that makes this the right trade: a REORDER is silent and accidental and
+    must not move annotations; a REWORDING is deliberate and visible and legitimately
+    mints a new node, because card-origin content is the operator's to change (ADR-018).
+    The old key was wrong for both cases; this one is right for the dangerous one.
+
+    Not a full crosswalk. A persisted (natural key -> surrogate id) map would also survive
+    rewordings, and is the standard answer, but it is a store of its own and this is the
+    cheap half that closes the silent failure.
+    """
+    return _hash(text.strip())
+
+
+def _disambiguate(nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Make `source_key` unique within a (persona, field), preserving duplicates.
+
+    Two identical entries in one list are distinct nodes -- `source_index` distinguished
+    them for free, and a bare content hash would collapse them into one, losing a node
+    and its annotations. Occurrence order among IDENTICAL texts is itself reorder-stable,
+    since identical entries are interchangeable by definition.
+    """
+    seen: Dict[tuple, int] = {}
+    for n in nodes:
+        sig = (n["persona_id"], n["source_field"], n["source_key"])
+        k = seen.get(sig, 0)
+        seen[sig] = k + 1
+        if k:
+            n["source_key"] = f"{n['source_key']}#{k}"
+    return nodes
+
+
 def _node(shape: Shape, persona_id: str, field: str, index: int, text: str,
           **extra: Any) -> Dict[str, Any]:
     return {
@@ -123,6 +162,7 @@ def _node(shape: Shape, persona_id: str, field: str, index: int, text: str,
         "source_index": index,
         "text": text.strip(),
         "source_hash": _hash(text.strip()),
+        "source_key": _source_key(text),
         "origin": "card",
         **extra,
     }
@@ -131,10 +171,10 @@ def _node(shape: Shape, persona_id: str, field: str, index: int, text: str,
 def identity_nodes(card: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Every identity node this card implies, in a stable order.
 
-    Stable order matters: `source_index` is part of the MERGE key, so a reordered list
-    silently retargets annotations onto the wrong node. The rule store guards the same
-    hazard by failing loudly on a card/overlay text mismatch; the equivalent guard here
-    is `source_hash` plus the completeness check.
+    `source_index` records POSITION and is what `card_from_nodes` orders by; it is no
+    longer part of the MERGE key, because keying on position meant a reordered list
+    silently retargeted annotations onto the wrong node (see `_source_key`). Identity is
+    keyed on content; order is carried as a property and updated freely.
     """
     pid = card.get("key") or "unknown"
     out: List[Dict[str, Any]] = []
@@ -215,7 +255,7 @@ def identity_nodes(card: Dict[str, Any]) -> List[Dict[str, Any]]:
         if isinstance(v, str) and v.strip():
             out.append(_node(TRAIT, pid, f"behavior.{fname}", 0, v, kind="behaviour"))
 
-    return out
+    return _disambiguate(out)
 
 
 #: Which top-level card keys the mapping above actually consumes. Derived from the

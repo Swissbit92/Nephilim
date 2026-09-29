@@ -119,25 +119,56 @@ def generate(system, user, reminder, temperature, seed):
     return r.json()["message"]["content"], time.time() - t0
 
 
-def wilcoxon(pairs):
-    """Exact two-sided Wilcoxon signed-rank on paired rates. Returns (p, n_discordant)."""
-    d = [b - a for a, b in pairs if b != a]
-    n = len(d)
-    if n == 0:
-        return 1.0, 0
-    order = sorted(range(n), key=lambda i: abs(d[i]))
-    R = {idx: i for i, idx in enumerate(order, 1)}
-    W = sum(R[i] for i in range(n) if d[i] > 0)
-    target = min(W, n * (n + 1) // 2 - W)
-    if n > 20:
-        return None, n
-    tot = cnt = 0
-    for k in range(n + 1):
-        for combo in itertools.combinations(range(1, n + 1), k):
-            tot += 1
-            if sum(combo) <= target:
-                cnt += 1
-    return min(1.0, 2 * cnt / tot), n
+def _paired_tests():
+    """The eval package's exact paired tests. Imported, never reimplemented.
+
+    WHAT WAS HERE AND WHY IT WAS WRONG. An inline signed-rank that assigned distinct
+    integer ranks 1..n with no midrank correction for ties. On this harness's own data 12
+    of 14 non-zero differences are tied in |d| (six at 0.1667, five at 0.3333), and
+    Python's stable sort breaks those ties by PROBE INDEX -- so the p-value was a function
+    of the order probes happen to be listed in HARDWALL. Measured over 200 random
+    orderings of identical data: p moved 0.0245 to 0.1040, straddling 0.05.
+
+    tests/evaluation/persona_eval/analyse_format_experiment.py already carried the correct
+    statistic and has since the format experiment: `exact_permutation_p` flips arm labels
+    rather than ranking magnitudes, so ties cannot affect it BY CONSTRUCTION rather than
+    by correction. `exact_sign_test` is there too. Two of the three tests this module
+    needed already existed, and writing a third implementation of a statistic this
+    programme has already been burned by is the mistake, not the fix.
+    """
+    here = pathlib.Path(__file__).resolve().parents[2] / "tests" / "evaluation" / "persona_eval"
+    if str(here) not in sys.path:
+        sys.path.insert(0, str(here))
+    from analyse_format_experiment import exact_permutation_p, exact_sign_test
+    return exact_permutation_p, exact_sign_test
+
+
+def paired_report(pairs, label=""):
+    """Permutation p, sign test, and the means. The only sanctioned primary readout.
+
+    Both tests are printed deliberately. On the graph A/B data the permutation test gives
+    0.046 and the sign test 0.180, and that disagreement IS a finding: ten probes improved
+    and four worsened, but the improvements are large (-1.000, -0.667, -0.500) and the
+    regressions small (+0.167 to +0.333). The effect is carried by MAGNITUDE, not by how
+    many probes moved, and a report quoting only the significant test would hide that.
+    """
+    exact_permutation_p, exact_sign_test = _paired_tests()
+    a = [x for x, _ in pairs]
+    b = [y for _, y in pairs]
+    deltas = [y - x for x, y in pairs]
+    discordant = [d for d in deltas if d != 0]
+    mA, mB = sum(a) / len(a), sum(b) / len(b)
+    rel = (mB - mA) / mA * 100 if mA else float("nan")
+    p_perm = exact_permutation_p(discordant) if discordant else None
+    st = exact_sign_test(deltas)
+    return (
+        f"{label}n={len(pairs)} discordant={len(discordant)}  "
+        f"A={mA:.4f}  B={mB:.4f}  ({mB - mA:+.4f} = {rel:+.1f}% rel)\n"
+        f"  permutation (exact, tie-immune) p={p_perm}\n"
+        f"  sign test {st['favour_control']} down / {st['favour_candidate']} up, "
+        f"{st['ties']} tied  p={st['p']}   <- direction only, discards magnitude"
+    )
+
 
 
 def main():
@@ -197,10 +228,7 @@ def main():
         B = [r for r in rows if r["arm"] == "B" and r["q"] == q]
         if A and B:
             pairs.append((mean(r["breached"] for r in A), mean(r["breached"] for r in B)))
-    p, nd = wilcoxon(pairs)
-    print(f"  probes={len(pairs)}  graph OFF {mean(x for x,_ in pairs):.3f}  "
-          f"graph ON {mean(y for _,y in pairs):.3f}")
-    print(f"  discordant={nd}  p={p if p is None else f'{p:.4f}'}")
+    print(paired_report(pairs, label="  "))
 
     print("\nDESCRIPTIVE ONLY — per category (n=4 each, NOT testable)")
     for c in sorted(hwcats):
