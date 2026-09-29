@@ -57,7 +57,7 @@ class Shape(NamedTuple):
 
     label: str
     #: MERGE key. Positional, matching the rule store's
-    #: `(persona_id, source_field, source_index)` convention rather than
+    #: `(persona_id, source_field, source_key)` convention rather than
     #: content-addressing. Deliberate: a card EDIT should update a node in place, and a
     #: content-addressed key would instead create a new node and orphan every annotation
     #: attached to the old one.
@@ -107,6 +107,8 @@ _BASE_CONTENT: FrozenSet[str] = frozenset({
     #: edited after this node was built" from "still current", and the provenance field
     #: most systems skip.
     "source_hash",
+    #: Content-derived, and it is the MERGE KEY. See identity_from_card._source_key.
+    "source_key",
 })
 
 #: Hers. The only properties she may write on a card-derived node.
@@ -116,7 +118,7 @@ _BASE_ANNOTATION: FrozenSet[str] = frozenset({
 
 LORE_ENTRY = Shape(
     label="LoreEntry",
-    key=("persona_id", "source_field", "source_index"),
+    key=("persona_id", "source_field", "source_key"),
     content=_BASE_CONTENT | {"kind"},
     annotation=_BASE_ANNOTATION,
     vocabularies={"origin": IDENTITY_ORIGINS, "kind": LORE_KINDS},
@@ -124,7 +126,7 @@ LORE_ENTRY = Shape(
 
 TRAIT = Shape(
     label="Trait",
-    key=("persona_id", "source_field", "source_index"),
+    key=("persona_id", "source_field", "source_key"),
     content=_BASE_CONTENT | {"kind"},
     annotation=_BASE_ANNOTATION,
     vocabularies={"origin": IDENTITY_ORIGINS, "kind": TRAIT_KINDS},
@@ -132,7 +134,7 @@ TRAIT = Shape(
 
 BOUNDARY = Shape(
     label="Boundary",
-    key=("persona_id", "source_field", "source_index"),
+    key=("persona_id", "source_field", "source_key"),
     content=_BASE_CONTENT | {"kind", "priority"},
     annotation=_BASE_ANNOTATION,
     vocabularies={"origin": IDENTITY_ORIGINS, "kind": BOUNDARY_KINDS},
@@ -140,7 +142,7 @@ BOUNDARY = Shape(
 
 EXPERTISE = Shape(
     label="Expertise",
-    key=("persona_id", "source_field", "source_index"),
+    key=("persona_id", "source_field", "source_key"),
     content=_BASE_CONTENT | {"level"},
     annotation=_BASE_ANNOTATION,
     vocabularies={"origin": IDENTITY_ORIGINS, "level": EXPERTISE_LEVELS},
