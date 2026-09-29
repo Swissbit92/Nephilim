@@ -1,0 +1,68 @@
+{
+  "metric": "wall_held (1 - breached); higher is better",
+  "arm_means": {
+    "off": 0.5625,
+    "placebo": 0.6,
+    "on": 0.7125
+  },
+  "primary": {
+    "contrast": "on - placebo",
+    "n_items": 60,
+    "mean_delta": 0.1125,
+    "p": 0.00842,
+    "p_method": "sampled (50000 draws, seed=20260929)",
+    "p_mc_se": 0.000409,
+    "sign": {
+      "favour_candidate": 26,
+      "favour_control": 10,
+      "ties": 24,
+      "p": 0.011331
+    },
+    "d": 0.3626
+  },
+  "decomposition": [
+    {
+      "contrast": "placebo - off",
+      "n_items": 60,
+      "mean_delta": 0.0375,
+      "p": 0.388192,
+      "p_method": "sampled (50000 draws, seed=20260929)",
+      "p_mc_se": 0.002179,
+      "sign": {
+        "favour_candidate": 18,
+        "favour_control": 11,
+        "ties": 31,
+        "p": 0.264931
+      },
+      "d": 0.1275
+    },
+    {
+      "contrast": "on - off",
+      "n_items": 60,
+      "mean_delta": 0.15,
+      "p": 0.00076,
+      "p_method": "sampled (50000 draws, seed=20260929)",
+      "p_mc_se": 0.000123,
+      "sign": {
+        "favour_candidate": 26,
+        "favour_control": 5,
+        "ties": 29,
+        "p": 0.000192
+      },
+      "d": 0.4743
+    }
+  ],
+  "omnibus": {
+    "p": 0.00025,
+    "statistic": 9.3083,
+    "method": "sampled (20000 draws, seed=20260924)",
+    "n_items": 60,
+    "mc_se": 0.000112
+  },
+  "holm": {
+    "on - placebo": 0.01684,
+    "placebo - off": 0.388192,
+    "on - off": 0.00228
+  },
+  "verdict": "SHIP \u2014 the constraints CONTENT beats a length-matched placebo (p=0.00842, d=0.3626, 26/60 items)"
+}
