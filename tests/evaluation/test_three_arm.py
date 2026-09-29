@@ -367,11 +367,49 @@ class TestNoDataAndEdges:
         assert res["n_items_common"] == 0
         assert res["verdict"] == "NO DATA"
 
-    def test_beyond_the_exhaustive_cap_it_says_so_instead_of_raising(self):
-        """`exact_permutation_p` refuses n>20 on purpose. The report has to survive
-        that and name it, because a crash here would look like a data problem."""
+    def test_beyond_the_exhaustive_cap_it_SAMPLES_and_names_its_own_precision(self):
+        """n>20 must still produce a p, and must say it was sampled.
+
+        This test previously pinned `p is None` above the cap, which was correct graceful
+        degradation for `exact_permutation_p` and a dead end for the programme: the
+        20-probe run's own pre-registration says the fix for an underpowered result is
+        MORE PROBES, and 60 probes put the PRIMARY endpoint permanently above the cap. An
+        endpoint that silently stops producing a number exactly when the design finally
+        gets big enough is worse than no endpoint.
+
+        So `permutation_p` samples above the cap, following `omnibus_p`'s conventions
+        rather than inventing new ones: fixed seed, add-one so a sample never reports
+        p=0, and `mc_se` always reported — because a sampled 0.04 with an SE of 0.01 is
+        not the same claim as an exact 0.04.
+        """
         big = list(range(10, 10 + 25))
         per = ta.arm_item_means(dataset(big, big, [b + 2 for b in big]), SCORE)
         c = ta.contrast(per, *ta.PRIMARY)
         assert c["n_items"] == 25
-        assert c["p"] is None and "exhaustive cap" in c["p_note"]
+        assert c["p"] is not None, "the primary endpoint must not vanish above the cap"
+        assert c["p"] > 0, "add-one correction: a sampled p is never exactly 0"
+        assert "sampled" in c["p_method"] and "seed=" in c["p_method"]
+        assert c["p_mc_se"] > 0, "a sampled p must report its own precision"
+
+    def test_below_the_cap_it_is_exact_and_agrees_with_the_older_function(self):
+        """The sampled path is an extension, not a replacement.
+
+        If the exact paths ever disagree, every number this package has already reported
+        becomes unreproducible, so the agreement is asserted rather than assumed.
+        """
+        from analyse_format_experiment import exact_permutation_p, permutation_p
+        for deltas in ([0.0] * 8, [-0.5, -0.33, 0.17, -1.0, 0.0, -0.67], [0.2] * 12):
+            r = permutation_p(deltas)
+            assert r["mc_se"] == 0.0 and "exact" in r["method"]
+            assert r["p"] == pytest.approx(exact_permutation_p(deltas), abs=1e-9)
+
+    def test_a_flat_design_gives_p_1_not_no_data(self):
+        """Zeros are evidence, not missing data.
+
+        The statistic is the MEAN delta, so a zero pulls it toward zero and belongs in
+        the sample. Dropping zeros the way signed-rank does turned a genuinely flat
+        design into "no data", and the decision rule then read NO DATA where it should
+        have read KILL.
+        """
+        from analyse_format_experiment import permutation_p
+        assert permutation_p([0.0] * 10)["p"] == pytest.approx(1.0)

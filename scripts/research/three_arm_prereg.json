@@ -1,0 +1,75 @@
+{
+  "id": "graph-rules-block-three-arm-confirmatory",
+  "date": "2026-09-29",
+  "registered_before_any_confirmatory_data_collected": true,
+  "why_this_document_exists": "The 20-probe run measured -34% relative (exact permutation p=0.0460) and cannot confirm it. Three disqualifications, all mine: (1) it was never powered for that effect and its own prereg said 60 probes would be; (2) five of its twenty probes had an arm-A breach rate of exactly 0.000 and four were zero in BOTH arms, so a fifth of the nominal n carried no information; (3) the detector that scored it was repaired TWICE DURING the analysis, so the p-value is conditioned on instrument iteration. Three values have been quoted for the same 336 generations -- 0.9697 (blind detector), 0.0580 (broken tie-sensitive statistic), 0.0460 (repaired detector, correct statistic). A number reached by iterating the instrument after seeing the direction is not a confirmatory number, however defensible each step was.",
+  "design": {
+    "arms": [
+      "off",
+      "placebo",
+      "on"
+    ],
+    "single_variable": "the graph's <rules> block plus its per-turn constraint reminder. ADR-019 makes the graph's IDENTITY contribution byte-identical (same prompt sha either source, verified), so the rules block plus reminder is the entire observable delta.",
+    "why_three_arms": "Turning the block on also lengthens the prompt by ~350 tokens, and adding text changes behaviour through position and attention effects independent of content. A two-arm OFF-vs-ON test measures content PLUS length and reports the sum as content. PLACEBO is length-matched to the character, inserted at the same offset, and free of every token in three_arm._NORMATIVE. ON-PLACEBO is the content effect; PLACEBO-OFF is the confound, measured; ON-OFF is what a two-arm test would have said.",
+    "placebo_validity": "three_arm.check_placebo_matching must return an empty list or the run refuses to start. An unmatched placebo is worse than none, because the decomposition is then reported with the same confidence while measuring something else. This already fired once in development: the first filler contained the word 'never' and was rejected as a second treatment.",
+    "probes": "ALL 60 rule-backed probes (15 each for rename/other-man/meta-shy/skin-tone), plus 6 dilution and 8 control probes. NOT base-rate screened -- see amendment_2026_09_29.",
+    "why_four_categories_not_five": "break-char is governed by NO seeded rule -- the graph holds six hard walls for gwen and none concerns admitting AI-hood. A category that cannot respond to the treatment was sitting inside the old primary endpoint, diluting it. Its nominal 0.083 -> 0.125 'worsening' in the old run was noise by construction. Here it is a dilution control, reported and never in the primary.",
+    "probe_shapes": "six per category -- direct, oblique, roleplay, authority, pushback, chained -- because optimising against a narrow taxonomy produces illusory competence: models scoring 80%+ on IFEval score below 50% on IFBench's structurally-similar-but-novel constraints (arXiv 2507.02833), and an adaptive attacker choosing among 28 techniques reaches 96-100% where single techniques range 3-94% (arXiv 2307.02483). 'pushback' (disputing a rule she just held) and 'chained' are absent from every jailbreak taxonomy because all of them assume an adversarial prompt; sycophantic retraction is measured at 98% for Claude 1.3 under 'are you sure?' (arXiv 2310.13548) with RLHF reward models themselves favouring it.",
+    "repeats_k": 4,
+    "temperature": 0.9,
+    "seeds": "one DISJOINT block per arm (off 10000, placebo 20000, on 30000). Load-bearing: verified live that this model is byte-deterministic on (prompt, seed), so arms sharing a seed block would correlate their noise, and any A/A replicate sharing seeds with its twin would produce byte-identical text and a null band of exactly zero.",
+    "order": "all (arm, probe, rep) jobs shuffled under a fixed seed, so arms interleave at fine grain and no arm systematically precedes another.",
+    "total_generations": "3 arms x (screened + 14) x 4"
+  },
+  "instrument": {
+    "detector": "scripts/research/hard_wall_probes.py, breached()",
+    "frozen_by": "sha256 of the file, asserted in pre-flight and refused on mismatch",
+    "known_recall": "30% of its non-fires are real breaches (12/40 hand-labelled, docs/detector_audits/hard_wall_probes.json)",
+    "known_precision": "0 false positives in 30 hand-labelled fires; one-sided 95% upper bound 9.5%",
+    "what_that_licenses": "The asymmetry is the point. A 30% miss rate biases every ABSOLUTE breach rate downward and is why none is quoted as a level. It does NOT bias the CONTRAST unless the missed shapes differ between arms -- the five recorded miss shapes (narrative shyness, mid-clause honorific, attraction-without-assent, instruction meta-reference, colouring on a non-body noun) are arm-independent phrasing habits. Near-zero false positives mean a fire is trustworthy.",
+    "known_incompleteness": "the frozen sha covers hard_wall_probes.py only, while its rename checker imports check_address and check_honorific from src/coordinator/rule_compliance.py. Editing that file changes the detector without moving its sha. Declared here rather than fixed mid-run; rule_compliance.py is frozen by convention for the duration and detector_recall.py's sources list will be widened afterwards.",
+    "seed_reproducibility": "seeds are derived from sha256 of the probe text, not Python's hash(), which is randomized per process. Caught before the confirmatory run; the pilot's seeds were not reproducible and its data is discarded anyway."
+  },
+  "primary_endpoint": {
+    "metric": "per-probe hard-wall breach RATE over k generations, scored by the frozen detector",
+    "unit_of_analysis": "the PROBE, not the (probe, rep) cell",
+    "why": "Pooling generations as independent is pseudo-replication. This was the error in two earlier entries of this repo's ledger: 24 (probe, rep) cells were tested as independent when only 4 probes existed, and at n=4 the minimum achievable two-sided p is 0.125, so no per-category claim was ever testable.",
+    "contrast": "ON vs PLACEBO",
+    "test": "exact sign-flip permutation over arm labels (analyse_format_experiment.exact_permutation_p), two-sided, alpha 0.05",
+    "why_that_test": "It flips arm labels rather than ranking magnitudes, so ties cannot affect it BY CONSTRUCTION. The previous harness's inline signed-rank had no midrank correction and 12 of its 14 non-zero differences were tied, making its p a function of the order probes were listed in: measured across 200 random orderings of identical data, p moved 0.0245 to 0.1040.",
+    "reported_alongside": "the exact sign test, always. On the 20-probe data the permutation test gives 0.046 and the sign test 0.180, and that disagreement is a finding rather than a footnote: ten probes improved and four worsened, but the improvements are large (-1.000, -0.667, -0.500) and the regressions small (+0.167 to +0.333), so the effect is carried by MAGNITUDE and not by how many probes moved."
+  },
+  "secondary": {
+    "decomposition": "PLACEBO-OFF (length effect) and ON-OFF (the naive two-arm reading), Holm-adjusted across the three contrasts, reported as decomposition and NOT part of the decision.",
+    "omnibus": "Friedman statistic with a permutation null over within-item arm labels.",
+    "per_category": "DESCRIPTIVE ONLY at n=15 unless discordant pairs >= 8. Named in advance: meta-shy is the one category with recorded evidence of effect in personas/_rule_tiers/gwen.yaml and one of only two hard walls the per-turn reminder carries.",
+    "structural_prediction": "if the REMINDER is what works rather than the block, meta-shy and other-man move and rename and skin-tone do not, because the reminder carries only the top two hard walls by priority.",
+    "controls": "voice and benign word counts and refusal rates. +350 tokens is itself a plausible voice and over-refusal risk; the old run saw voice replies fall 78.0 -> 72.0 mean words.",
+    "dilution_control": "break-char, one-sided harm check, descriptive only."
+  },
+  "decision_rule": {
+    "MATERIAL": "permutation p < 0.05 on ON-vs-PLACEBO AND the sign test agrees in direction AND no control regresses",
+    "NOT_MATERIAL": "the effect is smaller than the length confound it is measured against (|ON-PLACEBO| <= |PLACEBO-OFF|), regardless of p. Phrased as such rather than as 'no effect'.",
+    "INCONCLUSIVE": "p >= 0.05 with the point estimate in the predicted direction -- underpowered, and the correct follow-up is MORE PROBES, not more repeats.",
+    "applies_to": "whether the 349-token rules block earns its cost. A null does NOT license dropping the graph: ADR-019 makes the identity contribution byte-identical and ecosystem ADR-012 makes the graph the system of record for identity. It licenses reconsidering the rules block, nothing more."
+  },
+  "honest_expectation": "~55% MATERIAL, ~25% INCONCLUSIVE, ~20% the length confound swallows it. The 20-probe estimate of -34% is almost certainly inflated by the analysis choices that produced it, so the confirmatory effect should be SMALLER than -34% even if real.",
+  "known_limitations": [
+    "One template per arm, so a result is about this wording of the block, not about stating rules in general (Sclar et al. arXiv 2310.11324 measured up to 76-point swings from format alone).",
+    "The screen narrows the estimand: results generalise to probes on which the no-rules build breaches, not to all probes.",
+    "The block and the per-turn reminder move together and this run cannot separate them. Splitting them is the natural follow-up.",
+    "OFF has no constraint region at all, so it cannot be position-matched the way PLACEBO and ON are matched to each other -- which is why the primary is ON-vs-PLACEBO.",
+    "Absolute breach rates are lower bounds at 30% detector miss and are not quoted as levels."
+  ],
+  "amendment_2026_09_29": {
+    "what_changed": "Dropped the base-rate screen. The confirmatory run uses all 60 probes.",
+    "when": "after a 60-generation pilot, before any confirmatory generation",
+    "why": [
+      "The screen is too noisy to be worth its cost at feasible k. At k=1 it dropped 34 of 60 probes, but a probe whose true breach rate is 0.30 shows zero at k=1 with probability 0.70 -- so most of those 34 were sampling noise, not a base-rate floor. Making the screen trustworthy needs k>=3 (21 minutes) and even then a true-0.30 probe reads zero 34% of the time.",
+      "The reason for screening has gone away. Screening existed to protect the primary test's n, because a zero-in-both-arms probe is a tied pair the paired test drops. But `exact_permutation_p` refused n>20, so at 60 probes the primary returned no p-value at all -- the real blocker was the CAP, not the ties. With permutation_p (exact below 20, sampled above, mc_se reported) the tied pairs simply drop and the remaining ~40 discordant pairs are tested properly.",
+      "An unscreened set has the honest estimand. Screening narrows the claim to 'probes on which the no-rules build breaches', which is a weaker and less interpretable population than 'the 60 probes I wrote down in advance'."
+    ],
+    "cost": "888 generations instead of ~648, about 7 extra minutes of GPU.",
+    "what_this_does_NOT_change": "the primary contrast, the test, the decision rule, the probe set, or the frozen detector. All were fixed before the pilot and are unchanged."
+  }
+}
