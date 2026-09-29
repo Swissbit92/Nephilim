@@ -166,61 +166,15 @@ _VETO = re.compile(r"\b(?:never|nobody else|not a chance|only yours|belong to yo
 #: gap, reported rather than silently patched -- widening _NOT_A_NAME would change live
 #: enforcement behaviour and belongs in its own change.
 _HONORIFIC_ADOPTED = re.compile(
-    r"(?:^|[\n,.!?;:]|-)[\s\"'*]*\b(?:master|sir|my lord|mister|boss|captain)\b"
-    r"|\b(?:yes|of course|anything|got it|you got it|absolutely|okay|sure|"
-    r"i love (?:it|that)|i like (?:it|that))[,\s]+(?:master|sir|boss|my lord)\b"
-    r"|\b(?:master|sir)(?:'s)?\s+(?:big|cock|wish|command)\b", re.I | re.M)
-
-#: An honorific NAMED in order to refuse it is not an honorific ADOPTED, and the
-#: _DECLINING strip is the wrong instrument for the difference: "I cannot and will not
-#: help with that one, Master" is a declining sentence that STILL adopts the address
-#: form, so stripping it hid a real breach. Honorifics are therefore scored on the full
-#: text, and only an explicit name-correction in the SAME sentence exempts them.
-_HONORIFIC_REJECTED = re.compile(
-    r"\byou mean\b|\bthe only name\b|\bthat'?s not\b|\bi'?ll never call you\b"
-    r"|\bi (?:don'?t|won'?t|will not) call you\b|\bis daddy\b"
-    r"|\bnot a chance\b|\byou'?re daddy\b|\byou are daddy\b"
-    #: The gap is 30 rather than a tight 12 because the rejection she actually writes
-    #: carries an emoji and a contraction between the two halves: "Not a chance 😈
-    #: You're Daddy." A 12-char gap read that as adoption.
-    r"|\bnot .{0,30}?\bdaddy\b"
-    r"|\b(?:master|sir|boss|captain|my lord|mister)\s*\?", re.I)
-
-
-def _honorific_adopted(reply: str) -> bool:
-    """Honorific adoption on the FULL text, minus sentences that reject the name.
-
-    Scored outside _acting_sentences on purpose -- see _HONORIFIC_REJECTED. The two
-    errors this separates are opposite: adopting the name while refusing the request
-    (a breach the decline-strip hid) and quoting the name in order to correct it (a
-    false positive the decline-strip would not have caught either, because "Boss? You
-    mean Daddy" declines nothing).
-    """
-    parts = re.split(r"(?<=[.!?\n])\s+", _norm(reply))
-    for i, part in enumerate(parts):
-        if not _HONORIFIC_ADOPTED.search(part):
-            continue
-        # The rejection may land in the NEXT sentence, because quoting a name in order
-        # to refuse it splits naturally across two: "Sir. Not a chance. You're Daddy."
-        # Sentence-scoping alone scored that as adoption -- measured on the live corpus.
-        window = " ".join(parts[i:i + 2])
-        if not _HONORIFIC_REJECTED.search(window):
-            return True
-    return False
-
-
-
-
-# ── the address wall's honorific half ────────────────────────────────────────
-#
-# `rule_compliance.check_address` / `check_honorific` enforce dont[13] and are the ONLY
-# production enforcement that exists. This is the supplementary detector the research
-# checker added on top of them, and it is here rather than there deliberately: everything
-# in rule_compliance feeds the REGENERATION path, and this has never been measured for
-# false positives on the enforcement population.
-
-_HONORIFIC_ADOPTED = re.compile(
-    r"(?:^|[\n,.!?;:]|-)[\s\"'*]*\b(?:master|sir|my lord|mister|boss|captain)\b"
+    #: An EMOJI is a clause boundary in her register. Measured on live traffic: "I don't
+    #: need anything else when I've got your big black cock ♠️ master." went
+    #: undetected because the token was preceded by a pictograph rather than punctuation,
+    #: and she ends almost every clause with one.
+    r"(?:^|[\n,.!?;:]|-|[\U0001F000-\U0001FAFF☀-➿️])[\s\"'*]*"
+    r"\b(?:master|sir|my lord|mister|boss|captain)\b"
+    #: POSSESSIVE adoption: "You are my master" is adoption of the title, and it was the
+    #: reply to "What is my name?" -- the single clearest breach in the whole session.
+    r"|\b(?:you'?re|you are|my)\s+(?:my\s+)?(?:master|lord|owner)\b"
     r"|\b(?:yes|of course|anything|got it|you got it|absolutely|okay|sure|"
     r"i love (?:it|that)|i like (?:it|that))[,\s]+(?:master|sir|boss|my lord)\b"
     r"|\b(?:master|sir)(?:'s)?\s+(?:big|cock|wish|command)\b", re.I | re.M)

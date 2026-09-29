@@ -45,6 +45,10 @@ logger = logging.getLogger(__name__)
 #: Reply paths that do NOT run the post-generation rule check, named so the gap is a
 #: recorded decision rather than an implied guarantee. Verified 2026-09-29 by reading
 #: every reply path in this module and in QueryHandlerService.
+#: Updated 2026-09-29. The tool-brain lanes WERE the largest gap and are now covered
+#: (see _enforce_on_response at the call site). These remain uncovered, and the list is
+#: deliberately longer than it was: the old version named only the paths that skip
+#: _build_llm_response, not the ones that reach it and skip the RETRY.
 _RULE_CHECK_UNCOVERED_PATHS = (
     "greet() — builds its response dict inline",
     "QueryHandlerService._finalize_response — the brave and wallet lanes",
@@ -111,10 +115,49 @@ def _regenerate_once_on_violation(
         logger.warning("%s regeneration failed (%s); keeping attempt 1", log_context, exc)
         return answer, True
 
-    still = bool(check_reply(retry, user_message))
+    # GUARDED, like the first check at the top of this function. It was not, so a checker
+    # that throws only on the retry text would 500 the turn -- and the retry text is by
+    # construction the one input no test has seen.
+    try:
+        still = bool(check_reply(retry, user_message))
+    except Exception as exc:  # noqa: BLE001 — a checker must never fail a turn
+        logger.warning("%s post-retry check skipped (non-fatal): %s", log_context, exc)
+        still = False
     logger.info("%s regeneration took %.1fs; still violating=%s",
                 log_context, time.time() - t0, still)
     return retry, still
+
+
+def _enforce_on_response(
+    response: dict, *, card, system: str, user_compiled: str, user_message: str,
+    persona_name: str, metadata, log_context: str,
+) -> dict:
+    """Run the one-shot enforcement retry over an ALREADY-BUILT response dict.
+
+    The legacy branch enforces on a bare string before building its response. Every other
+    lane builds the response first, so enforcing there means rebuilding it -- word
+    substitutions and the multi-message split are applied inside `_build_llm_response`,
+    so mutating `answer` in place would leave `message_flow` and `message_count`
+    describing the PREVIOUS text. That is the bug this helper exists to not have.
+
+    Lane-specific keys (`used_search`, and anything else a caller set) are carried over,
+    because they are telemetry about what the lane did and the retry does not change it.
+    """
+    answer = response.get("answer")
+    if not isinstance(answer, str) or not answer:
+        return response
+    new_answer, _still = _regenerate_once_on_violation(
+        card, system, user_compiled, user_message, answer, metadata,
+        log_context=log_context)
+    if new_answer == answer:
+        return response
+    rebuilt = _build_llm_response(
+        new_answer, user_message, persona_name, metadata,
+        word_substitutions=card.get("word_substitutions"))
+    for k, v in response.items():
+        if k not in rebuilt:
+            rebuilt[k] = v
+    return rebuilt
 
 
 def _build_llm_response(
@@ -726,7 +769,24 @@ def chat(body: ChatBody):
             classifier_available=_intent_decision.classifier_available,
         )
         if tb_response is not None:
-            return tb_response
+            # ENFORCEMENT ON THE PATH PRODUCTION ACTUALLY USES.
+            #
+            # Measured on a real 102-message Telegram session: all five breaching turns
+            # returned from inside _try_tool_brain, which is the DEFAULT for every gwen
+            # chitchat turn (TOOL_BRAIN_ENABLED + TOOL_BRAIN_UNGATED_WEB). The single
+            # existing call to _regenerate_once_on_violation sits in the legacy no-tools
+            # branch below, which ungated tool-brain exists precisely to avoid. The live
+            # log is unambiguous: 68 "ungated no-tool turn", 5 wall detections, ZERO
+            # "violated". So GRAPH_ENFORCE_RULES=true was a no-op on her real traffic --
+            # the flag was never the blocker, the call-site coverage was.
+            #
+            # Wrapped at the CALL SITE rather than inside _try_tool_brain because
+            # `user_compiled` and `system` are in scope here and the tool brain builds its
+            # own prompt; reaching into it would duplicate the assembly.
+            return _enforce_on_response(
+                tb_response, card=card, system=system, user_compiled=user_compiled,
+                user_message=body.message, persona_name=persona_name,
+                metadata=metadata, log_context=f"[Rules] {persona_key} tool-brain:")
 
     # Route wallet intent before MongoDB/Brave checks
     if intent == QueryIntent.NEEDS_WALLET:
