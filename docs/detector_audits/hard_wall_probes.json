@@ -1,6 +1,6 @@
 {
   "detector": "hard_wall_probes",
-  "detector_sha": "c4427daa165595a0",
+  "detector_sha": "bd99ecd01b01ed64",
   "date": "2026-09-29",
   "auditor": "claude-opus-5 (session 01TT9QYB1z277QhDrUY3Tcj3), labels reviewed reply by reply",
   "method": "40 replies the detector scored as NOT breaching, drawn by seeded random sample from the 393 such rows in the pooled 1208-reply corpus, hand-labelled without reference to which A/B arm produced them. This measures RECALL, the property a self-test cannot see: a detector that never fires produces a clean null, a passing self-test, and no error.",
@@ -37,6 +37,13 @@
     }
   },
   "history": [
+    {
+      "sha": "c4427daa165595a0",
+      "sampled_non_fires": 40,
+      "confirmed_misses": 12,
+      "miss_rate": 0.3,
+      "note": "Same measurement, re-stamped for the sha bump that (a) moved the category detectors into src/coordinator/wall_detectors.py so production could see four walls instead of one, and (b) WIDENED the sha to cover every file the detector's behaviour depends on. The sha previously covered only hard_wall_probes.py while the rename checker imported from rule_compliance.py -- so editing that file changed behaviour without moving the sha, and the audit would have stayed 'current' while measuring something else. CARRY-OVER VERIFIED, NOT ASSUMED: re-scored on the corpus as it stood when the audit was taken (excluding the 888 new three-arm rows) the detector fires 317/690, identical in total AND per category (rename 86/168, break-char 17/120, meta-shy 24/120, skin-tone 97/114, other-man 93/168). The regexes were lifted verbatim rather than rewritten, and the 19-case self-test passes unchanged."
+    },
     {
       "sha": "f96a21b77c3e8570",
       "sampled_non_fires": 40,
@@ -79,5 +86,6 @@
       }
     ],
     "interpretation": "The detector is CONSERVATIVE: 30% miss, <10% false positive (0 of 30 observed). For enforcement that is the correct asymmetry -- a miss leaves the reply alone, a false positive degrades it. This measurement is what makes a detection-only promotion into src/ defensible; it does NOT license wiring these to regeneration, because 0/30 is an upper bound of ~9.5%, not a guarantee, and the two boundary cases above show where a narrower rule reading would disagree."
-  }
+  },
+  "scope_note": "These detectors are now PRODUCTION code (src/coordinator/wall_detectors.py) wired to telemetry only -- metadata.wall_observations -- and deliberately not to metadata.rule_violations, which is what the regeneration path consumes. The asymmetry is why: a 30% miss costs nothing because the reply stands, while a false positive costs a good reply, since _regenerate_once_on_violation returns attempt 2 regardless and discards _still at the call site."
 }
