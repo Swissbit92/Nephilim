@@ -238,12 +238,30 @@ class IdentityRepository:
         # Keyed the SAME WAY as the MERGE. Keyed on source_index this compared a live
         # node against a REORDERED position, so a pure reorder marked surviving nodes
         # as absent from the card and expired them.
+        #
+        # A FOURTH NEO4J TRAP, watched on the live graph rather than reasoned about.
+        # `[n.source_field, n.source_key] IN $live` is NULL -- not false -- when
+        # source_key is null, because a list containing null compares as unknown. `NOT
+        # NULL` is NULL, a NULL predicate never matches, and the row is silently skipped.
+        # So the 128 pre-migration nodes, which have no source_key at all, were not
+        # expired: the re-seed reported `expired: 0` and left 256 live identity nodes,
+        # a duplicate set. Nothing errored.
+        #
+        # Production was unharmed only because identity_source._passes_floor rejected the
+        # over-large read and fell back to the card, byte-identically -- a guard written
+        # for partial reads caught a DOUBLED one. That is luck with a good design, not a
+        # reason to leave this. The explicit IS NULL arm is also correct in general: a
+        # node with no source_key cannot be a live card node.
+        # (The three already recorded: `+=` deletes null-valued keys, MERGE resurrects
+        # expired nodes without the :CurrentIdentity guard, CALL IN TRANSACTIONS does not
+        # roll back.)
         live_keys = [[n["source_field"], n["source_key"]] for n in nodes]
         expired = write(
             self._driver,
             """
             MATCH (p:Persona {persona_id: $pid})-[]->(n:CurrentIdentity)
-            WHERE NOT [n.source_field, n.source_key] IN $live
+            WHERE n.source_key IS NULL
+               OR NOT [n.source_field, n.source_key] IN $live
             SET n.expired_at = $now, n.valid_to = coalesce(n.valid_to, $now)
             REMOVE n:CurrentIdentity
             RETURN count(n) AS n
