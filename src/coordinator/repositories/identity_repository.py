@@ -289,6 +289,7 @@ class IdentityRepository:
             RETURN labels(n)[0] AS label, n.node_id AS node_id, n.text AS text,
                    n.kind AS kind, n.level AS level, n.origin AS origin,
                    n.source_field AS source_field, n.source_index AS source_index,
+                   n.source_key AS source_key,
                    n.source_hash AS source_hash,
                    n.salience AS salience, n.reinforced_count AS reinforced_count,
                    n.last_referenced AS last_referenced
