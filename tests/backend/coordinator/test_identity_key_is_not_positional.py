@@ -116,3 +116,28 @@ def test_every_node_carries_both_the_key_and_the_position(gwen):
     for n in identity_nodes(gwen):
         assert n["source_key"], "missing source_key"
         assert isinstance(n["source_index"], int), "source_index must survive as a property"
+
+
+def test_a_node_with_no_source_key_is_expired_not_skipped():
+    """Cypher three-valued logic: a null inside a list makes `NOT x IN y` NULL.
+
+    Watched on the live graph. The pre-migration nodes carry no `source_key`, so
+    `[n.source_field, n.source_key] IN $live` evaluated to NULL rather than false, `NOT
+    NULL` is NULL, a NULL predicate never matches, and 128 stale nodes were silently left
+    live — `apply_card` reported `expired: 0` and the graph held a DUPLICATE identity set
+    with no error anywhere.
+
+    Production survived only because `identity_source._passes_floor` rejected the
+    over-large read and fell back to the card: a guard written for PARTIAL reads caught a
+    DOUBLED one. Asserted here on the Cypher text because the condition is the fix, and a
+    live-graph test would not run in the hermetic suite.
+    """
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[3] / "src" / "coordinator" / "repositories"
+           / "identity_repository.py").read_text()
+    assert "n.source_key IS NULL" in src, (
+        "the expiry query must handle a null source_key explicitly — `NOT [x, null] IN y` "
+        "is NULL, not true, so those rows are skipped")
+    i = src.index("REMOVE n:CurrentIdentity")
+    window = src[max(0, i - 700):i]
+    assert "IS NULL" in window and "NOT [n.source_field, n.source_key] IN $live" in window
