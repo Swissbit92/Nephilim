@@ -13,8 +13,10 @@ ai_summary: >
   already ruled out for recorded reasons. Read the 2026-09-30 amendments FIRST —
   they narrow the identity problem to one mode of one persona, supersede the memory
   costing with measurements, reject MCP as the integration shape, and record an
-  undocumented spike on disk at ~/image-gen. Not an implementation record; the ADR
-  is written at build time.
+  undocumented spike on disk at ~/image-gen. Section 11 re-scans the model landscape
+  and carries four corrections to the amendment itself, including the finding that
+  within the Qwen family the SMALLER model scores higher. Not an implementation
+  record; the ADR is written at build time.
 ---
 
 # Persona image generation — research + decision (park record)
@@ -108,6 +110,22 @@ This **partially** meets revisit trigger (c). Evidence for Mac-native *LoRA trai
 Qwen remains thin (a single practitioner blog post). But reference conditioning may make a
 LoRA unnecessary for this use — a different route to the same outcome, and a cheaper one.
 
+> ⚠️ **CORRECTED later on 2026-09-30 — the Mac path for this is uncertain, and this section
+> overstated it.** Two defects found after the amendment was committed:
+> - **mflux's Qwen-2.1 port is text-to-image ONLY.** Its own README states editing,
+>   multi-reference and RGBA output are not ported; those are CUDA-only today. The three
+>   features that make 2.1 interesting for identity work do not run here.
+> - **ComfyUI issue #16433 (OPEN, 2026-09-20): Qwen-Image-2.1 VAE *encode* is broken on MPS**
+>   — 6.60 dB PSNR round-trip vs 49.10 dB on CPU, root-caused to `F.pad` in `AvgDown3D`, and
+>   **not** a precision problem (`--fp32-vae` is identical). Encode is exactly the operation
+>   reference conditioning depends on, and it fails *silently* — txt2img is clean, every
+>   img2img path is degraded with no error. Workaround: `--cpu-vae`.
+>
+> Not dead: Edit-2511 is a separate 20B checkpoint with a different VAE, and
+> stable-diffusion.cpp supports Edit-2509 on Metal. But "reference conditioning dissolves the
+> bootstrap problem" is now a **hypothesis with a doubtful runtime path**, not a finding.
+> Verify the encode path produces sane output before building anything on it.
+
 ### 4. Model selection — refined, and the version matters
 
 The durable finding "model size ≠ anime/cartoon quality" is **unchanged** and still governs
@@ -123,6 +141,22 @@ scene coherence are exactly what a large model buys.
 ⚠️ **Take 2512, not 2.1.** Everything up to and including 2512 is Apache-2.0; **Qwen-Image
 2.1 (2026-09-20) is the Qwen Research License, non-commercial.** Immaterial for private use,
 free to prefer, and it keeps the note's own licensing discipline intact.
+
+> ⚠️ **CORRECTED later on 2026-09-30 — the quant recommendation above is wrong for Qwen, and
+> the licence framing is now only half the story.**
+> - **Q6 is the one quant to avoid on this model family.** mflux's own maintainers warn
+>   "6-bit or below can degrade the image a lot more compared to Flux". Worse,
+>   stable-diffusion.cpp #1385 (OPEN since 2026-04-01) has **Q4_K/Q5_K/Q4_0/Q4_1/Q5_1
+>   producing solid black images** on Qwen-Image-2512 via activation overflow — only **Q5_0
+>   and Q8_0** work. Use **bf16 or Q8_0 (21.76 GB transformer)**, nothing below.
+> - **There is no speed penalty for that choice.** On M4, quantisation buys memory and
+>   nothing else: fp8 matmul is *emulated* at 0.94× fp16 throughput (arXiv:2606.12765,
+>   reverse-engineering Metal 4.1), and measured end-to-end bf16 is the *fastest* precision
+>   (5.1 s/step vs 4-bit 5.8, 8-bit 6.0, 6-bit 6.8). **Run the highest precision that fits.**
+> - **"2512 over 2.1" no longer holds on quality.** Independent arena Elo puts
+>   **Qwen-Image-2.1 (7B) ~100 Elo ABOVE Qwen-Image-2512 (20B)** and #1 among all open-weight
+>   models. Within this family, the smaller model is the better one — the licence is now the
+>   only argument for 2512, not quality. See §11 for where each one does win.
 
 Additional runtimes ruled out since: **DiffusionKit** archived by its owner 2026-03-21 (last
 real commit ~Apr 2025) — do not build on it; **Fooocus** is SDXL-only by explicit policy and
@@ -142,6 +176,14 @@ the box on 2026-09-30:
 | Docker VM process RSS | 11.4 GB |
 | Containers actually using | **4.72 GB** (mongo 3.31, neo4j 1.41) |
 | MongoDB WiredTiger cache | **0.20 GB** used of 3.37 GB configured |
+
+> ⚠️ **Model-size correction (later 2026-09-30):** figures quoted elsewhere in this note as
+> "Qwen-Image … 33.12 GB at bf16" are **Qwen-Image-2.1 (7B)**, not the 20B. Measured from HF
+> blob sizes: **2512 = 57.69 GB** bf16 (transformer 40.86 + TE 16.58 + VAE 0.25) and cannot
+> load flat in 48 GB; **2.1 = 33.11 GB** (transformer 14.23 + TE 17.53 + VAE 1.35), where the
+> text encoder is *larger than the transformer*. This is why text-encoder eviction, not
+> quantisation, is the mechanism that decides what fits — see the Draw Things note in
+> "Revised sequencing" and §11.
 
 Three corrections:
 
@@ -258,7 +300,10 @@ gateway.
    — ~30 images each, eyeball consistency. Also yields the real per-image time on this box:
    the only published M4 Pro/48 GB figure (~13 s/step, ~5 min/image at 1024²) is low-authority
    and is the weakest load-bearing number here. Note that on Apple Silicon **quantization buys
-   memory, not speed**, so pick the largest quant that fits.
+   memory, not speed** — now confirmed with a mechanism (fp8 matmul is emulated at 0.94× fp16,
+   arXiv:2606.12765) and end-to-end, where bf16 is the *fastest* precision measured. So take
+   **bf16 where it fits, else Q8_0**, and never Q6-or-below on Qwen (§4). Run the four-way
+   bake-off in §11, not just Pony V6 — the comparison it settles has never been published.
 2. **Build the transport** (§8). Independent of the pilot's outcome.
 3. **Ship eeva illustration + gwen `scene`.** Visible feature, no identity machinery.
 4. **Identity track for gwen `face`/`full`**, gated on step 1.
@@ -268,6 +313,84 @@ Do not re-platform to Draw Things before step 1 produces an image. Its headless
 ComfyUI, official Qwen-Image-2512 support) — but ComfyUI is already installed and verified
 working here, and switching runtimes before generating anything is a cost with no measurement
 behind it.
+
+> ⚠️ **REVERSED later on 2026-09-30.** The "~20% faster" framing was the wrong reason to
+> consider Draw Things and led to the wrong call. The real reason is **sequential stage
+> eviction**: Draw Things encodes the prompt, *evicts the text encoder from memory*, then
+> loads the DiT. That is the only thing that makes a 20B model at **bf16** fit this machine
+> (~30 GiB peak — Draw Things' own preset targets "48 GiB+ total, M3+", i.e. exactly this
+> box). ComfyUI's memory manager reads free RAM with **no notion that GPU and OS share the
+> pool**, and mflux never quantises the text encoder at all, which is why Qwen-2.1 at bf16
+> peaks ~46 GB there and does not fit. This is not a speed preference — it decides whether
+> the high-quality configuration is reachable.
+>
+> ⚠️ But verify before committing: **Draw Things #130 is a reproducible Metal MFA failure on
+> M4 Pro / macOS 26.6.2** — this exact chip and OS family — and **#136 (Q8 fp16 overflow on
+> Qwen-2512, NaN latent, no image) was filed 2026-09-30**, the same day. Run it before
+> building on it.
+
+### 11. Model landscape re-scanned 2026-09-30 (three-agent pass)
+
+The scan was asked for on a "quality and size over small and fast" brief. **It returned the
+opposite of what that brief assumed, from three independent directions:**
+
+1. **Within Qwen, the smaller model is the better one.** Independent arena Elo puts
+   Qwen-Image-2.1 (7B) ~100 above Qwen-Image-2512 (20B), and #1 among all open weights.
+2. **The specialisation gap still holds** — confirmed by an agent that was not told it was
+   the standing position, and by a hands-on anime test published 2026-09-23, three days
+   after 2.1's release, concluding it "might not be good at anime-style illustrations."
+3. **The industry agrees.** *Anima* (2B, 2026-05-15) is a modern DiT trained only on anime,
+   which exists precisely because scaling general models on general data does not deliver
+   this aesthetic.
+
+**Per-category arena data** (parsed directly from server-rendered rows; the category boards
+were purpose-built in Feb 2026 from 4M+ real prompts, so this is a designed instrument):
+
+| Model | Cartoon | Photoreal | Δ | Read |
+|---|---|---|---|---|
+| Qwen-Image-2.1 | 1227 | 1235 | −8 | no stylised penalty; **#1 open on "Art"** |
+| FLUX.2-dev | 1143 | 1143 | 0 | neutral; **underperforms on Portraits** |
+| Qwen-Image-2512 | 1126 | 1135 | −9 | neutral overall; **6th in Portraits** vs #13 overall |
+| Z-Image-Turbo | 1068 | 1118 | **−50** | ⚠️ photoreal specialist — **do not pick** |
+
+Z-Image is the trap: best Apple-Silicon support of any Chinese model, worst stylised penalty
+on the board.
+
+⚠️ **The decisive comparison has never been made by anyone.** No anime specialist appears on
+any arena — zero entries for Illustrious, NoobAI, Pony, Animagine, NovelAI — and Civitai
+publishes downloads, not preference scores. The frontier arenas and the anime community are
+two disjoint measurement universes. **Nobody has run Illustrious against Qwen-Image-2.1 in
+one blind instrument**, so this must be settled locally, per `eval-first`.
+
+Other corrections from the scan:
+
+- **Qwen-Image-3.0 (2026-07-21) is closed** — API-only, no weights, no published benchmarks.
+  The newest *open* Qwen is 2.1. The line went open → closed.
+- **Seedream, not Seedance.** Seedream is ByteDance's image line (now 5.0 Pro); Seedance is
+  their video line. **Both have been closed at every version** — no weights ever released.
+  Reference point only.
+- **FLUX.2-dev is out**: 112.81 GB at bf16; at Q4 it pins ~37.7 GB because its 24B Mistral
+  text encoder never evicts (Draw Things #113 is an *open feature request* for that); its
+  Exact/f16 path has produced woven-texture garbage since 2026-03-16 with no maintainer
+  response (#57); and it underperforms on Portraits regardless.
+- **Memory figures, measured from HF blob sizes:** Qwen-Image-2512 (20B) is **57.69 GB** at
+  bf16, *not* the 33.12 GB quoted in §5 — that figure is **Qwen-Image-2.1 (7B)**, where the
+  text encoder (17.53 GB) is larger than the transformer (14.23 GB).
+- **The open↔closed gap is ~160–200 Elo** and is not closing. Not actionable, but it sets
+  expectations against the closed models the personas will be compared to.
+
+**Candidates for the bake-off in step 1** — all four, since the comparison does not exist:
+
+| Candidate | Config | Peak | Time/image |
+|---|---|---|---|
+| Qwen-Image-2512 (20B) | bf16, Draw Things | ~30 GiB | 3.5–8 min *(wide error bar)* |
+| Qwen-Image-2.1 (7B) | q8, mflux | ~30.7 GB | ~8 min *(scaled, not measured)* |
+| Illustrious / NoobAI SDXL | fp16 | ~7 GB | **20–40 s (measured on this GPU)** |
+| Anima (2B, anime-native) | 8-bit S, Draw Things | small | fast |
+
+**Prediction, recorded so it can be wrong:** a Qwen model wins eeva's illustration and gwen's
+painted/`scene` work; an SDXL specialist or Anima wins gwen's character portraits. The
+original two-base split survives — the bases change.
 
 ## Decided direction (local, on-Mac, occasional/exclusive-mode)
 
