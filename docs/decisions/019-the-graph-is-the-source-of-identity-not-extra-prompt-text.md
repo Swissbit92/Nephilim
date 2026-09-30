@@ -24,7 +24,7 @@ without reversing it.
 
 ## Context
 
-[ADR-012](012-the-graph-is-the-system-of-record-for-persona-identity-superseding-the-projection-model.md)
+[ADR-012](../../../docs/decisions/012-the-graph-is-the-system-of-record-for-persona-identity-superseding-the-projection-model.md)
 makes the graph the system of record and demotes the persona card to an origin and a
 reset target. ADR-018 then built the store — 128 typed nodes for gwen, a content/annotation
 split so a rebuild preserves her learning, a `:Baseline` recording her shipped dials.
