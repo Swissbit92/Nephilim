@@ -93,6 +93,12 @@ def build_application(config: TelegramConfig, db_path: Path | None = None) -> Ap
     application.add_handler(CommandHandler("sys", handlers.sys_command))
     application.add_handler(CommandHandler("note", handlers.note_command))
     application.add_handler(CommandHandler("impersonate", handlers.impersonate_command))
+    if config.media_enabled:
+        # Dev probe. Deliberately absent from _MENU_COMMANDS and MSG_HELP:
+        # flag-gated registration is a cleaner mechanism than an undocumented
+        # always-on command. With the flag off it is a silent no-op, since
+        # both message handlers filter out commands.
+        application.add_handler(CommandHandler("testimage", handlers.testimage_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.text_message))
     # Any non-text, non-command content (media, voice, stickers, docs).
     application.add_handler(MessageHandler((filters.ALL & ~filters.TEXT) & ~filters.COMMAND, handlers.non_text_message))

@@ -77,6 +77,15 @@ async def send_document(
     SUBCLASSES ``NetworkError`` in PTB, so the non-retryable exceptions must be
     caught first or a malformed request gets hammered three times.
     """
+    # PTB derives the mimetype from the FILENAME's extension
+    # (InputFile.__init__ -> mimetypes.guess_type). Measured on 22.8:
+    # "Portrait" arrives as application/octet-stream with no thumbnail at all,
+    # "Portrait.png" arrives as image/png. An extensionless name from the
+    # coordinator would silently turn a picture into an opaque blob.
+    if not Path(filename).suffix:
+        filename = f"{filename}{path.suffix or '.png'}"
+        logger.warning("[Media] filename had no extension; using %s", filename)
+
     if caption is not None and len(caption) > MessageLimit.CAPTION_LENGTH:
         # Truncate loudly. Silent truncation is a recurring failure shape here.
         logger.warning(
