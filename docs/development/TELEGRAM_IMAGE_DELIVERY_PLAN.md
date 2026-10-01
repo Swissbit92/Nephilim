@@ -5,14 +5,7 @@ created: 2026-10-01
 last_reviewed_on: 2026-10-01
 review_in: 3 months
 applies_to: nephilim
-ai_summary: >
-  Implementation plan for delivering locally-generated images to the user through
-  the Telegram gateway, and for what `/reset` does to them. Open before writing any
-  image-delivery, job-queue, media-storage or `/reset` code — several non-obvious
-  constraints are already settled here with evidence (sendPhoto destroys the PNG;
-  a bot cannot delete its own messages after 48h; PTB retries nothing; a live path
-  traversal vector in /sessions/import). Model selection and the generation backend
-  are NOT in scope — see research/persona_image_generation_2026-08-19.md.
+ai_summary: Implementation plan for delivering locally-generated images to the user through the Telegram gateway, and for what /reset does to them. Open before writing any image-delivery, job-queue, media-storage or /reset code — several non-obvious constraints are already settled here with evidence (sendPhoto destroys the PNG by re-encoding to JPEG; a bot cannot delete its own messages after 48h and cannot delete the file from Telegram at all; python-telegram-bot retries nothing and its read_timeout stays 5s even for media; a live path-traversal vector in POST /sessions/import). Model selection and the generation backend are NOT in scope — see research/persona_image_generation_2026-08-19.md.
 ---
 
 # Telegram image delivery — implementation plan
