@@ -22,6 +22,9 @@ def cfg() -> TelegramConfig:
         request_timeout_seconds=5.0,
         typing_interval_seconds=0.01,
         message_char_limit=4000,
+        media_enabled=False,
+        media_root=None,
+        media_max_bytes=20_000_000,
         log_content=False,
     )
 

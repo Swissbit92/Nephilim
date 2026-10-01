@@ -62,6 +62,10 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
 asyncio_mode = "auto"
+# Pinned explicitly: unset emits a pytest-asyncio deprecation warning, and when
+# the default changes a module-scoped async fixture would bind to a different
+# loop than the function-scoped test using it.
+asyncio_default_fixture_loop_scope = "function"
 
 [build-system]
 requires = ["setuptools>=65", "wheel"]

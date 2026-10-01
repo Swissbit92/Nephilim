@@ -59,7 +59,18 @@ async def _post_init(application: Application) -> None:
 def build_application(config: TelegramConfig, db_path: Path | None = None) -> Application:
     """Build a fully-wired PTB Application ready for run_polling()."""
     application = (
-        ApplicationBuilder().token(config.bot_token).post_init(_post_init).post_shutdown(_post_shutdown).build()
+        ApplicationBuilder()
+        .token(config.bot_token)
+        # PTB's read_timeout stays at 5s even for media — it swaps only the
+        # WRITE timeout for uploads. After the bytes are up Telegram still
+        # builds its thumbnail ladder before answering, so the default is the
+        # most likely cause of a phantom "the image never arrived".
+        .connect_timeout(20)
+        .read_timeout(60)
+        .media_write_timeout(180)
+        .post_init(_post_init)
+        .post_shutdown(_post_shutdown)
+        .build()
     )
 
     gateway = Gateway(

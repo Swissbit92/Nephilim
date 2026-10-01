@@ -42,6 +42,15 @@ class TelegramConfig:
     typing_interval_seconds: float
     message_char_limit: int
 
+    # Media (image transport, phase 1). Disabled by default.
+    #: The gateway enforces its OWN allowlist root rather than trusting the
+    #: path the coordinator names. "A server names a path and the client opens
+    #: it" is an arbitrary-file-read primitive the moment the server is
+    #: confused; this is the belt to the coordinator's braces.
+    media_enabled: bool
+    media_root: Path | None
+    media_max_bytes: int
+
     # Ops
     log_content: bool
 
@@ -119,6 +128,15 @@ def load_config(env_path: Path | None = None) -> TelegramConfig:
         env_path = _PROJECT_ROOT / ".env"
     load_dotenv(dotenv_path=env_path, override=False)
 
+    # Fail at config load, not at the first send: a media-enabled gateway with
+    # no root would reject every image with a message that looks like the
+    # coordinator's fault.
+    _media_enabled = os.getenv("TG_MEDIA_ENABLED", "false").lower() == "true"
+    _raw_root = os.getenv("TG_MEDIA_ROOT", "").strip()
+    if _media_enabled and not _raw_root:
+        raise RuntimeError("TG_MEDIA_ENABLED=true requires TG_MEDIA_ROOT to be set.")
+    _media_root = Path(_raw_root).resolve() if _raw_root else None
+
     return TelegramConfig(
         bot_token=_require("TG_BOT_TOKEN"),
         allowed_chat_ids=_parse_chat_ids(_require("TG_ALLOWED_CHAT_IDS")),
@@ -128,5 +146,8 @@ def load_config(env_path: Path | None = None) -> TelegramConfig:
         request_timeout_seconds=float(os.getenv("NEPHILIM_TIMEOUT_SECONDS", "180")),
         typing_interval_seconds=float(os.getenv("TG_TYPING_INTERVAL_SECONDS", "4.5")),
         message_char_limit=int(os.getenv("TG_MESSAGE_CHAR_LIMIT", "4000")),
+        media_enabled=_media_enabled,
+        media_root=_media_root,
+        media_max_bytes=int(os.getenv("TG_MEDIA_MAX_BYTES", "20000000")),
         log_content=os.getenv("TG_LOG_CONTENT", "false").lower() == "true",
     )
