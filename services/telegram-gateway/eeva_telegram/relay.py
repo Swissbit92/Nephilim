@@ -184,14 +184,24 @@ async def reset_session(
     store: SessionStore,
     chat_id: int,
     persona_key: str,
-) -> None:
+) -> int:
     """Handle /reset: true history deletion on the existing session.
 
     Clears all messages + emotional state via the backend, preserving the
     session (and thus relationship progression). If the session is gone
     server-side, recreate a clean one.
+
+    Returns how many images the coordinator quarantined, so the handler can
+    tell the user a number instead of an unqualified "wiped".
     """
-    await _with_session_recreate(client, store, chat_id, persona_key, lambda sid: client.clear_messages(sid))
+    body = await _with_session_recreate(
+        client, store, chat_id, persona_key, lambda sid: client.clear_messages(sid)
+    )
+    # Defensive: an older coordinator has no "images" key, and the reset is
+    # still a success — report 0 rather than failing on a missing field.
+    cleared = body.get("cleared") if isinstance(body, dict) else None
+    count = cleared.get("images") if isinstance(cleared, dict) else None
+    return count if isinstance(count, int) else 0
 
 
 # ── ADR-011 conversation-control verbs (thin relay over the session API) ─────

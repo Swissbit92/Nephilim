@@ -104,9 +104,14 @@ class NephilimClient:
         """Send one chat turn. Returns the raw nephilim response dict."""
         return await self._request("POST", f"/sessions/{session_id}/chat", json={"message": message})
 
-    async def clear_messages(self, session_id: str) -> None:
-        """Delete all messages + emotional state for the session (true reset)."""
-        await self._request("DELETE", f"/sessions/{session_id}/messages")
+    async def clear_messages(self, session_id: str) -> dict[str, Any]:
+        """Delete all messages + emotional state for the session (true reset).
+
+        Returns the body so the caller can read ``cleared.images`` — the count
+        the coordinator actually quarantined. Previously the body was discarded,
+        which is why nothing could report what a reset had done.
+        """
+        return await self._request("DELETE", f"/sessions/{session_id}/messages")
 
     async def request_fixture_image(self, session_id: str) -> dict[str, Any]:
         """POST /sessions/{id}/media/fixture — dev probe, 404s unless enabled."""

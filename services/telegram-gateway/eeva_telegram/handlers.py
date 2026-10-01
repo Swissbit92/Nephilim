@@ -17,7 +17,7 @@ from telegram import Message, Update
 from telegram.ext import ContextTypes
 
 from . import media as media_guard
-from . import messaging, relay
+from . import media_cleanup, messaging, relay
 from .config import TelegramConfig
 from .nephilim_client import (
     NephilimBadRequestError,
@@ -41,7 +41,11 @@ MSG_TEXT_ONLY = "I can only handle text messages right now."
 MSG_START_ACK = (
     "We're already mid-conversation. Say anything to continue, or /reset to wipe our history and start fresh."
 )
-MSG_RESET_DONE = "Done — our conversation history is wiped. We're starting fresh."
+# "wiped" was unconditional and, once images exist, often false — the user
+# finds out by scrolling up, and a bot that overstates one privacy action
+# loses credibility on every later one. "cleared" is the specific verb for
+# the specific thing, and the image detail follows as counts.
+MSG_RESET_DONE = "Done — our conversation history is cleared. We're starting fresh."
 MSG_TOOLKIT_EMPTY = "I don't have any tools available right now — just conversation."
 
 # ── ADR-011 conversation-control command strings (fixed; never interpolate errors) ──
@@ -206,7 +210,9 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     limit = gateway.config.message_char_limit
     try:
         async with gateway.llm_lock:
-            await relay.reset_session(gateway.client, gateway.store, chat_id, persona)
+            quarantined = await relay.reset_session(
+                gateway.client, gateway.store, chat_id, persona
+            )
     except NephilimUnavailableError:
         await messaging.send_text(bot, chat_id, MSG_UNAVAILABLE, limit)
         return
@@ -218,7 +224,19 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         logger.exception("Unexpected error in /reset for chat_id=%s", chat_id)
         await messaging.send_text(bot, chat_id, MSG_ERROR, limit)
         return
-    await messaging.send_text(bot, chat_id, MSG_RESET_DONE, limit)
+    # The chat half is best-effort and must never fail the reset: the history
+    # is already gone server-side by this point, so raising here would report
+    # failure for an action that largely succeeded.
+    try:
+        records = gateway.store.media_for_chat(chat_id)
+        outcome = await media_cleanup.remove_sent_media(bot, chat_id, records)
+        gateway.store.forget_media(chat_id)
+    except Exception:
+        logger.exception("[Media] chat cleanup failed for chat_id=%s", chat_id)
+        outcome = media_cleanup.CleanupResult()
+
+    detail = media_cleanup.describe(outcome, quarantined)
+    await messaging.send_text(bot, chat_id, f"{MSG_RESET_DONE}\n\n{detail}", limit)
 
 
 # ── ADR-011 conversation-control commands ───────────────────────────────────
@@ -484,7 +502,7 @@ async def _deliver_media(bot, chat_id: int, gateway, items) -> None:
             failures += 1
             continue
         try:
-            await messaging.send_document(
+            message_id = await messaging.send_document(
                 bot,
                 chat_id,
                 path,
@@ -492,6 +510,13 @@ async def _deliver_media(bot, chat_id: int, gateway, items) -> None:
                 caption=item.caption,
                 protect_content=item.protect_content,
             )
+            if message_id is not None:
+                # Remembered so /reset can try to remove it from the chat.
+                # Best-effort: failing to record must not fail a delivered image.
+                try:
+                    gateway.store.record_media(chat_id, message_id)
+                except Exception:  # noqa: BLE001
+                    logger.warning("[Media] could not record message_id %s", message_id)
         except messaging.MediaSendFailedError as exc:
             # Already retried and already logged with the cause by retry.py.
             logger.warning("[Media] giving up on an item for chat_id=%s: %s", chat_id, exc)

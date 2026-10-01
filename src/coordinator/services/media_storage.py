@@ -43,6 +43,7 @@ are cheap insurance on top.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import logging
 import os
@@ -215,16 +216,41 @@ def quarantine_session(media_dir: str) -> int:
     destination = _contained(root / "orphans" / f"{stamp}-{media_dir}", root)
     destination.parent.mkdir(parents=True, exist_ok=True)
 
-    # A second reset inside the same second would collide; make it unique rather
-    # than clobbering the first quarantine.
-    suffix = 0
-    while destination.exists():
-        suffix += 1
-        destination = _contained(
-            root / "orphans" / f"{stamp}-{media_dir}-{suffix}", root
-        )
-
-    os.rename(source, destination)
+    # A second reset inside the same second would collide. Checking exists()
+    # first is a TOCTOU race; instead give the name entropy and let os.rename
+    # tell us. os.rename is also deliberate over shutil.move: within one media
+    # root it is an atomic relink, whereas shutil.move given an EXISTING
+    # destination directory moves the source INSIDE it (quarantine/<d>/<d>/),
+    # which a sweeper would then mis-walk — and on a cross-volume path it
+    # silently degrades to a recursive copy. os.renames is worse still: it
+    # prunes the source's parents afterwards, which would eventually delete
+    # <root>/sessions itself.
+    # ENOTEMPTY, not just EEXIST: os.rename onto an existing NON-EMPTY
+    # directory raises a plain OSError(66) on macOS, which Python does not map
+    # to FileExistsError. Catching only FileExistsError would crash the reset on
+    # the second quarantine of the same second — caught by
+    # test_quarantine_twice_does_not_clobber_the_first.
+    _COLLISION = {errno.EEXIST, errno.ENOTEMPTY}
+    for _ in range(8):
+        try:
+            os.rename(source, destination)
+            break
+        except OSError as exc:
+            if exc.errno in _COLLISION:
+                destination = _contained(
+                    root / "orphans" / f"{stamp}-{media_dir}-{uuid.uuid4().hex[:6]}",
+                    root,
+                )
+                continue
+            if exc.errno == errno.EXDEV:
+                # Quarantine must live on the same volume as the media root;
+                # falling back to a copy here would be non-atomic and silent.
+                raise MediaStorageError(
+                    "quarantine is on a different filesystem from the media root"
+                ) from exc
+            raise
+    else:  # pragma: no cover - 8 collisions on a uuid4 suffix
+        raise MediaStorageError("could not find a free quarantine name")
     logger.info(
         "[Media] quarantined %d file(s) for %s to %s", count, media_dir, destination.name
     )

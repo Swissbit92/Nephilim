@@ -84,7 +84,7 @@ async def send_document(
     filename: str,
     caption: str | None = None,
     protect_content: bool = True,
-) -> None:
+) -> int | None:
     """Upload a local file as a Telegram DOCUMENT, losslessly.
 
     Document rather than photo, deliberately: ``sendPhoto`` re-encodes
@@ -127,15 +127,24 @@ async def send_document(
         )
         caption = caption[: MessageLimit.CAPTION_LENGTH]
 
-    ok = await send_with_retry(
-        lambda: bot.send_document(
+    sent: list[object] = []
+
+    async def _send():
+        message = await bot.send_document(
             chat_id=chat_id,
             document=path,
             filename=filename,
             caption=caption,
             protect_content=protect_content,
-        ),
-        what="sendDocument",
-    )
-    if not ok:
+        )
+        sent.append(message)
+        return message
+
+    if not await send_with_retry(_send, what="sendDocument"):
         raise MediaSendFailedError(f"could not deliver {filename}")
+
+    # The message_id is what /reset needs later. A fake bot in a test may return
+    # None, and a missing id must not break a successful send — it only costs
+    # the ability to delete that one message later.
+    message_id = getattr(sent[-1], "message_id", None) if sent else None
+    return int(message_id) if isinstance(message_id, int) else None
