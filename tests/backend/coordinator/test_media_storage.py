@@ -295,3 +295,55 @@ def test_store_png_stages_outside_img(media_on):
     img = media_storage.session_dir(DIR_A, "img")
     assert [p.suffix for p in img.iterdir()] == [".png"]
     assert media_storage.session_dir(DIR_A, "tmp").is_dir()
+
+
+# ---------- Tests — quarantine (phase 3) ----------
+
+
+def test_quarantine_moves_the_tree_out_of_the_live_root(media_on):
+    media_storage.store_png(DIR_A, build_probe_png(16))
+    media_storage.store_png(DIR_A, build_probe_png(16))
+    live = media_storage.session_dir(DIR_A)
+    assert live.exists()
+
+    count = media_storage.quarantine_session(DIR_A)
+
+    assert count == 2
+    assert not live.exists()
+    quarantined = list((media_on.resolve() / "orphans").iterdir())
+    assert len(quarantined) == 1
+    assert DIR_A in quarantined[0].name
+    # Quarantine, not deletion: the bytes are still there for 30 days.
+    assert len(list(quarantined[0].rglob("*.png"))) == 2
+
+
+def test_quarantine_is_zero_when_there_was_nothing(media_on):
+    """The common case, and not an error."""
+    assert media_storage.quarantine_session(DIR_A) == 0
+
+
+def test_quarantine_twice_does_not_clobber_the_first(media_on):
+    """Two resets in the same second must not have the second overwrite the
+    first's quarantine — that would destroy exactly what quarantine exists to
+    preserve."""
+    media_storage.store_png(DIR_A, build_probe_png(16))
+    media_storage.quarantine_session(DIR_A)
+    media_storage.store_png(DIR_A, build_probe_png(16))
+    media_storage.quarantine_session(DIR_A)
+
+    entries = list((media_on.resolve() / "orphans").iterdir())
+    assert len(entries) == 2
+    assert sum(len(list(e.rglob("*.png"))) for e in entries) == 2
+
+
+def test_quarantine_rejects_a_bad_media_dir(media_on):
+    with pytest.raises(MediaStorageError):
+        media_storage.quarantine_session("../../etc")
+
+
+def test_a_new_image_after_quarantine_starts_clean(media_on):
+    media_storage.store_png(DIR_A, build_probe_png(16))
+    media_storage.quarantine_session(DIR_A)
+    fresh = media_storage.store_png(DIR_A, build_probe_png(16))
+    assert fresh.path.exists()
+    assert len(list(media_storage.session_dir(DIR_A, "img").iterdir())) == 1

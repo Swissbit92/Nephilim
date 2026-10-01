@@ -51,6 +51,7 @@ import struct
 import tempfile
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ..config import get_settings
@@ -185,6 +186,49 @@ def png_dimensions(data: bytes) -> tuple[int, int] | None:
     if width == 0 or height == 0:
         return None
     return width, height
+
+
+def quarantine_session(media_dir: str) -> int:
+    """Move a session's media out of the live tree. Returns the file count.
+
+    Quarantine rather than ``rmtree``, so a bug or a regret costs a sweep
+    instead of the files. The destination is ``<root>/orphans/<ts>-<media_dir>``
+    and a later sweep (not yet written) removes entries older than 30 days.
+
+    Uses ``os.rename``, not ``shutil.move``: within one media root the rename is
+    atomic and cannot half-move a tree, whereas ``shutil.move`` silently
+    degrades to a recursive copy-then-delete when it believes the paths differ
+    in filesystem — the same class of silent downgrade this module avoids in
+    ``atomic_write``.
+
+    Returns 0 when the session never had a directory, which is the common case
+    and is not an error.
+    """
+    source = session_dir(media_dir)
+    if not source.exists():
+        return 0
+
+    count = sum(1 for p in source.rglob("*") if p.is_file())
+
+    root = media_root()
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    destination = _contained(root / "orphans" / f"{stamp}-{media_dir}", root)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    # A second reset inside the same second would collide; make it unique rather
+    # than clobbering the first quarantine.
+    suffix = 0
+    while destination.exists():
+        suffix += 1
+        destination = _contained(
+            root / "orphans" / f"{stamp}-{media_dir}-{suffix}", root
+        )
+
+    os.rename(source, destination)
+    logger.info(
+        "[Media] quarantined %d file(s) for %s to %s", count, media_dir, destination.name
+    )
+    return count
 
 
 def store_png(media_dir: str, data: bytes) -> StoredMedia:

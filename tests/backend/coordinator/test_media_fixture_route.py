@@ -232,3 +232,55 @@ def test_fk_cascade_removes_the_mapping_with_its_session(tmp_path):
     conn.close()
 
     assert repo.get_media_dir("live-session") is None
+
+
+# ---------- Tests — /reset quarantines the session's media (phase 3) ----------
+
+
+def test_reset_quarantines_the_images_and_reports_the_count(wired, monkeypatch):
+    """End to end through the route: the files leave the live tree, the count
+    is reported, and the mapping is forgotten."""
+    from src.coordinator.services import media_storage
+
+    body = client.post(f"/sessions/{SESSION}/media/fixture").json()
+    stored = Path(ResponseMetadata(**body["metadata"]).media[0].path)
+    assert stored.exists()
+
+    for name in ("get_summary_repo", "get_session_note_repo"):
+        monkeypatch.setattr(f"src.coordinator.startup.{name}", lambda: MagicMock())
+    monkeypatch.setattr("src.coordinator.startup.get_episodic_memory_rag", lambda: MagicMock())
+
+    resp = client.delete(f"/sessions/{SESSION}/messages")
+
+    assert resp.status_code == 200
+    assert resp.json()["cleared"]["images"] == 1
+    assert not stored.exists()
+    # Quarantined, not destroyed — reversible for 30 days.
+    orphans = list((media_storage.media_root() / "orphans").rglob("*.png"))
+    assert len(orphans) == 1
+
+
+def test_reset_reports_zero_when_the_session_had_no_images(wired, monkeypatch):
+    for name in ("get_summary_repo", "get_session_note_repo"):
+        monkeypatch.setattr(f"src.coordinator.startup.{name}", lambda: MagicMock())
+    monkeypatch.setattr("src.coordinator.startup.get_episodic_memory_rag", lambda: MagicMock())
+
+    resp = client.delete("/sessions/sess-never-had-media/messages")
+    assert resp.json()["cleared"]["images"] == 0
+
+
+def test_reset_still_succeeds_if_media_quarantine_fails(wired, monkeypatch):
+    """A reset that fails because of an image is worse than one that leaves an
+    image behind. The failure shows up as a count of 0, not as a 500."""
+    for name in ("get_summary_repo", "get_session_note_repo"):
+        monkeypatch.setattr(f"src.coordinator.startup.{name}", lambda: MagicMock())
+    monkeypatch.setattr("src.coordinator.startup.get_episodic_memory_rag", lambda: MagicMock())
+
+    def _boom():
+        raise RuntimeError("media repo is down")
+
+    monkeypatch.setattr("src.coordinator.startup.get_media_repo", _boom)
+
+    resp = client.delete(f"/sessions/{SESSION}/messages")
+    assert resp.status_code == 200
+    assert resp.json()["cleared"]["images"] == 0
