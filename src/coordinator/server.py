@@ -79,7 +79,7 @@ async def lifespan(app: FastAPI):
 
 # ----------------- FastAPI App -----------------
 
-app = FastAPI(title="Local Coordinator (Chat-only)", version="0.7.0", lifespan=lifespan)
+app = FastAPI(title="Local Coordinator (Chat-only)", version="0.8.0", lifespan=lifespan)
 
 # Add CORS middleware
 app.add_middleware(

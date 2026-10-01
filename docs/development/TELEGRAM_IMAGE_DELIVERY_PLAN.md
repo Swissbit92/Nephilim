@@ -312,6 +312,22 @@ via their stored `backend_job_id` (ComfyUI `/interrupt`), *then* move.
 
 ## Phases
 
+> **Phase 1 SHIPPED and verified live 2026-10-01** (M1-M5). Coordinator v0.8.0,
+> gateway v0.3.0. Backend 3115 -> 3183 tests, gateway 116 -> 165. Flags armed on the
+> live system; `/testimage` delivers a 256x256 gradient that arrives as a PNG preview
+> at **139,325 bytes**, matching the coordinator's recorded size exactly — a JPEG
+> re-encode of that gradient would have been 10-30 KB, so the bytes survived.
+>
+> **Rescoped during planning:** the job table, asyncio supervisor, startup sweep and
+> reconciliation sweeper were CUT from phase 1 and deferred. With a fixture there is
+> nothing slow to supervise, and — decisively — every test here uses `TestClient(app)`
+> WITHOUT the context manager, so `lifespan` never runs under pytest and a
+> lifespan-started supervisor would have shipped with zero coverage. Half its columns
+> are also ComfyUI-shaped and no backend is chosen. Prerequisites before building it:
+> decide `to_thread` vs a worker thread (there is no asyncio anywhere in the
+> coordinator today), add a lifespan test harness, set `busy_timeout`, pick a backend,
+> and measure ComfyUI's restart rate against the coordinator's.
+
 1. **Transport, text-path only.** Media fields on `ResponseMetadata` (following the
    `proposal` / `proposal_type` precedent at `schemas.py:206-232`), the job table, the
    supervisor, the sweeper, the storage layout. No generation — a fixture PNG proves the
