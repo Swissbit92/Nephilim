@@ -59,7 +59,18 @@ async def _post_init(application: Application) -> None:
 def build_application(config: TelegramConfig, db_path: Path | None = None) -> Application:
     """Build a fully-wired PTB Application ready for run_polling()."""
     application = (
-        ApplicationBuilder().token(config.bot_token).post_init(_post_init).post_shutdown(_post_shutdown).build()
+        ApplicationBuilder()
+        .token(config.bot_token)
+        # PTB's read_timeout stays at 5s even for media — it swaps only the
+        # WRITE timeout for uploads. After the bytes are up Telegram still
+        # builds its thumbnail ladder before answering, so the default is the
+        # most likely cause of a phantom "the image never arrived".
+        .connect_timeout(20)
+        .read_timeout(60)
+        .media_write_timeout(180)
+        .post_init(_post_init)
+        .post_shutdown(_post_shutdown)
+        .build()
     )
 
     gateway = Gateway(
@@ -82,6 +93,12 @@ def build_application(config: TelegramConfig, db_path: Path | None = None) -> Ap
     application.add_handler(CommandHandler("sys", handlers.sys_command))
     application.add_handler(CommandHandler("note", handlers.note_command))
     application.add_handler(CommandHandler("impersonate", handlers.impersonate_command))
+    if config.media_enabled:
+        # Dev probe. Deliberately absent from _MENU_COMMANDS and MSG_HELP:
+        # flag-gated registration is a cleaner mechanism than an undocumented
+        # always-on command. With the flag off it is a silent no-op, since
+        # both message handlers filter out commands.
+        application.add_handler(CommandHandler("testimage", handlers.testimage_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.text_message))
     # Any non-text, non-command content (media, voice, stickers, docs).
     application.add_handler(MessageHandler((filters.ALL & ~filters.TEXT) & ~filters.COMMAND, handlers.non_text_message))

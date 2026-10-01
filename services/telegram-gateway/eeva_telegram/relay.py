@@ -7,11 +7,38 @@ The PTB handler layer (handlers.py) is a thin adapter over these functions.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 from .nephilim_client import NephilimClient, NephilimSessionNotFoundError
 from .session_store import SessionStore
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class MediaRef:
+    """One media item the coordinator offered, as the gateway sees it.
+
+    Deliberately NOT the coordinator's MediaItem: the gateway keeps only what
+    it needs to deliver, so a new coordinator field cannot silently become a
+    gateway behaviour.
+    """
+
+    path: str
+    filename: str
+    caption: str | None = None
+    protect_content: bool = True
+
+
+@dataclass(frozen=True)
+class RelayReply:
+    """A persona turn: text to send, plus anything to attach."""
+
+    messages: list[str] = field(default_factory=list)
+    media: list[MediaRef] = field(default_factory=list)
 
 
 def extract_messages(response: dict[str, Any]) -> list[str]:
@@ -36,6 +63,48 @@ def extract_messages(response: dict[str, Any]) -> list[str]:
         text = str(piece).strip()
         if text:
             out.append(text)
+    return out
+
+
+def extract_media(response: dict[str, Any]) -> list[MediaRef]:
+    """Pull deliverable media out of a chat-shaped response.
+
+    Defensive at every level and never raises: ``metadata`` may be absent or not
+    a dict, ``media`` may be absent or not a list, and an item may be missing
+    the one field that matters. A malformed item is skipped with a log line
+    rather than losing the whole turn — the text reply is the important part and
+    an image must never be able to swallow it.
+    """
+    metadata = response.get("metadata")
+    if not isinstance(metadata, dict):
+        return []
+    raw_items = metadata.get("media")
+    if not isinstance(raw_items, list):
+        return []
+
+    out: list[MediaRef] = []
+    for index, item in enumerate(raw_items):
+        if not isinstance(item, dict):
+            logger.warning("[Media] skipping media[%d]: not an object", index)
+            continue
+        path = item.get("path")
+        if not isinstance(path, str) or not path.strip():
+            logger.warning("[Media] skipping media[%d]: no usable path", index)
+            continue
+        filename = item.get("filename")
+        if not isinstance(filename, str) or not filename.strip():
+            filename = "image.png"
+        caption = item.get("caption")
+        out.append(
+            MediaRef(
+                path=path,
+                filename=filename,
+                caption=caption if isinstance(caption, str) and caption else None,
+                # Default ON: if the coordinator omits the flag, the privacy-
+                # preserving choice is the one that must happen by accident.
+                protect_content=item.get("protect_content") is not False,
+            )
+        )
     return out
 
 
@@ -85,10 +154,10 @@ async def handle_user_message(
     chat_id: int,
     persona_key: str,
     text: str,
-) -> list[str]:
-    """Relay one user message; return the ordered persona reply messages."""
+) -> RelayReply:
+    """Relay one user message; return the persona's reply text and any media."""
     response = await _with_session_recreate(client, store, chat_id, persona_key, lambda sid: client.chat(sid, text))
-    return extract_messages(response)
+    return RelayReply(messages=extract_messages(response), media=extract_media(response))
 
 
 async def start_session(
@@ -176,3 +245,21 @@ async def get_note(client, store, chat_id, persona_key) -> str | None:
 async def clear_note(client, store, chat_id, persona_key) -> None:
     """/note clear — remove the author's note."""
     await _with_session_recreate(client, store, chat_id, persona_key, lambda sid: client.clear_note(sid))
+
+
+async def request_fixture_media(
+    client: NephilimClient,
+    store: SessionStore,
+    chat_id: int,
+    persona_key: str,
+) -> RelayReply:
+    """Ask the coordinator for a probe image (dev only).
+
+    Goes through the SAME extractors as a real turn. If this parsed the fixture
+    response with bespoke code, the transport proof would be a proof about
+    different code than production runs.
+    """
+    response = await _with_session_recreate(
+        client, store, chat_id, persona_key, lambda sid: client.request_fixture_image(sid)
+    )
+    return RelayReply(messages=extract_messages(response), media=extract_media(response))

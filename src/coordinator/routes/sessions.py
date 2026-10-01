@@ -9,6 +9,7 @@ import uuid
 from fastapi import APIRouter, HTTPException
 
 from .. import startup  # module ref for call-time getter resolution; cycle-free.
+from ..config import get_settings
 from ..persona_memory import get_persona_card
 from ..repositories.base_repository import utc_now_iso
 from ..schemas import (
@@ -16,10 +17,15 @@ from ..schemas import (
     CreateSessionBody,
     GreetBody,
     ImportBody,
+    MediaItem,
     NoteBody,
+    ResponseMetadata,
     SourceType,
     UpdateSessionBody,
 )
+from ..services import media_storage
+from ..services.media_fixture import build_probe_png
+from ..services.media_storage import MediaStorageError
 
 router = APIRouter(tags=["sessions"])
 logger = logging.getLogger(__name__)
@@ -250,6 +256,60 @@ def clear_session_note(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found.")
     cleared = startup.get_session_note_repo().clear_note(session_id)
     return {"ok": True, "cleared": cleared}
+
+
+@router.post("/sessions/{session_id}/media/fixture")
+def create_fixture_media(session_id: str):
+    """Store a generated probe PNG and return it in a CHAT-SHAPED response.
+
+    Development surface, gated by ``MEDIA_FIXTURE_ENABLED`` (404 when off, not
+    403 — a dev endpoint should not advertise itself). It exists to prove the
+    media transport end to end before any generation backend exists.
+
+    The response body is deliberately the same shape ``/chat`` returns, right
+    down to ``answer``/``message_flow``/``metadata``. That identity is the whole
+    point: the gateway must parse this with the SAME extractor it will use on
+    the real chat path, or the transport proof is a proof about a different
+    code path.
+
+    Note this does NOT persist a message. It is a transport probe, not a turn.
+    """
+    settings = get_settings().media
+    if not settings.fixture_enabled:
+        raise HTTPException(status_code=404, detail="Not found.")
+
+    session_repo, _, _ = _get_repos()
+    if not session_repo.session_exists(session_id):
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    media_dir = startup.get_media_repo().get_or_create_media_dir(session_id)
+    try:
+        stored = media_storage.store_png(media_dir, build_probe_png())
+    except MediaStorageError as exc:
+        # Surface the refusal rather than returning an empty media list — an
+        # ambiguous success is the failure mode this whole feature guards.
+        logger.warning("[Media] fixture store refused for %s: %s", session_id[:8], exc)
+        raise HTTPException(status_code=409, detail=f"Media rejected: {exc}") from exc
+
+    item = MediaItem(
+        media_id=stored.media_id,
+        path=str(stored.path),
+        filename=f"nephilim_{stored.media_id[:12]}.png",
+        bytes=stored.bytes,
+        sha256=stored.sha256,
+        width=stored.width,
+        height=stored.height,
+        caption="Here, I made this for you.",
+    )
+    metadata = ResponseMetadata(source_type=SourceType.LLM, media=[item])
+    return {
+        "answer": "Here, I made this for you.",
+        "message_flow": "single",
+        "message_count": 1,
+        "used_search": False,
+        "metadata": metadata.model_dump(),
+        "rewritten": False,
+    }
 
 
 @router.get("/sessions/{session_id}/export")
