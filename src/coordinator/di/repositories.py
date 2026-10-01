@@ -14,6 +14,7 @@ import os
 
 from ..persona_memory import _load_all_cards_cached
 from ..repositories.emotional_state_repository import EmotionalStateRepository
+from ..repositories.media_repository import MediaRepository
 from ..repositories.message_repository import MessageRepository
 from ..repositories.seeker_progression_repository import SeekerProgressionRepository
 from ..repositories.session_note_repository import SessionNoteRepository
@@ -35,6 +36,7 @@ os.makedirs(os.path.dirname(_DB_PATH), exist_ok=True) if os.path.dirname(_DB_PAT
 _session_repo: SessionRepository | None = None
 _message_repo: MessageRepository | None = None
 _session_note_repo: SessionNoteRepository | None = None
+_media_repo: MediaRepository | None = None
 _summary_repo: SummaryRepository | None = None
 _emotional_state_repo: EmotionalStateRepository | None = None
 _user_profile_repo: UserProfileRepository | None = None
@@ -55,6 +57,13 @@ def get_session_repo() -> SessionRepository:
     if _session_repo is None:
         raise RuntimeError("SessionRepository not initialized — server startup incomplete")
     return _session_repo
+
+
+def get_media_repo() -> MediaRepository:
+    """Return the per-session media-directory repo (image transport, phase 1)."""
+    if _media_repo is None:
+        raise RuntimeError("MediaRepository not initialized — server startup incomplete")
+    return _media_repo
 
 
 def get_session_note_repo() -> SessionNoteRepository:
@@ -133,11 +142,12 @@ def init_repositories():
     global _session_repo, _message_repo, _summary_repo, _emotional_state_repo
     global _user_profile_repo, _seeker_progression_repo, _user_repo
     global _wallet_registry_repo, _wallet_summary_repo, _trade_history_repo
-    global _wallet_flow_repo, _session_note_repo
+    global _wallet_flow_repo, _session_note_repo, _media_repo
 
     _session_repo = SessionRepository(_DB_PATH)
     _message_repo = MessageRepository(_DB_PATH)
     _session_note_repo = SessionNoteRepository(_DB_PATH)
+    _media_repo = MediaRepository(_DB_PATH)
     _summary_repo = SummaryRepository(_DB_PATH)
     _emotional_state_repo = EmotionalStateRepository(_DB_PATH)
     _user_profile_repo = UserProfileRepository(_DB_PATH)
