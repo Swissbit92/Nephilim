@@ -203,6 +203,47 @@ class ImportChatBody(BaseModel):
 
 # ----------------- Response Metadata -----------------
 
+class MediaKind(StrEnum):
+    """What a :class:`MediaItem` is, for clients routing it to a renderer.
+    Its own vocabulary — do not conflate it with :class:`ProposalCategory`."""
+
+    IMAGE = "image"
+
+
+class MediaItem(BaseModel):
+    """One generated artifact, already on disk, offered to a client to deliver.
+
+    Transport-agnostic by design: the Telegram gateway is the first consumer and
+    the React UI is the second, so this shape must not encode either one's
+    mechanics.
+
+    ``path`` is an ABSOLUTE LOCAL path, which is only meaningful because every
+    consumer today runs on the same host under launchd. That is a deliberate
+    phase-1 narrowing, not an oversight — the alternative, bytes on the
+    response, would put multi-megabyte base64 through SQLite and the context
+    estimator, which is the documented failure in comparable self-hosted
+    systems. When the React UI arrives it will need a URL: ADD a ``url`` field
+    then rather than repurposing this one, because the gateway reads the file
+    directly and always will.
+
+    A consumer must still validate ``path`` against its OWN allowlist root
+    rather than trusting it. "The server names a path and the client opens it"
+    is an arbitrary-file-read primitive the moment the server is confused.
+    """
+
+    media_id: str
+    kind: str = MediaKind.IMAGE
+    mime: str = "image/png"
+    path: str
+    filename: str  #: user-visible name; the gateway sends it as the upload name
+    bytes: int
+    sha256: str  #: lets a consumer prove losslessness end to end
+    width: Optional[int] = None
+    height: Optional[int] = None
+    caption: Optional[str] = None  #: plain text only — never rendered with parse_mode
+    protect_content: bool = True  #: Telegram: blocks forwarding and saving
+
+
 class ResponseMetadata(BaseModel):
     """Metadata about the response source."""
     source_type: str = SourceType.LLM  # see SourceType (values: llm, brave_mcp, wallet_*, agentic*, …)
@@ -230,6 +271,12 @@ class ResponseMetadata(BaseModel):
     #: detectors miss ~30% of breaches, so an EMPTY list is weak evidence of compliance --
     #: a populated one is strong evidence of a breach (0 false positives in 30 labelled).
     wall_observations: List[dict] = []
+    #: MEDIA: generated artifacts for the client to deliver. Follows the
+    #: proposal/proposal_type precedent above — a declared field, not a key
+    #: injected into the dumped dict after the fact, so it flows out of
+    #: _finalize_response for every handler automatically and is typed for both
+    #: consumers. Empty on every path until a generation backend is wired.
+    media: List[MediaItem] = []
 
 
 # ----------------- NEPHILIM Progression Schemas -----------------
