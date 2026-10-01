@@ -492,8 +492,12 @@ async def _deliver_media(bot, chat_id: int, gateway, items) -> None:
                 caption=item.caption,
                 protect_content=item.protect_content,
             )
+        except messaging.MediaSendFailedError as exc:
+            # Already retried and already logged with the cause by retry.py.
+            logger.warning("[Media] giving up on an item for chat_id=%s: %s", chat_id, exc)
+            failures += 1
         except Exception:
-            logger.exception("[Media] send failed for chat_id=%s", chat_id)
+            logger.exception("[Media] unexpected send failure for chat_id=%s", chat_id)
             failures += 1
 
     if failures:

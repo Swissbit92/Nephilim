@@ -21,19 +21,51 @@ from pathlib import Path
 from telegram import Bot, LinkPreviewOptions
 from telegram.constants import MessageLimit
 
+from .retry import send_with_retry
 from .splitter import split_for_telegram
 
 logger = logging.getLogger(__name__)
+
+
+class MediaSendFailedError(Exception):
+    """Every attempt to upload a document was refused or failed.
+
+    send_text SKIPS a chunk it cannot deliver, because a partial reply beats
+    none. A document has no partial form, and the caller must know so it can
+    count the failure and report once — hence an exception here and a return
+    value there.
+    """
 
 _NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
 
 async def send_text(bot: Bot, chat_id: int, text: str, limit: int = 4000) -> int:
-    """Send one logical message, split into <=limit chunks. Returns chunk count."""
+    """Send one logical message, split into <=limit chunks. Returns chunks SENT.
+
+    Every chunk is retried (see retry.send_with_retry) — until 2026-10 each was
+    issued exactly once, so a single dropped connection silently lost a reply.
+
+    A chunk that cannot be delivered is logged and SKIPPED rather than aborting
+    the rest: losing one paragraph of a reply is better than losing the reply.
+    The return value is the number actually accepted, so a caller that cares can
+    compare it against the split length.
+    """
     chunks = split_for_telegram(text, limit)
-    for chunk in chunks:
-        await bot.send_message(chat_id=chat_id, text=chunk, link_preview_options=_NO_PREVIEW)
-    return len(chunks)
+    sent = 0
+    for index, chunk in enumerate(chunks):
+        ok = await send_with_retry(
+            lambda c=chunk: bot.send_message(
+                chat_id=chat_id, text=c, link_preview_options=_NO_PREVIEW
+            ),
+            what=f"sendMessage[{index + 1}/{len(chunks)}]",
+        )
+        if ok:
+            sent += 1
+        else:
+            logger.warning(
+                "[Send] dropped chunk %d/%d for chat_id=%s", index + 1, len(chunks), chat_id
+            )
+    return sent
 
 
 async def send_messages(bot: Bot, chat_id: int, messages: list[str], limit: int = 4000) -> int:
@@ -95,10 +127,15 @@ async def send_document(
         )
         caption = caption[: MessageLimit.CAPTION_LENGTH]
 
-    await bot.send_document(
-        chat_id=chat_id,
-        document=path,
-        filename=filename,
-        caption=caption,
-        protect_content=protect_content,
+    ok = await send_with_retry(
+        lambda: bot.send_document(
+            chat_id=chat_id,
+            document=path,
+            filename=filename,
+            caption=caption,
+            protect_content=protect_content,
+        ),
+        what="sendDocument",
     )
+    if not ok:
+        raise MediaSendFailedError(f"could not deliver {filename}")
