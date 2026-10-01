@@ -43,6 +43,7 @@ are cheap insurance on top.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import logging
 import os
@@ -51,6 +52,7 @@ import struct
 import tempfile
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ..config import get_settings
@@ -185,6 +187,74 @@ def png_dimensions(data: bytes) -> tuple[int, int] | None:
     if width == 0 or height == 0:
         return None
     return width, height
+
+
+def quarantine_session(media_dir: str) -> int:
+    """Move a session's media out of the live tree. Returns the file count.
+
+    Quarantine rather than ``rmtree``, so a bug or a regret costs a sweep
+    instead of the files. The destination is ``<root>/orphans/<ts>-<media_dir>``
+    and a later sweep (not yet written) removes entries older than 30 days.
+
+    Uses ``os.rename``, not ``shutil.move``: within one media root the rename is
+    atomic and cannot half-move a tree, whereas ``shutil.move`` silently
+    degrades to a recursive copy-then-delete when it believes the paths differ
+    in filesystem — the same class of silent downgrade this module avoids in
+    ``atomic_write``.
+
+    Returns 0 when the session never had a directory, which is the common case
+    and is not an error.
+    """
+    source = session_dir(media_dir)
+    if not source.exists():
+        return 0
+
+    count = sum(1 for p in source.rglob("*") if p.is_file())
+
+    root = media_root()
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    destination = _contained(root / "orphans" / f"{stamp}-{media_dir}", root)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    # A second reset inside the same second would collide. Checking exists()
+    # first is a TOCTOU race; instead give the name entropy and let os.rename
+    # tell us. os.rename is also deliberate over shutil.move: within one media
+    # root it is an atomic relink, whereas shutil.move given an EXISTING
+    # destination directory moves the source INSIDE it (quarantine/<d>/<d>/),
+    # which a sweeper would then mis-walk — and on a cross-volume path it
+    # silently degrades to a recursive copy. os.renames is worse still: it
+    # prunes the source's parents afterwards, which would eventually delete
+    # <root>/sessions itself.
+    # ENOTEMPTY, not just EEXIST: os.rename onto an existing NON-EMPTY
+    # directory raises a plain OSError(66) on macOS, which Python does not map
+    # to FileExistsError. Catching only FileExistsError would crash the reset on
+    # the second quarantine of the same second — caught by
+    # test_quarantine_twice_does_not_clobber_the_first.
+    _COLLISION = {errno.EEXIST, errno.ENOTEMPTY}
+    for _ in range(8):
+        try:
+            os.rename(source, destination)
+            break
+        except OSError as exc:
+            if exc.errno in _COLLISION:
+                destination = _contained(
+                    root / "orphans" / f"{stamp}-{media_dir}-{uuid.uuid4().hex[:6]}",
+                    root,
+                )
+                continue
+            if exc.errno == errno.EXDEV:
+                # Quarantine must live on the same volume as the media root;
+                # falling back to a copy here would be non-atomic and silent.
+                raise MediaStorageError(
+                    "quarantine is on a different filesystem from the media root"
+                ) from exc
+            raise
+    else:  # pragma: no cover - 8 collisions on a uuid4 suffix
+        raise MediaStorageError("could not find a free quarantine name")
+    logger.info(
+        "[Media] quarantined %d file(s) for %s to %s", count, media_dir, destination.name
+    )
+    return count
 
 
 def store_png(media_dir: str, data: bytes) -> StoredMedia:

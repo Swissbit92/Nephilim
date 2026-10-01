@@ -26,6 +26,17 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     updated_at  TEXT    NOT NULL,
     PRIMARY KEY (chat_id, persona_key)
 );
+
+-- Documents we sent, so /reset can try to remove them from the chat.
+-- sent_at is what decides deletability: Telegram only lets a bot delete a
+-- message under 48h old, and the check is against the message date.
+CREATE TABLE IF NOT EXISTS sent_media (
+    chat_id    INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    sent_at    TEXT    NOT NULL,
+    PRIMARY KEY (chat_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_sent_media_chat ON sent_media (chat_id);
 """
 
 
@@ -84,6 +95,43 @@ class SessionStore:
                 (chat_id, persona_key),
             )
             self._conn.commit()
+
+    # ---------- sent media (phase 3) ----------
+
+    def record_media(self, chat_id: int, message_id: int) -> None:
+        """Remember a document we sent, so /reset can try to remove it."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO sent_media (chat_id, message_id, sent_at) "
+                "VALUES (?, ?, ?)",
+                (chat_id, message_id, _now()),
+            )
+            self._conn.commit()
+
+    def media_for_chat(self, chat_id: int) -> list[tuple[int, str]]:
+        """Return [(message_id, sent_at_iso)] for a chat, oldest first."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT message_id, sent_at FROM sent_media WHERE chat_id = ? "
+                "ORDER BY sent_at",
+                (chat_id,),
+            ).fetchall()
+        return [(int(r[0]), str(r[1])) for r in rows]
+
+    def forget_media(self, chat_id: int) -> int:
+        """Drop our record of a chat's media. Returns rows removed.
+
+        Called after a reset regardless of whether Telegram accepted the
+        deletes: a message we could not remove is one we will never be able to
+        remove (the 48h window only closes further), so keeping the row would
+        make every later reset retry a guaranteed failure.
+        """
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM sent_media WHERE chat_id = ?", (chat_id,)
+            )
+            self._conn.commit()
+            return cur.rowcount
 
     def close(self) -> None:
         with self._lock:

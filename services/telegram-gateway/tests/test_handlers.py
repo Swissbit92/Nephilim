@@ -187,7 +187,11 @@ async def test_reset_clears_and_confirms(gateway):
     ctx = make_context(gateway, bot)
     await handlers.reset_command(make_update(111), ctx)
     assert gateway.client.cleared == ["sess-existing"]
-    assert bot.texts == [handlers.MSG_RESET_DONE]
+    # The confirmation now carries an image line too — a reset that says
+    # nothing about images cannot be distinguished from one that missed them.
+    assert len(bot.texts) == 1
+    assert bot.texts[0].startswith(handlers.MSG_RESET_DONE)
+    assert "No images to remove." in bot.texts[0]
 
 
 async def test_reset_non_allowlisted_silent(gateway):
