@@ -8,9 +8,10 @@ applies_to: nephilim
 ai_summary: >
   Decision/park record for on-demand persona image generation, local and on-Mac.
   Open before ANY image-generation, diffusion-model, ComfyUI, LoRA or persona-media
-  proposal: a runtime, two base-model families, a consistency mechanism and an
-  integration shape are already chosen, and several plausible alternatives are
-  already ruled out for recorded reasons. Read the 2026-09-30 amendments FIRST —
+  proposal. ⚠️ ITS CENTRAL FINDING WAS OVERTURNED 2026-10-02 by measurement — see
+  image_model_bakeoff_2026-10-02.md, which selected Qwen-Image-2.1 for ALL personas
+  and retired the two-base split. Read that first; this note is now the history of
+  how the decision was reasoned before it was tested. Read the 2026-09-30 amendments too —
   they narrow the identity problem to one mode of one persona, supersede the memory
   costing with measurements, reject MCP as the integration shape, and record an
   undocumented spike on disk at ~/image-gen. Section 11 re-scans the model landscape
@@ -129,7 +130,12 @@ LoRA unnecessary for this use — a different route to the same outcome, and a c
 ### 4. Model selection — refined, and the version matters
 
 The durable finding "model size ≠ anime/cartoon quality" is **unchanged** and still governs
-gwen's cartoon face. It does **not** govern general illustration, where prompt adherence and
+gwen's cartoon face.
+
+> ⚠️ **FALSE as of 2026-10-02.** That finding was measured and OVERTURNED — Qwen-Image-2.1 won
+> gwen's cartoon prompt outright, and with no character drift. Everything in §4 that reasons
+> from it is superseded by
+> [image_model_bakeoff_2026-10-02.md](image_model_bakeoff_2026-10-02.md). It does **not** govern general illustration, where prompt adherence and
 scene coherence are exactly what a large model buys.
 
 - **eeva illustration + gwen `scene`** → **Qwen-Image-2512**, Apache-2.0, GGUF ladder
@@ -399,9 +405,13 @@ not an always-on service. It therefore runs in **exclusive mode**: the resident 
 LLM may be briefly unloaded during a generation session, freeing the full 48 GB. This removes the
 memory pressure that would otherwise force small models and cheap sampling.
 
-- **Style scope (decided 2026-08-19 — keep distinct, two bases):** each persona keeps her own
-  established look rather than unifying to one house style. gwen → cartoon/NSFW (Pony); eeva and
-  all other personas → anime (Illustrious/NoobAI). Per-persona LoRAs make two bases cheap to run.
+- ~~**Style scope (two bases)**~~ **SUPERSEDED 2026-10-02 — ONE base, no per-persona routing.**
+  The two-base split existed because no single model served both art styles. Qwen-Image-2.1 serves
+  both, and Pony is disqualified outright (blank frame on general illustration). Selected:
+  **Qwen-Image-2.1**, q8, ~5.5 min/image at 1024² on this machine, ~20 GB peak so the companion LLM
+  unloads for a run. ⚠️ Licence is the Qwen RESEARCH LICENSE — non-commercial; fine for private
+  self-hosted use, a wall if nephilim ever ships. Qwen-Image-2512 is the Apache-2.0 fallback and is
+  UNTESTED here.
 - **Serving runtime:** **ComfyUI**, run headless as a launchd-style local HTTP/WebSocket server,
   driven by the FastAPI coordinator (templated workflow-JSON per persona; submit → poll/`/ws` →
   fetch PNG; async job, never a synchronous route — a single quality-pipeline image is tens of
@@ -452,10 +462,21 @@ trainer for FLUX/Qwen matures. The operator declined the cloud step for now (202
   gacha style; gwen is a Western-cartoon / painted (NSFW) style from a different source. **No
   single base model natively serves both** — this is the core reason the SFW and NSFW paths use
   different model families, and it is invisible to any web research that assumes "6 anime personas".
-- **Model size ≠ anime/cartoon quality.** SDXL (~2.6B) anime/cartoon specialists beat much larger
-  general models (FLUX 12–32B, Qwen 20B) at *this* aesthetic, because the big models spent their
-  capacity on photoreal coherence and prompt-following. Quality here comes from **specialization +
-  a refinement pipeline**, not base-model parameter count.
+- ~~**Model size ≠ anime/cartoon quality.**~~ **OVERTURNED 2026-10-02 by measurement** — see
+  [image_model_bakeoff_2026-10-02.md](image_model_bakeoff_2026-10-02.md). The original claim was:
+  SDXL (~2.6B) anime/cartoon specialists beat much larger general models at *this* aesthetic,
+  because the big models spent their capacity on photoreal coherence. It was reasoned from web
+  research, never tested here.
+
+  Tested: 12 images, 3 candidates, 4 prompts, one seed, rubric fixed before viewing.
+  **Qwen-Image-2.1 won 3 of 4 outright and tied the fourth.** Pony V6 returned a BLANK FRAME for
+  the illustration prompt (std 5.84 vs 24-98 elsewhere). The specialists invented horns, a wink,
+  grey skin and pointed elf ears; Qwen rendered the character as described, with no drift.
+
+  ⚠️ **This inverts the identity argument below.** "Identity = the LoRA" is true *of the
+  specialists*, and it is true **because they drift**. A model that renders the description is one
+  a versioned appearance block can steer — which makes reference conditioning plausible where it
+  was not. Still untested: identity ACROSS generations.
 - **On-Mac LoRA training is SDXL-only in practice.** Draw Things trains SDXL LoRAs on-device
   reliably; FLUX/Qwen LoRA training on Apple Silicon (MPS) is documented as unreliable
   (ai-toolkit self-labels Mac support experimental; FLUX convergence failures on MPS). Big-model
