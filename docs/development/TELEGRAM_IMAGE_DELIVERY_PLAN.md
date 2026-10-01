@@ -351,18 +351,35 @@ it rare.
 
 ## Verify before building
 
-1. **How an image document actually renders** on the iOS and macOS clients. Two minutes,
-   and it decides whether the document route survives. Observational, not an API contract.
+1. ~~**How an image document actually renders**~~ — **ANSWERED 2026-10-01, live on a phone.**
+   It renders as a **PNG preview**, not a file-attachment row. Telegram generated the
+   thumbnail server-side, exactly as `sendDocument`'s own docs allow ("can be ignored if
+   thumbnail generation for the file is supported server-side").
+
+   Three consequences, all of which REMOVE work: `sendDocument` gives lossless bytes AND
+   an inline preview, so the trade this plan feared does not exist; **no thumbnail code is
+   needed, ever** (Pillow stays uninstalled and the `sips` path, with its silent exit-0
+   when the input is missing, is never written); and the photo+document fallback pair is
+   not needed, so no second message against the ~1/sec per-chat budget.
+
+   The premortem below is therefore **retired, not deferred**.
 2. **ComfyUI's restart rate versus the coordinator's**, over a week. The whole design rests
    on re-attach; if ComfyUI restarts far more often, `orphaned` becomes the common terminal
    state rather than the rare one.
 
-## Premortem
+## Premortem — RETIRED 2026-10-01
 
-**This could fail if** the document bubble reads as a file attachment rather than a picture
-in the companion chat, making every generated image feel like a download instead of
-something she sent — in which case fidelity loses to presentation and we fall back to
-photo + document as a pair, paying a second message against the 1/second budget.
+> **This could fail if** the document bubble reads as a file attachment rather than a
+> picture in the companion chat, making every generated image feel like a download
+> instead of something she sent — in which case fidelity loses to presentation and we
+> fall back to photo + document as a pair, paying a second message against the 1/second
+> budget.
+
+**It did not fail.** Verified on a real phone: the document renders as a PNG preview.
+Recorded rather than deleted, because the premortem was the right thing to have written
+and its cheapness to check — two minutes, one message — is the reusable lesson. Every
+alternative design this plan carried for it (custom thumbnails, `sips`, Pillow, the
+photo+document pair) was contingency that never had to be built.
 
 ## Sources
 
