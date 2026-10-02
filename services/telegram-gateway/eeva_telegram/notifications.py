@@ -170,10 +170,20 @@ async def poll_loop(application) -> None:
 def start(application) -> None:
     """Create the poll task. Idempotent.
 
-    ``Application.create_task`` rather than ``asyncio.create_task``: PTB holds
-    a strong reference (the stdlib warns a task with no live reference can be
-    garbage-collected mid-execution) and routes uncaught exceptions to the
-    registered error handler.
+    ``Application.create_task`` rather than ``asyncio.create_task``, for the
+    error-handler routing: an uncaught exception reaches the registered
+    handler instead of dying as one line in the asyncio log.
+
+    ⚠️ **PTB is NOT the thing holding the strong reference here.** It warns on
+    this call — "Tasks created via `Application.create_task` while the
+    application is not running won't be automatically awaited" — because
+    ``post_init`` runs before the app is running. Observed live on PTB 22.8.
+    The reference that protects the task from garbage collection mid-flight is
+    ``bot_data[_TASK_KEY]`` below, which is ours; and the await it will not do
+    automatically is done explicitly by ``stop()`` from ``post_shutdown``. An
+    earlier version of this docstring credited PTB with both, which is wrong
+    in this call position — if the ``bot_data`` line is ever removed as
+    redundant, the task becomes collectable and the poller stops silently.
     """
     if application.bot_data.get(_TASK_KEY) is not None:
         return
