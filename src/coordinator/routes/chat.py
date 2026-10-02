@@ -37,6 +37,7 @@ from ..services.message_processing_service import (
     strip_role_prefix_leaks,
 )
 from ..services.chat_session_service import handle_session_chat
+from ..services.resource_arbiter import ResourceBusyError
 
 router = APIRouter(tags=["chat"])
 logger = logging.getLogger(__name__)
@@ -642,6 +643,46 @@ def _try_tool_brain(
 def chat(body: ChatBody):
     """Chat with a persona, with autonomous tool support (web search, Solana wallet) for MCP-capable personas."""
 
+    # A generation holds the machine and the companion model is unloaded for
+    # it, so every completion path raises ResourceBusyError for ~5.5 minutes.
+    # Caught HERE, at the single entry point, rather than at each of the six
+    # guard sites: the refusal is one condition with one correct answer, and
+    # spreading it would guarantee a path that renders it differently.
+    #
+    # MEASURED 2026-10-02: without this the user saw "Something went wrong on
+    # my end. Try again in a moment." twice in a row while an image they had
+    # just asked for was generating normally. The system was working exactly
+    # as designed and said it had broken — which, for a companion, is worse
+    # than the wait it was reporting.
+    try:
+        return _chat_inner(body)
+    except ResourceBusyError as exc:
+        logger.info("[Chat] refused while the machine is leased: %s", exc)
+        return _busy_drawing_response(body)
+
+
+def _busy_drawing_response(body: ChatBody) -> dict:
+    """What she says while a picture is rendering.
+
+    Plain, in-character, and honest about the cause. No parse_mode, no error
+    code, and deliberately no mention of a model being unloaded — that is an
+    implementation detail the person on the other end did not ask about.
+    """
+    metadata = ResponseMetadata(source_type=SourceType.LLM, tools_used=[])
+    return {
+        "answer": (
+            "I'm still drawing — it takes me a few minutes and I can't talk "
+            "while I do it. I'll send it over as soon as it's done."
+        ),
+        "message_flow": "single",
+        "message_count": 1,
+        "used_search": False,
+        "metadata": metadata.model_dump(),
+        "rewritten": False,
+    }
+
+
+def _chat_inner(body: ChatBody):
     deps = _get_dependencies()
 
     card = get_persona_card(body.persona)

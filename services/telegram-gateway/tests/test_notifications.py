@@ -250,7 +250,7 @@ async def test_backoff_resets_after_a_success(app, monkeypatch):
     gateway = app.bot_data["gateway"]
     calls = {"n": 0}
 
-    async def flaky(limit=10):
+    async def flaky(limit=10, personas=None):
         calls["n"] += 1
         if calls["n"] in (1, 2):
             raise NephilimUnavailableError("down")
@@ -439,3 +439,34 @@ def test_the_frozen_contract_is_parseable(media_cfg, tmp_path):
     assert relay.extract_media(failed) == []
     assert failed["answer"], "a failure must still say something to the user"
     assert "memory" not in failed["answer"], "operator detail leaked into the chat"
+
+
+# ---------- the cross-bot delivery bug ----------
+
+
+async def test_the_poller_only_claims_its_own_personas(app):
+    """THE live bug, 2026-10-02: an image requested in the eeva chat was
+    delivered into the gwen chat.
+
+    Two bots serve the same human, so `chat.id` is identical for both, both
+    pollers hit the same claim endpoint, and whichever won sent the file with
+    ITS OWN token. The filter has to travel with the claim — a check after
+    claiming would mean handing the job back, and two pollers nacking each
+    other ping-pong at the poll interval.
+    """
+    gateway = app.bot_data["gateway"]
+    await notifications.poll_once(app)
+
+    kwargs = gateway.client.claim_notifications.await_args.kwargs
+    assert "personas" in kwargs, "the claim no longer scopes to this instance"
+    assert kwargs["personas"] == gateway.config.served_personas()
+
+
+def test_served_personas_covers_the_default_and_every_mapping(cfg):
+    """A single instance can serve several personas via TG_CHAT_PERSONAS;
+    missing one would make its images unclaimable by anyone."""
+    import dataclasses
+
+    c = dataclasses.replace(cfg, default_persona_key="nephilim_eeva",
+                            chat_personas={111: "nephilim_nyx", 222: "gwen"})
+    assert c.served_personas() == {"nephilim_eeva", "nephilim_nyx", "gwen"}

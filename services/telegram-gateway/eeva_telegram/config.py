@@ -59,6 +59,16 @@ class TelegramConfig:
         """Resolve the persona key for a chat: per-chat override, else default."""
         return self.chat_personas.get(chat_id, self.default_persona_key)
 
+    def served_personas(self) -> set[str]:
+        """Every persona THIS instance speaks as.
+
+        A second instance runs a different bot token for a different persona,
+        and both see the same `chat.id` for the same human — so without this
+        the two pollers cannot tell their notifications apart and the image
+        arrives from the wrong bot. Observed live 2026-10-02.
+        """
+        return {self.default_persona_key} | set(self.chat_personas.values())
+
     def is_allowed(self, chat_id: int) -> bool:
         """True iff this chat_id is on the allowlist."""
         return chat_id in self.allowed_chat_ids

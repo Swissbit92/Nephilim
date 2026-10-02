@@ -126,20 +126,38 @@ def _render(job) -> dict:
 
 
 @router.post("/notifications/claim")
-def claim_notifications(limit: int = 10):
+def claim_notifications(limit: int = 10, personas: str | None = None):
     """Take responsibility for delivering up to ``limit`` finished jobs.
 
     Marks each returned job notified BEFORE returning it. A job this call
     hands over will not be handed to anyone else unless the caller `/nack`s
     it, so a gateway that crashes mid-delivery loses that one notification
     rather than sending the image twice.
+
+    ``personas`` is a comma-separated allowlist: only jobs for those personas
+    are handed over. MEASURED NECESSARY on 2026-10-02 — an image requested in
+    the eeva chat was delivered into the gwen chat. Two Telegram bots serve
+    the same person, so `chat.id` is identical for both (it is the USER's id),
+    both pollers claim from this one endpoint, and whichever won sent the file
+    with ITS OWN bot token. Filtering here rather than in the gateway is
+    deliberate: a gateway-side check would have to hand the job back, and two
+    pollers nacking each other's jobs is a ping-pong at the poll interval.
+    Omitted means no filter, which keeps a single-bot deployment unchanged.
     """
     if limit < 1 or limit > 50:
         raise HTTPException(status_code=400, detail="limit must be between 1 and 50")
 
+    wanted = None
+    if personas is not None:
+        wanted = {p.strip() for p in personas.split(",") if p.strip()}
+        if not wanted:
+            raise HTTPException(status_code=400, detail="personas must not be empty")
+
     repo = _repo()
     claimed = []
     for job in repo.pending_notification(limit=limit):
+        if wanted is not None and job.persona_key not in wanted:
+            continue
         if not repo.claim_for_notify(job.id):
             # Someone else took it between the read and the claim. Not an
             # error — this is the conditional UPDATE doing its job.

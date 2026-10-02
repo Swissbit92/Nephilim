@@ -308,3 +308,45 @@ def test_the_session_contextvar_does_not_leak_between_turns():
     assert current_session_id.get() == "sess-a"
     current_session_id.reset(token)
     assert current_session_id.get() == ""
+
+
+# ---------- a refusal during a generation must not read as a crash ----------
+
+
+def test_a_busy_machine_produces_an_in_voice_reply_not_an_error():
+    """MEASURED LIVE 2026-10-02: while an image the user had JUST asked for was
+    generating normally, two consecutive chat turns returned "Something went
+    wrong on my end. Try again in a moment."
+
+    The system was working exactly as designed and told the user it had
+    broken. For a companion that is worse than the wait it was reporting —
+    and it trains the user to distrust a correct refusal.
+    """
+    from src.coordinator.routes.chat import _busy_drawing_response
+    from src.coordinator.schemas import ChatBody
+
+    resp = _busy_drawing_response(ChatBody(persona="gwen", message="how are you"))
+
+    assert "drawing" in resp["answer"]
+    assert resp["message_flow"] == "single"
+    assert resp["used_search"] is False
+    # It must read as HER, not as a status page.
+    for forbidden in ("error", "Error", "503", "unavailable", "went wrong",
+                      "model", "unloaded", "arbiter", "lease"):
+        assert forbidden not in resp["answer"], f"{forbidden!r} leaked into the reply"
+
+
+def test_the_chat_entry_point_catches_the_refusal():
+    """Caught at the ONE entry point, not at each of the six guard sites: the
+    refusal is one condition with one correct answer, and spreading it would
+    guarantee a path that renders it differently."""
+    import inspect
+
+    from src.coordinator.routes import chat as chat_mod
+
+    src = inspect.getsource(chat_mod.chat)
+    assert "ResourceBusyError" in src, (
+        "the chat entry point no longer catches ResourceBusyError — a chat "
+        "turn during a generation will surface as a crash again"
+    )
+    assert "_busy_drawing_response" in src

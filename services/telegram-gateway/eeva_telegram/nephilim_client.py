@@ -117,7 +117,9 @@ class NephilimClient:
         """POST /sessions/{id}/media/fixture — dev probe, 404s unless enabled."""
         return await self._request("POST", f"/sessions/{session_id}/media/fixture", json={})
 
-    async def claim_notifications(self, limit: int = 10) -> dict[str, Any]:
+    async def claim_notifications(
+        self, limit: int = 10, personas: set[str] | None = None
+    ) -> dict[str, Any]:
         """POST /notifications/claim — take delivery of finished image jobs.
 
         MUTATING despite reading like a fetch: the coordinator marks each
@@ -125,9 +127,12 @@ class NephilimClient:
         is ours to deliver and nobody else's. Hand one back with
         ``nack_notification`` if the send fails, or it is lost.
         """
-        return await self._request(
-            "POST", f"/notifications/claim?limit={int(limit)}", json={}
-        )
+        query = f"/notifications/claim?limit={int(limit)}"
+        if personas:
+            # Only OUR personas. Without this a second bot instance claims and
+            # delivers this one's images, from the wrong chat.
+            query += "&personas=" + ",".join(sorted(personas))
+        return await self._request("POST", query, json={})
 
     async def nack_notification(self, job_id: str) -> dict[str, Any]:
         """POST /notifications/{id}/nack — return an undelivered notification."""

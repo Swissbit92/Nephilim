@@ -227,3 +227,58 @@ def test_the_payload_matches_the_frozen_contract(repo, client, tmp_path):
         "test_the_frozen_contract_is_parseable still passes."
     )
     assert job.id  # the fixture is about shape, not this id
+
+
+# ---------- the cross-bot delivery bug, measured live 2026-10-02 ----------
+
+
+def test_the_claim_can_be_filtered_to_one_persona(repo, client, tmp_path):
+    """THE live bug: an image requested in the eeva chat arrived in the gwen
+    chat.
+
+    Two Telegram bots serve the same person, so `chat.id` is IDENTICAL for
+    both (it is the user's id). Both pollers claim from this one endpoint, and
+    whichever won sent the file with ITS OWN bot token. Filtering here rather
+    than gateway-side is deliberate: a gateway check would have to hand the
+    job back, and two pollers nacking each other's jobs ping-pong at the poll
+    interval.
+    """
+    gwen = repo.create(session_id="s-gwen", persona_key="gwen", prompt="a fox")
+    repo.claim_next()
+    p = tmp_path / "g.png"; p.write_bytes(_PNG)
+    repo.finish(gwen.id, status=JobStatus.SUCCEEDED, media_path=str(p))
+
+    eeva = repo.create(session_id="s-eeva", persona_key="nephilim_eeva", prompt="a chart")
+    repo.claim_next()
+    q = tmp_path / "e.png"; q.write_bytes(_PNG)
+    repo.finish(eeva.id, status=JobStatus.SUCCEEDED, media_path=str(q))
+
+    got = client.post("/notifications/claim?personas=gwen").json()["notifications"]
+    assert [n["job_id"] for n in got] == [gwen.id], "a bot claimed another bot's image"
+
+    # ...and eeva's is STILL AVAILABLE, not consumed by the gwen poller.
+    rest = client.post(
+        "/notifications/claim?personas=nephilim_eeva"
+    ).json()["notifications"]
+    assert [n["job_id"] for n in rest] == [eeva.id]
+
+
+def test_an_unfiltered_claim_still_takes_everything(repo, client, tmp_path):
+    """Back-compat: a single-bot deployment passes no filter and is unchanged."""
+    _finished(repo, tmp_path)
+    assert len(client.post("/notifications/claim").json()["notifications"]) == 1
+
+
+def test_a_filter_matching_nothing_takes_nothing(repo, client, tmp_path):
+    job = _finished(repo, tmp_path)
+    assert client.post("/notifications/claim?personas=nobody").json()["notifications"] == []
+    # and the job is still claimable by its real owner
+    again = client.post("/notifications/claim?personas=gwen").json()["notifications"]
+    assert [n["job_id"] for n in again] == [job.id]
+
+
+def test_an_empty_persona_filter_is_rejected(repo, client):
+    """`?personas=` is almost certainly a bug in the caller, not a request to
+    claim everything — refuse rather than silently widening the filter."""
+    assert client.post("/notifications/claim?personas=").status_code == 400
+    assert client.post("/notifications/claim?personas=,,").status_code == 400

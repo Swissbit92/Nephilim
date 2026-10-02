@@ -57,7 +57,9 @@ async def poll_once(application) -> int:
     from . import handlers  # local: handlers imports this module's siblings
 
     gateway = application.bot_data["gateway"]
-    payload = await gateway.client.claim_notifications(limit=10)
+    payload = await gateway.client.claim_notifications(
+        limit=10, personas=gateway.config.served_personas()
+    )
     notifications = payload.get("notifications") or []
     if not notifications:
         return 0
