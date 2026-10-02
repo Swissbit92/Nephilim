@@ -182,3 +182,48 @@ _PNG = (
     b"\x08\x02\x00\x00\x00K\x6d\x29\x5c\x00\x00\x00\nIDATx\x9cc\x60\x00\x00"
     b"\x00\x02\x00\x01\xe2!\xbc\x33\x00\x00\x00\x00IEND\xaeB`\x82"
 )
+
+
+# ---------- the cross-repo contract ----------
+
+
+def test_the_payload_matches_the_frozen_contract(repo, client, tmp_path):
+    """PRODUCER half of a two-sided contract.
+
+    The gateway runs in its own venv and the backend venv has no `telegram`
+    installed, so neither suite can call the other's code. The ecosystem
+    already solved this once — CRA freezes its maker-grid model into JSON that
+    eeva-sol asserts against, for the same reason — so the agreed payload
+    lives in `tests/fixtures/notification_payload.json` and both sides assert
+    against it.
+
+    This half proves the coordinator still EMITS that shape. The gateway's
+    `test_the_frozen_contract_is_parseable` proves it can still READ it. A
+    change that breaks the gateway fails here first.
+    """
+    import json
+    from pathlib import Path
+
+    fixture = json.loads(
+        (Path(__file__).resolve().parents[2] / "fixtures"
+         / "notification_payload.json").read_text()
+    )
+
+    job = _finished(repo, tmp_path)
+    note = client.post("/notifications/claim").json()["notifications"][0]
+
+    # Normalise the parts that legitimately vary per run.
+    note["job_id"] = "JOB_ID"
+    if note["metadata"]["media"]:
+        m = note["metadata"]["media"][0]
+        m["path"], m["media_id"], m["sha256"] = "MEDIA_PATH", "MEDIA_ID", "SHA256"
+        m["filename"] = "nephilim_MEDIA_ID.png"
+
+    assert note == fixture["succeeded"], (
+        "the notification payload changed shape. The Telegram gateway parses "
+        "this with relay.extract_media and CANNOT be imported from here to "
+        "check. If the change is intended, update "
+        "tests/fixtures/notification_payload.json AND confirm the gateway's "
+        "test_the_frozen_contract_is_parseable still passes."
+    )
+    assert job.id  # the fixture is about shape, not this id

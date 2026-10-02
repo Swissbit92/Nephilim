@@ -391,3 +391,51 @@ async def test_testgen_without_a_prompt_explains_itself(media_cfg, store):
 
     gateway.client.enqueue_generation.assert_not_awaited()
     assert sent and "/testgen" in sent[0]
+
+
+# ---------- the cross-repo contract ----------
+
+
+def test_the_frozen_contract_is_parseable(media_cfg, tmp_path):
+    """CONSUMER half of a two-sided contract.
+
+    The coordinator runs in a different venv and this one has no FastAPI app
+    to call, so the agreed payload is frozen in
+    `tests/fixtures/notification_payload.json` and both sides assert against
+    it. The producer half is
+    `tests/backend/coordinator/test_notifications_route.py::test_the_payload_matches_the_frozen_contract`.
+
+    This half proves the gateway's REAL parser and REAL path guard still read
+    it — not a hand-written copy of what the payload is believed to look like,
+    which is how a contract test quietly stops testing the contract.
+    """
+    import json
+    from pathlib import Path
+
+    from eeva_telegram import media as media_guard
+    from eeva_telegram import relay
+
+    root = Path(__file__).resolve().parents[3]
+    fixture = json.loads(
+        (root / "tests" / "fixtures" / "notification_payload.json").read_text()
+    )
+
+    # --- a success carries exactly one deliverable image ---
+    note = fixture["succeeded"]
+    real = tmp_path / "out.png"
+    real.write_bytes(PNG)
+    note["metadata"]["media"][0]["path"] = str(real)
+
+    items = relay.extract_media(note)
+    assert len(items) == 1, "the real parser cannot read the coordinator's payload"
+    assert items[0].caption
+    assert items[0].protect_content is True
+
+    cfg = dataclasses.replace(media_cfg, media_root=tmp_path)
+    assert media_guard.resolve_media_path(cfg, items[0].path) == real.resolve()
+
+    # --- a failure carries NO media, and still carries words for the user ---
+    failed = fixture["failed"]
+    assert relay.extract_media(failed) == []
+    assert failed["answer"], "a failure must still say something to the user"
+    assert "memory" not in failed["answer"], "operator detail leaked into the chat"
