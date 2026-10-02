@@ -203,6 +203,11 @@ class ToolBrainService:
         from ..config import get_settings
         from ..tools.registry import registry, TOOLSET_MCP_ALIASES
         from ..tools.tool_utils import format_search_results_for_llm
+        from .resource_arbiter import guard_chat_model
+
+        # Once per TURN, not per client.chat: one turn is 1-4 /api/chat calls
+        # and a lease taken per call would let a generation start between them.
+        guard_chat_model("tool brain")
 
         st = get_settings()
         model = st.ollama.model

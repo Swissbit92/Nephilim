@@ -2,6 +2,11 @@
   "key": "nephilim_eeva",
   "rarity": "legendary",
   "celestial_order": "archon",
+  "toolsets": [
+    "web",
+    "wallet",
+    "image"
+  ],
   "mcp_access": [
     "brave_search",
     "solana_wallet"

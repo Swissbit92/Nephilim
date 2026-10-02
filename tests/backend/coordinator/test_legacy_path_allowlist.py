@@ -58,8 +58,16 @@ class TestRestrictedPersona:
     def test_the_registry_agrees_she_was_never_granted_it(self):
         """Guards against 'fixing' this by changing what she is granted rather
         than by honouring the grant."""
+        # WEB toolset only: the point is that she was never granted a general
+        # lookup tool, and `generate_image` (toolset "image", added later) is
+        # not one. The guard against "fixing it by widening the grant" is the
+        # GENERAL_LOOKUP_TOOLS assertion below, which still binds over her
+        # whole surface.
         granted = {s.name for s in registry.specs_for_persona(GWEN)}
-        assert granted == {"image_search", "video_search"}
+        granted_web = {
+            s.name for s in registry.specs_for_persona(GWEN) if s.toolset == "web"
+        }
+        assert granted_web == {"image_search", "video_search"}
         assert not (granted & GENERAL_LOOKUP_TOOLS)
 
     def test_her_media_tools_are_NOT_offered_instead(self):

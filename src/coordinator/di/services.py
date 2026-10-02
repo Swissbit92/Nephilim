@@ -39,6 +39,8 @@ _fact_extraction_worker = None  # Optional[FactExtractionWorker]
 
 # HERMES-Agents Phase 3: deterministic tool-call interceptor (stateless singleton)
 _tool_interceptor = None
+_resource_arbiter = None
+_generation_throttle = None
 
 # ADR-014: the Neo4j driver. Untyped `= None` rather than Optional["Driver"] so
 # importing this module never pulls in the neo4j package — the same reason
@@ -107,6 +109,34 @@ def get_tool_interceptor():
         from ..services.tool_interceptor import ToolCallInterceptor
         _tool_interceptor = ToolCallInterceptor()
     return _tool_interceptor
+
+
+def get_generation_throttle():
+    """Get the shared image-generation throttle (lazy; the state IS the point).
+
+    One per process: a second instance would have its own cooldown and both
+    would believe the session was idle.
+    """
+    global _generation_throttle
+    if _generation_throttle is None:
+        from ..services.image_gen.throttle import GenerationThrottle
+        _generation_throttle = GenerationThrottle()
+    return _generation_throttle
+
+
+def get_resource_arbiter():
+    """Get the shared ResourceArbiter (lazy; the lock IS the shared state).
+
+    One per process, deliberately: a second instance would hold a second lock
+    and both tenants would believe they had the machine. Reached through
+    ``startup.get_resource_arbiter()`` like every other service here, so tests
+    patching the startup attribute still intercept.
+    """
+    global _resource_arbiter
+    if _resource_arbiter is None:
+        from ..services.resource_arbiter import ResourceArbiter
+        _resource_arbiter = ResourceArbiter()
+    return _resource_arbiter
 
 
 # ----------------- Initialization Functions -----------------
@@ -251,6 +281,8 @@ def init_phase3_memory():
 
             def _prewarm_lore():
                 try:
+                    from .. import startup as _st
+                    _st.get_resource_arbiter().wait_for_idle(timeout=900)
                     _episodic_memory_rag.index_lore_corpus()
                     logger.info("[LoreRAG] Lore corpus pre-warm complete")
                 except Exception as exc:
@@ -273,6 +305,8 @@ def init_phase3_memory():
                 import threading as _threading
 
                 def _prewarm_sessions():
+                    from .. import startup as _st
+                    _st.get_resource_arbiter().wait_for_idle(timeout=900)
                     warmed = prewarm_session_indexes(
                         _episodic_memory_rag,
                         get_session_repo(),

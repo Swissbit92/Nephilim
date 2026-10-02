@@ -74,6 +74,12 @@ class FactExtractionWorker:
 
     def process_job(self, job: ExtractionJob) -> int:
         """Run one job synchronously (used by the worker loop and by tests)."""
+        from .services.resource_arbiter import guard_chat_model
+
+        # This thread loops forever and fires whenever a turn enqueues work, so
+        # it is the one background producer that can start a 17 GiB load in the
+        # middle of a generation with nothing having asked it to.
+        guard_chat_model("fact extraction")
         if self._extractor is None:
             self._extractor = self._extractor_provider()
         triples = self._extractor.extract_triples(job.messages)

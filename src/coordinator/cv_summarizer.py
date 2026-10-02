@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 
 def _llm() -> OllamaLLM:
     """Create Ollama LLM client for CV summary generation."""
+    from .services.resource_arbiter import guard_chat_model
+
+    # Same chat model as the companion, merely with a 10m keep_alive instead of
+    # a pin — so this path loads the full 16-19 GiB just like a chat turn does.
+    guard_chat_model("summarisation utility")
     cfg = get_settings().ollama
     model = require_model_configured(cfg.model)
     assert_model_available(cfg.base, model)

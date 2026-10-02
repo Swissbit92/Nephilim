@@ -22,6 +22,7 @@ from .auth import AuthSettings
 from .chunking import ChunkingSettings
 from .graph import GraphSettings
 from .groundedness import GroundednessSettings
+from .image_gen import ImageGenSettings
 from .llm import OllamaSettings
 from .lore import LoreSettings
 from .media import MediaSettings
@@ -67,6 +68,7 @@ class CoordinatorSettings(BaseSettings):
     # Subsystem settings (nested)
     ollama: OllamaSettings = Field(default_factory=OllamaSettings)
     brave: BraveSettings = Field(default_factory=BraveSettings)
+    image_gen: ImageGenSettings = Field(default_factory=ImageGenSettings)
     media: MediaSettings = Field(default_factory=MediaSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
     jupiter: JupiterSettings = Field(default_factory=JupiterSettings)
@@ -229,6 +231,7 @@ __all__ = [
     "GroundednessSettings",
     "JupiterSettings",
     "LoreSettings",
+    "ImageGenSettings",
     "MediaSettings",
     "MemorySettings",
     "OllamaSettings",

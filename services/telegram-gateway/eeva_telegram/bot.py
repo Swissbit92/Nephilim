@@ -9,7 +9,7 @@ from pathlib import Path
 from telegram import BotCommand
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
-from . import handlers
+from . import handlers, notifications
 from .config import TelegramConfig
 from .handlers import Gateway
 from .nephilim_client import NephilimClient
@@ -22,7 +22,15 @@ _DEFAULT_DB_PATH = _PROJECT_ROOT / "data" / "sessions.sqlite3"
 
 
 async def _post_shutdown(application: Application) -> None:
-    """Release the nephilim HTTP client and close the session store on shutdown."""
+    """Stop the notification poller, then release the client and the store.
+
+    ORDER MATTERS: the poller is cancelled BEFORE the HTTP client closes.
+    Reversed, an in-flight claim would hit a closed client and the loop's
+    catch-all would hand the notification back — against a client that can no
+    longer send the hand-back, losing it.
+    """
+    await notifications.stop(application)
+
     gateway: Gateway = application.bot_data.get("gateway")
     if gateway is not None:
         await gateway.client.aclose()
@@ -52,8 +60,18 @@ _MENU_COMMANDS = [
 
 
 async def _post_init(application: Application) -> None:
-    """Register the native Telegram command menu once at startup (ADR-011 Tier 1)."""
+    """Register the command menu, then start the notification poller.
+
+    The poller only runs when media delivery is on: with TG_MEDIA_ENABLED
+    false there is no media root, so every image it fetched would be rejected
+    by the path guard anyway — polling would be pure noise against the
+    coordinator.
+    """
     await application.bot.set_my_commands(_MENU_COMMANDS)
+
+    gateway: Gateway = application.bot_data.get("gateway")
+    if gateway is not None and gateway.config.media_enabled:
+        notifications.start(application)
 
 
 def build_application(config: TelegramConfig, db_path: Path | None = None) -> Application:
@@ -99,6 +117,7 @@ def build_application(config: TelegramConfig, db_path: Path | None = None) -> Ap
         # always-on command. With the flag off it is a silent no-op, since
         # both message handlers filter out commands.
         application.add_handler(CommandHandler("testimage", handlers.testimage_command))
+        application.add_handler(CommandHandler("testgen", handlers.testgen_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.text_message))
     # Any non-text, non-command content (media, voice, stickers, docs).
     application.add_handler(MessageHandler((filters.ALL & ~filters.TEXT) & ~filters.COMMAND, handlers.non_text_message))

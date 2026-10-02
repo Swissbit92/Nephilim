@@ -117,6 +117,37 @@ class NephilimClient:
         """POST /sessions/{id}/media/fixture — dev probe, 404s unless enabled."""
         return await self._request("POST", f"/sessions/{session_id}/media/fixture", json={})
 
+    async def claim_notifications(self, limit: int = 10) -> dict[str, Any]:
+        """POST /notifications/claim — take delivery of finished image jobs.
+
+        MUTATING despite reading like a fetch: the coordinator marks each
+        returned job notified before handing it over, so anything this returns
+        is ours to deliver and nobody else's. Hand one back with
+        ``nack_notification`` if the send fails, or it is lost.
+        """
+        return await self._request(
+            "POST", f"/notifications/claim?limit={int(limit)}", json={}
+        )
+
+    async def nack_notification(self, job_id: str) -> dict[str, Any]:
+        """POST /notifications/{id}/nack — return an undelivered notification."""
+        return await self._request("POST", f"/notifications/{job_id}/nack", json={})
+
+    async def enqueue_generation(
+        self, session_id: str, prompt: str, persona_key: str
+    ) -> dict[str, Any]:
+        """POST /sessions/{id}/image/generate — queue a real generation.
+
+        Returns a job id immediately; the image arrives later via the
+        notification poller. 404s unless the coordinator has both
+        IMAGE_GEN_ENABLED and IMAGE_GEN_DEV_ENDPOINT on.
+        """
+        return await self._request(
+            "POST",
+            f"/sessions/{session_id}/image/generate",
+            json={"prompt": prompt, "persona_key": persona_key},
+        )
+
     async def get_toolkit(self, persona_key: str) -> dict[str, Any]:
         """Fetch the registry-driven toolkit summary for a persona (ADR-009 W3)."""
         return await self._request("GET", f"/personas/{persona_key}/toolkit")

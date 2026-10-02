@@ -14,6 +14,7 @@ import os
 
 from ..persona_memory import _load_all_cards_cached
 from ..repositories.emotional_state_repository import EmotionalStateRepository
+from ..repositories.image_job_repository import ImageJobRepository
 from ..repositories.media_repository import MediaRepository
 from ..repositories.message_repository import MessageRepository
 from ..repositories.seeker_progression_repository import SeekerProgressionRepository
@@ -37,6 +38,7 @@ _session_repo: SessionRepository | None = None
 _message_repo: MessageRepository | None = None
 _session_note_repo: SessionNoteRepository | None = None
 _media_repo: MediaRepository | None = None
+_image_job_repo: ImageJobRepository | None = None
 _summary_repo: SummaryRepository | None = None
 _emotional_state_repo: EmotionalStateRepository | None = None
 _user_profile_repo: UserProfileRepository | None = None
@@ -64,6 +66,18 @@ def get_media_repo() -> MediaRepository:
     if _media_repo is None:
         raise RuntimeError("MediaRepository not initialized — server startup incomplete")
     return _media_repo
+
+
+def get_image_job_repo():
+    """Return the image-generation job repo (M3).
+
+    Raises rather than lazily constructing, matching every other repo here:
+    a repo built outside init_repositories would point at a default DB path
+    and write to a different file than the rest of the app.
+    """
+    if _image_job_repo is None:
+        raise RuntimeError("ImageJobRepository not initialized — server startup incomplete")
+    return _image_job_repo
 
 
 def get_session_note_repo() -> SessionNoteRepository:
@@ -143,11 +157,13 @@ def init_repositories():
     global _user_profile_repo, _seeker_progression_repo, _user_repo
     global _wallet_registry_repo, _wallet_summary_repo, _trade_history_repo
     global _wallet_flow_repo, _session_note_repo, _media_repo
+    global _image_job_repo
 
     _session_repo = SessionRepository(_DB_PATH)
     _message_repo = MessageRepository(_DB_PATH)
     _session_note_repo = SessionNoteRepository(_DB_PATH)
     _media_repo = MediaRepository(_DB_PATH)
+    _image_job_repo = ImageJobRepository(_DB_PATH)
     _summary_repo = SummaryRepository(_DB_PATH)
     _emotional_state_repo = EmotionalStateRepository(_DB_PATH)
     _user_profile_repo = UserProfileRepository(_DB_PATH)
