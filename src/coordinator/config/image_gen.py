@@ -37,6 +37,24 @@ class ImageGenSettings(BaseSettings):
         ),
         alias="IMAGE_GEN_PYTHON",
     )
+    model_alias: str = Field(
+        default="qwen-image-2.1",
+        description=(
+            "The mflux --model value. NOT 'dev' — that is a Flux alias and "
+            "the Qwen CLI rejects it in two seconds with ModelConfigError "
+            "('this CLI only accepts the aliases [qwen-image-2.1, qwen-2.1, "
+            "qwen-image-21]'). Cost one wasted run to learn."
+        ),
+        alias="IMAGE_GEN_MODEL_ALIAS",
+    )
+    poll_seconds: float = Field(
+        default=2.0, ge=0.1, le=60.0,
+        description=(
+            "How often the worker looks for queued jobs. Cheap: one indexed "
+            "SELECT against a table with a handful of rows."
+        ),
+        alias="IMAGE_GEN_POLL_SECONDS",
+    )
     steps: int = Field(
         default=25, ge=10, le=40,
         description="Denoise steps. 25 is what the bake-off measured at 332s.",

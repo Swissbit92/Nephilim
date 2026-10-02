@@ -15,8 +15,8 @@ Provides endpoints for chat, greetings, persona CV summaries, and chat persisten
 from __future__ import annotations
 
 import logging
-import urllib.request
 import urllib.error
+import urllib.request
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -24,13 +24,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .config import get_settings
-from .startup import initialize_all, get_session_repo, get_brave_client
-from .routes.chat import router as chat_router
-from .routes.sessions import router as sessions_router
-from .routes.personas import router as personas_router
-from .routes.nephilim import router as nephilim_router
-from .routes.wallet import router as wallet_router
 from .routes.auth import auth_router
+from .routes.chat import router as chat_router
+from .routes.nephilim import router as nephilim_router
+from .routes.personas import router as personas_router
+from .routes.sessions import router as sessions_router
+from .routes.wallet import router as wallet_router
+from .startup import get_brave_client, get_session_repo, initialize_all
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,36 +45,59 @@ async def lifespan(app: FastAPI):
     # Publish the composition-root snapshot for the request path (dependencies.py).
     from .startup import get_app_state
     app.state.container = get_app_state()
-    try:
-        yield
-    finally:
-        # Shutdown, in DEPENDENCY ORDER, each step in its own try/finally.
-        #
-        # ORDER IS LOAD-BEARING: producers of graph work stop BEFORE the driver
-        # closes. The driver is documented as concurrency-safe while `close()`
-        # explicitly is NOT — "make sure you are not using the driver object or
-        # any resources spawned from it while calling this method. Failing to do
-        # so results in unspecified behavior." A first draft of this block closed
-        # the driver first, which would be a use-after-close the moment anything
-        # graph-touching is added to the scheduler or the pre-warm threads.
-        #
-        # THE try/finally IS ALSO LOAD-BEARING, and it is why this block grew:
-        # without it a raising scheduler.shutdown() skips close_graph_driver()
-        # entirely — and in driver 6.x a leaked driver is SILENT. All that remains
-        # of the old __del__ behaviour is a ResourceWarning, which Python ignores
-        # by default, so the leak produces no error, no log and no warning. Just
-        # orphaned sockets and threads for the life of the process. In 5.x the GC
-        # quietly saved you; it no longer does.
-        from .startup import close_graph_driver, get_strategy_scheduler
+
+    # Subsystem lifespans compose through an AsyncExitStack: FastAPI has no
+    # multi-lifespan primitive, and a stack makes the next subsystem a
+    # one-liner instead of another level of nesting. It unwinds in reverse,
+    # which is the same dependency-order rule the shutdown block below argues
+    # for by hand.
+    from contextlib import AsyncExitStack
+
+    from .services.image_gen.lifespan import image_gen_lifespan
+
+    async with AsyncExitStack() as stack:
+        await stack.enter_async_context(image_gen_lifespan(app))
         try:
-            scheduler = get_strategy_scheduler()
-            if scheduler and scheduler.running:
-                scheduler.shutdown(wait=False)
-                logger.info("Strategy scheduler stopped")
-        except Exception:
-            logger.exception("Strategy scheduler shutdown failed")
+            yield
         finally:
-            close_graph_driver()
+            _shutdown()
+
+
+def _shutdown() -> None:
+    """Teardown, in DEPENDENCY ORDER, each step in its own try/finally.
+
+    Lifted verbatim out of the lifespan body when subsystem lifespans were
+    composed above; the argument below is the original one and still governs.
+    Note the AsyncExitStack unwinds BEFORE this runs, so any subsystem lifespan
+    has already stopped its own threads by the time the shared resources close
+    — which is the same producers-before-consumers rule, applied one level up.
+
+    ORDER IS LOAD-BEARING: producers of graph work stop BEFORE the driver
+    closes. The driver is documented as concurrency-safe while `close()`
+    explicitly is NOT — "make sure you are not using the driver object or any
+    resources spawned from it while calling this method. Failing to do so
+    results in unspecified behavior." A first draft of this block closed the
+    driver first, which would be a use-after-close the moment anything
+    graph-touching is added to the scheduler or the pre-warm threads.
+
+    THE try/finally IS ALSO LOAD-BEARING, and it is why this block grew:
+    without it a raising scheduler.shutdown() skips close_graph_driver()
+    entirely — and in driver 6.x a leaked driver is SILENT. All that remains of
+    the old __del__ behaviour is a ResourceWarning, which Python ignores by
+    default, so the leak produces no error, no log and no warning. Just
+    orphaned sockets and threads for the life of the process. In 5.x the GC
+    quietly saved you; it no longer does.
+    """
+    from .startup import close_graph_driver, get_strategy_scheduler
+    try:
+        scheduler = get_strategy_scheduler()
+        if scheduler and scheduler.running:
+            scheduler.shutdown(wait=False)
+            logger.info("Strategy scheduler stopped")
+    except Exception:
+        logger.exception("Strategy scheduler shutdown failed")
+    finally:
+        close_graph_driver()
 
 
 # ----------------- FastAPI App -----------------

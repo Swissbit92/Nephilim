@@ -56,6 +56,7 @@ from .di.repositories import (  # noqa: F401 - re-exported for startup.get_X()/i
     _DB_PATH,
     cleanup_orphaned_sessions,
     get_emotional_state_repo,
+    get_image_job_repo,
     get_media_repo,
     get_message_repo,
     get_seeker_progression_repo,
@@ -72,6 +73,7 @@ from .di.repositories import (  # noqa: F401 - re-exported for startup.get_X()/i
     init_repositories,
 )
 from .di.services import (  # noqa: F401 - re-exported for startup.get_X()/init_X()
+    close_graph_driver,
     get_brave_client,
     get_conversation_summarizer,
     get_episodic_memory_rag,
@@ -82,7 +84,6 @@ from .di.services import (  # noqa: F401 - re-exported for startup.get_X()/init_
     get_neo4j_driver,
     get_resource_arbiter,
     get_tool_interceptor,
-    close_graph_driver,
     init_brave_client,
     init_graph_driver,
     init_memory_manager,
