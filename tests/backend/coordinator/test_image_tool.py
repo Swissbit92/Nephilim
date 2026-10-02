@@ -233,12 +233,30 @@ def test_the_executor_refuses_without_a_session(wired):
     assert "not available" in out
 
 
-def test_the_throttle_blocks_a_second_identical_request(wired):
+def test_the_cooldown_still_blocks_a_rapid_second_request(wired):
+    """The duplicate rule is gone; the COOLDOWN is what remains, and it is
+    about pacing a 5.5-minute GPU job rather than about what was asked for."""
+    from src.coordinator import startup
+    from src.coordinator.services.image_gen.throttle import GenerationThrottle
+
     repo, _ = wired
+    slow = GenerationThrottle(cooldown_seconds=120)
+    startup.get_generation_throttle = lambda: slow
+
     _run(subject="a red fox in deep snow")
-    out = _run(subject="a fox sitting in the deep snow")
-    assert len(repo.list_for_session("sess-1")) == 1, "queued a near-duplicate"
-    assert "same picture" in out
+    out = _run(subject="a cathedral with stained glass")  # DIFFERENT picture
+    assert len(repo.list_for_session("sess-1")) == 1
+    assert "breath" in out or "seconds" in out
+
+
+def test_a_refinement_is_queued_not_refused(wired):
+    """The live defect: 14 of 19 real requests were refused as duplicates."""
+    repo, _ = wired
+    _run(subject="a red haired mature beauty milf in a black bikini, full body")
+    _run(subject="a blond mature beauty milf in a white bikini, full body")
+    assert len(repo.list_for_session("sess-1")) == 2, (
+        "a refinement was refused — only one job was queued"
+    )
 
 
 def test_the_executor_never_raises(wired, monkeypatch):

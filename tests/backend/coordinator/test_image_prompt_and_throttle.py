@@ -127,14 +127,41 @@ def test_the_cooldown_expires():
     assert t.check("s1", "a blue whale underwater", now=130.0)
 
 
-def test_a_reworded_duplicate_is_refused():
-    """THE case a rate limit cannot catch. The documented loop is six
-    SLIGHTLY REWORDED calls, which a counter reads as six valid requests."""
+def test_a_refinement_is_NOT_refused():
+    """The defect that removed the duplicate guard.
+
+    Replayed against the user's real history the old rule refused 14 of 19
+    requests, including "red haired mature ... BLACK bikini" followed by
+    "blond mature ... WHITE bikini" — a different picture. A user refines by
+    keeping the scaffolding and changing one or two attributes, and Jaccard
+    scores that as a repeat because the swapped words are a small fraction of
+    the tokens while being the entire payload of the request (PAWS,
+    arXiv:1904.01130, is built on exactly this failure).
+    """
     t = GenerationThrottle(cooldown_seconds=0)
-    t.record("s1", "a red fox sitting in deep snow, photographic", now=0.0)
-    d = t.check("s1", "a fox sitting in the deep snow, photographic", now=1.0)
-    assert not d
-    assert "same picture" in d.reason
+    first = ("a red haired mature beauty milf in a black bikini, full body "
+             "view, looking at viewer seductively, background light and airy")
+    second = ("a blond mature beauty milf in a white bikini, full body view, "
+              "looking at viewer seductively, background light and airy")
+    t.record("s1", first, now=0.0)
+    assert t.check("s1", second, now=1.0), (
+        "a refinement was refused as a duplicate — the removed guard is back"
+    )
+
+
+def test_even_an_identical_prompt_is_allowed_once_the_cooldown_passes():
+    """Deliberate: no prompt-level dedup at all. None was found in
+    Automatic1111, ComfyUI or Fooocus, and Midjourney ships a Repeat button —
+    resubmitting the same prompt is a legitimate thing to want, because
+    diffusion is stochastic and the second image differs."""
+    t = GenerationThrottle(cooldown_seconds=120)
+    same = "a red fox in deep snow"
+    t.record("s1", same, now=0.0)
+    assert not t.check("s1", same, now=10.0), "the cooldown should still bind"
+    assert t.check("s1", same, now=130.0), (
+        "an identical prompt after the cooldown must be allowed — diffusion "
+        "is stochastic and a repeat is a real request"
+    )
 
 
 def test_a_genuinely_different_request_is_allowed_after_the_cooldown():
@@ -201,44 +228,14 @@ def test_the_refusal_reads_as_speech():
         assert forbidden not in reason
 
 
-def test_the_fitted_threshold_separates_the_two_populations():
-    """The duplicate threshold is FITTED, and this pins both sides of the gap.
+def test_the_duplicate_rule_is_gone_not_merely_loosened():
+    """A threshold set high enough to allow real refinement is high enough to
+    be useless, so the rule was removed rather than retuned. If it returns,
+    this says so before a user discovers it."""
+    import inspect
 
-    It was 0.8, picked by feel, and it missed the central case: "a red fox in
-    deep snow" followed by "a fox sitting in the deep snow" scores 0.600 and
-    sailed straight through the guard built to stop exactly that.
+    from src.coordinator.services.image_gen import throttle
 
-    Measured over these nine pairs, duplicates score >= 0.600 and genuinely
-    different pictures score <= 0.400, so the threshold sits at the midpoint.
-    Asserting both populations means narrowing the gap FAILS rather than
-    quietly degrading into a guard that never fires — which is how a borrowed
-    constant usually dies here.
-    """
-    from src.coordinator.services.image_gen.throttle import (
-        GenerationThrottle,
-        _similar,
-    )
-
-    reworded = [
-        ("a red fox in deep snow", "a fox sitting in the deep snow"),
-        ("a woman reading in a cafe", "a woman reading at a cafe"),
-        ("a red fox sitting upright in snow", "a red fox in the snow sitting"),
-        ("a cathedral with stained glass windows",
-         "a cathedral and its stained glass windows"),
-    ]
-    different = [
-        ("a red fox in deep snow", "a cathedral with stained glass"),
-        ("a red fox in snow", "a red fox in a summer forest"),
-        ("a woman reading in a cafe", "a man cooking in a kitchen"),
-        ("a submarine near a reef", "a red fox in deep snow"),
-        ("a red fox in snow", "a snowy mountain landscape"),
-    ]
-    t = GenerationThrottle.DUPLICATE_THRESHOLD
-
-    for a, b in reworded:
-        pa, pb = compose(GenerationIntent(subject=a)), compose(GenerationIntent(subject=b))
-        assert _similar(pa, pb, t), f"reworded duplicate slipped through: {a!r} / {b!r}"
-
-    for a, b in different:
-        pa, pb = compose(GenerationIntent(subject=a)), compose(GenerationIntent(subject=b))
-        assert not _similar(pa, pb, t), f"different pictures blocked: {a!r} / {b!r}"
+    src = inspect.getsource(throttle.GenerationThrottle.check)
+    assert "_similar" not in src, "the duplicate rule is back in check()"
+    assert "same picture" not in src
