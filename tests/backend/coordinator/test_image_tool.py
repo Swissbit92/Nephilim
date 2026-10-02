@@ -556,3 +556,34 @@ def test_variants_are_cached_and_rotated():
         seen = {persona_lines.line("gwen", "image_ready") for _ in range(40)}
         assert gen.call_count == 1, "regenerated instead of using the cache"
     assert len(seen) > 1, "cached a single variant — it will sound scripted"
+
+
+# ---------- provenance: who decided to run the tool ----------
+
+
+def test_tool_decided_by_distinguishes_the_model_from_a_deterministic_trigger():
+    """A TOOL FIRING IS NOT EVIDENCE OF GROUNDING — gwen once fired
+    image_search for a weather question and answered "103F", shipped with a
+    Sources block because a tool had run. A deterministic trigger makes that
+    question harder, so the answer is recorded on every turn that ran one.
+
+    A FIELD, not a graph node: it is a per-turn event with nothing to
+    traverse, no competency question asks it, and the sanctioned schema
+    surface has no Tool or Decision label. Nearly modelled in Neo4j; ADR-018
+    already settled that provenance is a property beside its row.
+    """
+    from src.coordinator.schemas import ResponseMetadata
+
+    m = ResponseMetadata()
+    assert m.tool_decided_by is None, "no tool ran — must not claim a decider"
+
+    import inspect
+
+    from src.coordinator.routes import chat as chat_mod
+
+    src = inspect.getsource(chat_mod._try_tool_brain)
+    assert 'metadata.tool_decided_by = (' in src or "tool_decided_by" in src
+    # The narrowed path must NOT report a bare "model".
+    assert "generation_intent+model" in src, (
+        "a regex-narrowed turn reports the model as sole decider"
+    )

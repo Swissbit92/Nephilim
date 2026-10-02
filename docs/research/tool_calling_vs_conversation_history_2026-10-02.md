@@ -81,6 +81,13 @@ reminder prepended to the USER turn**. Re-run with the graph reachable:
 | image_search · real | 5/5 → 0/5 | 5/5 → 0/5 |
 | image_search · synthetic | 5/5 → 5/5 | 5/5 → 5/5 |
 
+**Significant at n=5, verified here rather than quoted.** Exact two-sided
+Fisher, computed in this session: `image_search` at d8, real 0/5 versus
+synthetic 5/5, **p = 0.008**. The headline does not need the powered run to
+stand. The cell most likely to be over-read is `generate_image` synth d8,
+bare 3/5 versus production 0/5 — **p = 0.167**, which is NOT evidence that
+the rules block hurts it.
+
 **The production shape changes nothing.** The collapse is identical with and
 without the rules block and the reminder, and the content-vs-length result
 replicates. A specific hypothesis is therefore **refuted**: the reminder sits
@@ -181,6 +188,30 @@ the text, not a prompt instruction.** Something computable was being asked of
 the model, and the fix was to compute it. `generation_intent()` is 18/18 on
 the boundary cases and we still hand the decision back to the model. That is
 the same shape, and it does not depend on a verifier being cheap.
+
+## Should any of this live in the graph? No, with no caveat.
+
+Asked directly, and answered by the session that built the Neo4j layer after
+checking rather than arguing. The sanctioned schema surface is 18 labels, 25
+relationships, 27 properties; there is no `Tool`, no `Decision`, no
+decision-provenance property, and **not one of the ~60 competency questions
+asks who decided to fire a tool**. The gate's rule is that nothing unlisted
+gets built, and the test is whether a question can be written first. Neither
+of us could write one.
+
+The need is real and was misfiled. "Model chose versus regex chose" has to
+be recorded, because a tool firing is not evidence of grounding — gwen fired
+`image_search` for a weather question, answered "103F", and shipped a
+Sources block because a tool had run. But it is a **per-turn event with
+nothing to traverse**: a column, not a graph query. It is now
+`ResponseMetadata.tool_decided_by`, beside `source_type`, `tools_used` and
+`wall_observations`, which is the shape ADR-018 already settled for
+provenance.
+
+Recorded because the near-miss is the lesson: a half-justified label is how
+a schema starts drifting, and the identity MERGE key in this repo was a list
+position that nothing caught, because the thing that would have caught it
+was a question nobody wrote.
 
 ## Why this matters more than it looks
 

@@ -276,6 +276,21 @@ class ResponseMetadata(BaseModel):
     #: injected into the dumped dict after the fact, so it flows out of
     #: _finalize_response for every handler automatically and is typed for both
     #: consumers. Empty on every path until a generation backend is wired.
+    tool_decided_by: str | None = None
+    #: WHO decided to run a tool on this turn: "model" when the model emitted
+    #: the call unprompted, or a component name when code narrowed or forced
+    #: it (e.g. "generation_intent"). None when no tool ran.
+    #:
+    #: Exists because A TOOL FIRING IS NOT EVIDENCE OF GROUNDING — gwen once
+    #: fired image_search for a weather question and answered "103F", shipped
+    #: with a Sources block because a tool had run. Deterministic triggers
+    #: make that question harder, not easier, so the answer is recorded.
+    #:
+    #: A FIELD AND NOT A GRAPH NODE, deliberately. This was nearly modelled in
+    #: Neo4j; it is a per-turn event with nothing to traverse, no competency
+    #: question asks it, and the sanctioned schema surface has no Tool or
+    #: Decision label. ADR-018 already settled the shape: provenance stays a
+    #: property beside the row it describes.
     media: List[MediaItem] = []
 
 

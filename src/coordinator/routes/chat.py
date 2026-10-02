@@ -645,6 +645,12 @@ def _try_tool_brain(
                 and not result.used_search:
             metadata.source_type = SourceType.TOOL_BRAIN
             metadata.tools_used = side_effect_tools
+            # The regex narrowed the surface to one tool; the model still
+            # chose to call it. Record both so "a tool ran" is never read as
+            # "the model decided this unaided".
+            metadata.tool_decided_by = (
+                "generation_intent+model" if wants_generation else "model"
+            )
             logger.info("[ToolBrain] side-effect tools ran: %s", side_effect_tools)
             return _build_llm_response(
                 result.answer, body.message, persona_name, metadata,
@@ -664,6 +670,7 @@ def _try_tool_brain(
                 if t.get("allowed") and t.get("tool")
             ]
             metadata.tools_used = executed or ["web_search"]
+            metadata.tool_decided_by = "media_search_type+model" if forced else "model"
             answer = CitationService.strip_hallucinated_citations(result.answer)
             # Strip the model's own inline [REF]n[/REF] citation markers (it
             # sometimes invents that format; the verified 🔍 Sources block below

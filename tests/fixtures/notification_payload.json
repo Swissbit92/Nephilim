@@ -21,6 +21,7 @@
       "proposal": null,
       "rule_violations": [],
       "wall_observations": [],
+      "tool_decided_by": null,
       "media": [
         {
           "media_id": "MEDIA_ID",
@@ -61,6 +62,7 @@
       "proposal": null,
       "rule_violations": [],
       "wall_observations": [],
+      "tool_decided_by": null,
       "media": []
     },
     "rewritten": false
