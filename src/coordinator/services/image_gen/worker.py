@@ -40,7 +40,7 @@ from ...repositories.image_job_repository import JobStatus
 from ..ollama_admin import repin, unload
 from ..resource_arbiter import MemoryWatchdog, ResourceBusyError
 from . import supervisor as sv
-from .jobdir import create_job_dir
+from .jobdir import create_job_dir, discard_job_dir
 from .verify import walk_png
 
 logger = logging.getLogger(__name__)
@@ -276,9 +276,40 @@ class ImageGenWorker:
                               error="the image failed the generator's own decode check")
             return
 
-        self._repo.finish(job.id, status=JobStatus.SUCCEEDED, media_path=str(out))
+        # Move the image OUT of the scratch job directory and into the
+        # session's media directory. Not tidiness — `/reset` quarantines
+        # `sessions/<media_dir>` and nothing else, so an image left in
+        # `jobs/<job_id>` would survive a reset the user was told clears their
+        # images. Storing it under the session makes the existing reset path
+        # cover generated images with no new deletion code.
+        try:
+            stored = self._store_for_session(job, out)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("[ImageGen] %s produced an image it could not store", job.id)
+            self._repo.finish(
+                job.id, status=JobStatus.FAILED,
+                error=f"the image was generated but could not be stored: {exc}",
+            )
+            return
+
+        self._repo.finish(job.id, status=JobStatus.SUCCEEDED, media_path=str(stored.path))
+        discard_job_dir(job.id)
         logger.info("[ImageGen] %s succeeded: %s (%dx%d)",
-                    job.id, out.name, verdict.width, verdict.height)
+                    job.id, stored.path.name, verdict.width, verdict.height)
+
+    def _store_for_session(self, job, out: Path):
+        """Copy the finished PNG into the session's media directory.
+
+        Read-then-store rather than a rename: `store_png` re-validates the
+        bytes (magic, size, dimensions) and writes atomically through the
+        containment guard, so the image arrives under the same checks as every
+        other stored image instead of a path the guard never saw.
+        """
+        from ... import startup
+        from .. import media_storage
+
+        media_dir = startup.get_media_repo().get_or_create_media_dir(job.session_id)
+        return media_storage.store_png(media_dir, out.read_bytes())
 
 
 def build_argv(cfg, *, prompt: str, output: Path) -> list[str]:

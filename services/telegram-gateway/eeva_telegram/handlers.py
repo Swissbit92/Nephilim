@@ -559,6 +559,54 @@ async def testimage_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await _deliver_media(bot, chat_id, gateway, reply.media)
 
 
+async def testgen_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Dev probe: queue a REAL generation and acknowledge immediately.
+
+    Deliberately does not wait. The job takes ~331 s measured and the client's
+    read timeout is 180 s, so waiting here would guarantee a timeout on a
+    successful generation. The image arrives later through the notification
+    poller — which is precisely the path this command exists to exercise
+    end to end.
+
+    Registered only when media is enabled, and the coordinator 404s unless
+    IMAGE_GEN_DEV_ENDPOINT is on, so this is two switches away from a user.
+    """
+    gateway = get_gateway(context)
+    chat_id = _allowed_chat_id(update, gateway)
+    if chat_id is None:
+        return
+    bot, limit = context.bot, gateway.config.message_char_limit
+
+    prompt = " ".join(context.args or []).strip()
+    if not prompt:
+        await messaging.send_text(
+            bot, chat_id, "Give me something to draw: /testgen a red fox in snow", limit
+        )
+        return
+
+    persona = gateway.config.persona_for_chat(chat_id)
+    try:
+        session_id, _ = await relay.ensure_session(
+            gateway.client, gateway.store, chat_id, persona
+        )
+        result = await gateway.client.enqueue_generation(session_id, prompt, persona)
+    except NephilimUnavailableError:
+        await messaging.send_text(bot, chat_id, MSG_UNAVAILABLE, limit)
+        return
+    except NephilimError:
+        logger.exception("enqueue_generation failed for chat_id=%s", chat_id)
+        await messaging.send_text(bot, chat_id, MSG_ERROR, limit)
+        return
+
+    job_id = str(result.get("job_id", ""))[:8]
+    await messaging.send_text(
+        bot,
+        chat_id,
+        f"Started drawing — about five and a half minutes. ({job_id})",
+        limit,
+    )
+
+
 async def non_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Photos/voice/docs/etc.: text-only in v1 — acknowledge, don't process."""
     gateway = get_gateway(context)

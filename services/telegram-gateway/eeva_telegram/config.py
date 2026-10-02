@@ -50,6 +50,7 @@ class TelegramConfig:
     media_enabled: bool
     media_root: Path | None
     media_max_bytes: int
+    notify_poll_seconds: float
 
     # Ops
     log_content: bool
@@ -149,5 +150,6 @@ def load_config(env_path: Path | None = None) -> TelegramConfig:
         media_enabled=_media_enabled,
         media_root=_media_root,
         media_max_bytes=int(os.getenv("TG_MEDIA_MAX_BYTES", "20000000")),
+        notify_poll_seconds=float(os.getenv("TG_NOTIFY_POLL_SECONDS", "5")),
         log_content=os.getenv("TG_LOG_CONTENT", "false").lower() == "true",
     )

@@ -27,6 +27,7 @@ from .config import get_settings
 from .routes.auth import auth_router
 from .routes.chat import router as chat_router
 from .routes.nephilim import router as nephilim_router
+from .routes.notifications import router as notifications_router
 from .routes.personas import router as personas_router
 from .routes.sessions import router as sessions_router
 from .routes.wallet import router as wallet_router
@@ -118,6 +119,7 @@ app.include_router(chat_router)
 app.include_router(sessions_router)
 app.include_router(personas_router)
 app.include_router(nephilim_router)
+app.include_router(notifications_router)
 app.include_router(wallet_router)
 app.include_router(auth_router)
 

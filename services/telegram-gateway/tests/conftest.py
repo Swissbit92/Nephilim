@@ -25,6 +25,7 @@ def cfg() -> TelegramConfig:
         media_enabled=False,
         media_root=None,
         media_max_bytes=20_000_000,
+        notify_poll_seconds=0.01,
         log_content=False,
     )
 
