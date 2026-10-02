@@ -66,18 +66,121 @@ A roleplay history is a strong prior for "the next thing is more dialogue".
 Nothing in the request can override it, because nothing constrains the first
 token.
 
+## Replicated against the PRODUCTION prompt, and one hypothesis refuted
+
+⚠️ The first run measured the wrong prompt. The probe process had no
+`NEO4J_BASE_URL`, and `standing_rules()` swallows an outage and returns `[]`
+— a degraded read is indistinguishable from "no rules". Production carries a
+**254-token rules block (6 hard walls)** plus a **334-char constraint
+reminder prepended to the USER turn**. Re-run with the graph reachable:
+
+| gwen · tool · history | bare d0→d8 | production d0→d8 |
+|---|---|---|
+| generate_image · real | 3/5 → 0/5 | 4/5 → 0/5 |
+| generate_image · synthetic | 5/5 → 3/5 | 5/5 → 0/5 |
+| image_search · real | 5/5 → 0/5 | 5/5 → 0/5 |
+| image_search · synthetic | 5/5 → 5/5 | 5/5 → 5/5 |
+
+**The production shape changes nothing.** The collapse is identical with and
+without the rules block and the reminder, and the content-vs-length result
+replicates. A specific hypothesis is therefore **refuted**: the reminder sits
+last before her turn begins, which is where anything affecting first-token
+selection would act — and it does not act.
+
+## Two effects, not one
+
+gwen is **3/5 on `generate_image` at ZERO history** while eeva is 5/5. Her
+*card* is roleplay-saturated, so the system prompt alone is already priming.
+Trimming history would not reach that. Credit to the semantic-layer session
+for spotting it in the first table.
+
+And the two tools do not degrade identically — `image_search` falls 5/5 → 0/5
+while `generate_image` starts at 3/5 and is at 0/5 by depth 2. Different
+floors, different slopes. A tool-complexity term (one string argument versus
+four structured ones) may be hiding under the history term, and at n=5 per
+cell the two are not separable. The claim "it is not the image tool" is
+supported in direction and not in magnitude.
+
+## Independent corroboration, on a NON-tool behaviour
+
+From the semantic-layer session's own runs, same persona and prompt, frozen
+detector:
+
+- three-arm, **single-turn**, 888 generations: rename breach **0.333**
+- rename A/B, **16-turn history**, 6 sessions: rename breach **0.481**
+
+44% higher with real history, on hard-wall compliance rather than tool
+firing. Confounded — those 16-turn probes follow a bet she lost, so history
+and adversarial framing are entangled — but it points the same way from an
+independent direction.
+
+The consequence lands on both of us: **every hard-wall number in this repo
+is single-turn**, including the −34% rules-block result. The criticism I made
+of the 76%→90% tool eval applies to those equally.
+
+## Already published, and I should have looked first
+
+- **arXiv 2607.11437** — *history-carried lock-in*: relational states set
+  early stay ~60 points apart, persist after the establishing prompt is
+  removed, are order-insensitive, and **do not deepen with length**. That is
+  "it is not length, it is state", measured before I measured it.
+- **arXiv 2502.15851** (Control Illusion) — social framings beat
+  system/user role framings; pretraining-derived social priors outrank
+  post-training guardrails. Explains why gwen's register wins and eeva's
+  does not.
+- **arXiv 2609.14157** — unnecessary tool *availability* drops answer rate
+  98.2% → 63.5% and the tool is mostly not called; presence alone suppresses.
+  Mitigation measured at +27.8 to +45.6pp from one scope-aware sentence.
+
 ## What this does NOT yet establish
 
 - Whether the trigger is explicit/NSFW content specifically, or any strongly
   stylised in-character register. gwen's history is both; eeva's is neither.
   Not separated.
-- Whether a clean-context decision pass fixes it. Untested — the d0 column
-  says the model CAN call the tool with the same prompt and samplers, which
-  is suggestive, but a two-pass design has its own costs (TB6 costed the
-  second generation at ~16 tok/s) and has not been measured end to end.
+- Whether a clean-context decision pass fixes it. Untested, and gwen's 3/5
+  at d0 says a clean context alone would not reach 5/5 anyway.
+- Whether resampling would work. Probably not, and the table already says
+  so: `generate_image` is 0/5 at four consecutive depths, ~20 independent
+  samples with zero successes. You cannot resample a distribution with no
+  mass on tool-call-first. That is the enforcement experiment, run by
+  accident.
+- Whether my firing detector has the recall to support these as LEVELS
+  rather than contrasts. `prose_expected=False` is a scoring choice with the
+  same exposure that produced a clean null here once before, when a checker
+  could not see a real 34% effect. The contrasts are paired and survive a
+  recall problem; the absolute rates may not.
 - Whether constrained decoding is reachable. Ollama exposes no `tool_choice`
   and does not wire its grammar engine to `tools=`; that would mean llama.cpp
   directly, which is a much larger change.
+
+## The precedent is ADR-015, not ADR-014
+
+My first reading was that ADR-014/017 proved "deterministic enforcement beats
+asking the model nicely", and that this generalises. **That is wrong**, and
+the number I was quoting (gwen_dev 0/6 → 6/6) was retired the same day as a
+6-probe single-shot count no powered run reproduced. The powered result is
+the opposite of how I used it: the rules block, a **pure prompt
+instruction**, cut breaches 0.4375 → 0.2875, −34%, p=0.0084 against a
+length-matched placebo. Asking nicely *won*. Enforcement then won by more
+(−96%) — but the determinism there is in the **verifier**, not the generator:
+nothing made the model comply, the output was checked and resampled.
+
+Three reasons that does not transfer here, all of which I had the data to see:
+
+- that retry fired on **9% of turns** because fixing one breach prevented the
+  cascade behind it; tool calls have no cascade and every turn is
+  independent, so the cost would be ~100% of drawing-intent turns;
+- its corrective line named a **lexically satisfiable** target ("use
+  Daddy") that she could meet while staying in character — "emit a tool
+  call" has no in-character form;
+- and resampling needs the behaviour to appear sometimes, which 0/5 at four
+  depths says it does not.
+
+The right precedent is **ADR-015 — bubble boundaries are a pure function of
+the text, not a prompt instruction.** Something computable was being asked of
+the model, and the fix was to compute it. `generation_intent()` is 18/18 on
+the boundary cases and we still hand the decision back to the model. That is
+the same shape, and it does not depend on a verifier being cheap.
 
 ## Why this matters more than it looks
 
