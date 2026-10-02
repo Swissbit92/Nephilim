@@ -57,14 +57,39 @@ class ImageGenSettings(BaseSettings):
     memory_limit_gb: int = Field(
         default=34, ge=8, le=44,
         description=(
-            "Hard MLX allocation ceiling, BELOW physical RAM. Measured on this "
-            "machine: max_recommended_working_set_size is 37.44 GiB, but MLX's "
-            "own default limit is 1.5x that (~56 GiB) — above the 48 GiB "
-            "installed. Left at the default, an overrun does not raise, it "
-            "swap-storms, and the symptom is a 20-minute unresponsive Mac rather "
-            "than an error. This turns that into a clean exception."
+            "MLX allocation ceiling, below physical RAM. ⚠️ ADVISORY — "
+            "mx.set_memory_limit does NOT raise on overrun: measured on mlx "
+            "0.32.3 here, 4 GiB allocated against a 2 GiB limit succeeded "
+            "silently. (An earlier description claimed it produced a clean "
+            "exception, and that MLX's default was ~56 GiB; the measured "
+            "default is 45.60 GiB. Both were wrong.) Enforcement is the "
+            "free-memory watchdog, which can kill the process; this states the "
+            "budget the watchdog is sized against. "
+            "max_recommended_working_set_size here is 37.44 GiB."
         ),
         alias="IMAGE_GEN_MEMORY_LIMIT_GB",
+    )
+    min_free_gb: float = Field(
+        default=6.0, ge=1.0, le=24.0,
+        description=(
+            "Kill the job if free+inactive system memory stays below this. The "
+            "only instrument that sees BOTH workloads: ps RSS reported 0.03 "
+            "GiB while MLX held 8.00 GiB, and 8 MiB while Ollama held 16.40 "
+            "GiB; kern.memorystatus_vm_pressure_level stayed NORMAL all the "
+            "way from 13.17 GiB free down to 7.23 GiB. Free memory tracked "
+            "both honestly."
+        ),
+        alias="IMAGE_GEN_MIN_FREE_GB",
+    )
+    min_free_grace_seconds: int = Field(
+        default=20, ge=5, le=300,
+        description=(
+            "How long free memory must stay below min_free_gb before the job "
+            "is killed. A single dip is normal — macOS reclaims lazily, and "
+            "killing a five-minute generation on one sample is worse than the "
+            "dip."
+        ),
+        alias="IMAGE_GEN_MIN_FREE_GRACE_SECONDS",
     )
     stall_seconds: int = Field(
         default=180, ge=30, le=1800,

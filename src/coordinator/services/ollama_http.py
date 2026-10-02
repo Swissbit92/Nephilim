@@ -75,6 +75,9 @@ class OllamaHTTPClient:
         return payload
 
     def _post(self, prompt: str) -> dict[str, Any]:
+        from .resource_arbiter import guard_chat_model
+
+        guard_chat_model("completion (http)")
         try:
             with httpx.Client(timeout=self._timeout) as client:
                 resp = client.post(f"{self.base_url}/api/generate", json=self._payload(prompt))

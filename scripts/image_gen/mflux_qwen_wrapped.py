@@ -1,14 +1,33 @@
 #!/usr/bin/env python
-"""mflux-generate-qwen-2.1 with a hard MLX memory ceiling.
+"""mflux-generate-qwen-2.1 with an MLX memory ceiling — and a correction.
 
 Runs under the mflux venv's interpreter, NOT the coordinator's.
 
-Exists because mflux exposes no way to set the allocation limit and MLX's
-default is ~1.5x the recommended working set — on a 48 GB machine that is
-~56 GiB, i.e. unreachable without swapping. Left alone, an overrun does not
-raise: it allocates into compressed memory and swap, and the failure presents
-as a twenty-minute unresponsive machine rather than an error. Capping below
-physical RAM converts that into an exception the supervisor can report.
+⚠️ **`mx.set_memory_limit()` IS ADVISORY. It does not raise.** An earlier
+version of this file claimed it "converts an overrun into an exception the
+supervisor can report". That was written from MLX's API shape, never tested,
+and it is **false** — measured on mlx 0.32.3 on this machine: a 4 GiB
+allocation against a 2 GiB limit succeeded silently, `get_active_memory()`
+read 4.00 GiB, and nothing was raised. The same measurement corrected a second
+borrowed number in that docstring: MLX's default limit here is **45.60 GiB**,
+not the "~1.5x the recommended working set, about 56 GiB" claimed — 1.5x is
+not the rule this build uses.
+
+So the ceiling is kept, but for what it actually buys: it caps MLX's own
+allocator bookkeeping and makes the intended budget explicit and reviewable at
+the point of spawn. **It is not the protection.** The protection is external —
+`services/image_gen/supervisor.py` watches free system memory and kills the
+job, because a limit the library declines to enforce can only be enforced by
+something that can kill the process.
+
+Why free memory and not the obvious instruments, both measured here:
+  - `ps -o rss` is BLIND to MLX: 0.03 GiB reported while 8.00 GiB was held
+    (Metal buffers are not in RSS). The same lie applies to Ollama's runner,
+    which reported 8 MiB RSS holding 16.40 GiB. A watchdog on RSS would read
+    "nothing is allocated" at the exact moment the machine was full.
+  - `kern.memorystatus_vm_pressure_level` stayed at 1 (NORMAL) the whole way
+    from 13.17 GiB free down to 7.23 GiB. It is a late signal, not an early
+    warning, so it cannot gate anything.
 
 Tracked in the repo rather than installed as a `sitecustomize.py` in the mflux
 venv deliberately: a sitecustomize is untracked, invisible to review, and would
@@ -41,7 +60,15 @@ def main() -> int:
     if limit:
         import mlx.core as mx
 
-        mx.set_memory_limit(int(limit))
+        previous = mx.set_memory_limit(int(limit))
+        # Printed, not silent: this is the only record of what the budget was
+        # for a given run, and the limit is advisory (see the module docstring)
+        # so the supervisor's kill is what the number actually relies on.
+        print(
+            f"[wrapper] mlx memory limit {int(limit) / 2**30:.1f} GiB "
+            f"(was {previous / 2**30:.2f} GiB) — ADVISORY, not enforced by MLX",
+            file=sys.stderr,
+        )
 
     from mflux.models.qwen21.cli.qwen21_generate import main as mflux_main
 

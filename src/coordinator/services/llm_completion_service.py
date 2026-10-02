@@ -17,6 +17,7 @@ from ollama._types import ResponseError
 
 from ..models.sampling_presets import SamplingConfig
 from ..config import get_settings
+from .resource_arbiter import guard_chat_model
 
 logger = logging.getLogger(__name__)
 
@@ -200,6 +201,7 @@ class LLMCompletionService:
             RuntimeError: If Ollama model not found or other errors
         """
         try:
+            guard_chat_model("completion")
             return self.llm.invoke(prompt).strip()
         except ResponseError as e:
             msg = str(e)
@@ -218,6 +220,7 @@ class LLMCompletionService:
         not-found error handling. Returns (stripped_text, generation_info_dict).
         """
         try:
+            guard_chat_model("completion (stats)")
             result = self.llm.generate([prompt])
             gen = result.generations[0][0]
             return gen.text.strip(), (gen.generation_info or {})

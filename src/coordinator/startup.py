@@ -80,6 +80,7 @@ from .di.services import (  # noqa: F401 - re-exported for startup.get_X()/init_
     get_memory_fact_repo,
     get_memory_manager,
     get_neo4j_driver,
+    get_resource_arbiter,
     get_tool_interceptor,
     close_graph_driver,
     init_brave_client,
@@ -251,6 +252,11 @@ def initialize_all():
         import threading as _threading
         def _prewarm_semantic():
             try:
+                # Nobody is waiting on a prewarm thread, so waiting beats
+                # failing. A request path must NEVER call this (a chat turn
+                # would hang past the client's timeout) -- it refuses instead.
+                from . import startup as _st
+                _st.get_resource_arbiter().wait_for_idle(timeout=900)
                 from .tools.semantic_router import warm_centroids
                 # Semantic router is always primary (ROUTING_SEMANTIC_PRIMARY
                 # retired 2026-07-04) → always warm the primary centroid set.
@@ -273,6 +279,11 @@ def initialize_all():
         from .persona_memory import build_system_prompt as _build_sp
 
         def _prewarm_prompts():
+            # This is the thread that pulls the CHAT model into VRAM at boot:
+            # build_system_prompt can trigger a CV-summary LLM call. Starting it
+            # during a generation is the single worst-timed 17 GiB load there is.
+            from . import startup as _st
+            _st.get_resource_arbiter().wait_for_idle(timeout=900)
             cards = _load_all_cards_cached()
             for card in cards:
                 key = card.get("key")
