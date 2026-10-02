@@ -285,6 +285,13 @@ def _complete_or_503(card, system: str, user_prompt: str, *, log_context: str) -
     try:
         client = create_llm_client(card)
         return client.complete(system=system, user_prompt=user_prompt)
+    except ResourceBusyError:
+        # NOT a 503 and NOT an outage. The machine is deliberately leased to a
+        # generation and the companion model is unloaded for it. Re-raised
+        # untouched so the app-level handler can answer in voice; masking it
+        # here is what made a correct refusal read as "Something went wrong on
+        # my end" twice in a row while an image rendered normally.
+        raise
     except Exception as e:
         logger.error(f"{log_context} LLM completion failed: {e}", exc_info=True)
         raise HTTPException(
@@ -446,8 +453,28 @@ def _try_tool_brain(
         # tool. Native calling is unreliable at picking video_search among four
         # web tools (choice paralysis) but reliably calls the one tool it's
         # given — the regex already knows the type, so don't leave it to chance.
-        from ..tools.intent_classifier import media_search_type
-        forced = media_search_type(body.message)
+        from ..tools.intent_classifier import generation_intent, media_search_type
+
+        # GENERATION NARROWING, checked BEFORE the media-search narrowing
+        # because "draw me a picture of X" contains an art noun and would
+        # otherwise be read as a request to FIND one.
+        #
+        # Identical mechanism and identical reason to the media rule below:
+        # native calling is unreliable at picking one tool among several but
+        # reliably calls the one tool it is given. Measured here before this
+        # existed — on five natural drawing requests gwen fired 0/5 and eeva
+        # 3/5, and on the misses both told the user the image was coming.
+        #
+        # Keyed on the MESSAGE, never the persona: any persona holding
+        # `generate_image` gets this, and nothing here knows a persona name.
+        wants_generation = False
+        if generation_intent(body.message):
+            gen_specs = [s for s in web_specs if s.name == "generate_image"]
+            if gen_specs:  # only for a persona actually granted the tool
+                web_specs = gen_specs
+                wants_generation = True
+
+        forced = None if wants_generation else media_search_type(body.message)
         if forced:
             want = f"{forced}_search"
             narrowed = [s for s in web_specs if s.name == want]
@@ -524,7 +551,20 @@ def _try_tool_brain(
             result = svc.run(persona_card=card, system_prompt=tb_system,
                              user_message=body.message, history=hist, tools=tools,
                              sampling_overrides=get_persona_sampling_overrides(card),
-                             prose_expected=(intent != QueryIntent.NEEDS_WEB_SEARCH))
+                             # A narrowed generation turn decides at the
+                             # DECISION temperature, not the persona's prose
+                             # temperature. Measured 6 runs per arm with one
+                             # tool offered: eeva 3/6 -> 6/6. It is null for
+                             # gwen (3/6 both ways), so this is not the whole
+                             # answer — but it is free here. The usual
+                             # objection, that prose_expected=False costs a
+                             # second generation (~16 tok/s, TB6), does not
+                             # bind on a turn whose user is about to wait
+                             # five and a half minutes anyway.
+                             prose_expected=(
+                                 False if wants_generation
+                                 else intent != QueryIntent.NEEDS_WEB_SEARCH
+                             ))
         finally:
             # Reset rather than leave it set: this thread is returned to the
             # anyio pool and will serve a different session's turn next. A
@@ -577,6 +617,30 @@ def _try_tool_brain(
             t["tool"] for t in result.tool_trace
             if t.get("allowed") and t.get("tool") in _SIDE_EFFECT_TOOLS
         ]
+
+        # THE FALSE PROMISE. She was asked for a picture, the surface was
+        # narrowed to the one tool, and she still did not call it — but she
+        # says "your image is on the way" anyway. Measured: on the misses she
+        # promised 1 in 5 times, and a promise with no job behind it is worse
+        # than a refusal, because nothing ever arrives and nothing ever errors.
+        #
+        # The condition is PREVENTED rather than the lie detected: no attempt
+        # is made to read her prose for a promise. If a generation was asked
+        # for and no job exists, her answer does not stand.
+        if wants_generation and not side_effect_tools:
+            logger.warning(
+                "[ToolBrain] generation intent matched but generate_image did "
+                "not fire — replacing the reply so it cannot claim otherwise"
+            )
+            metadata.source_type = SourceType.LLM
+            metadata.tools_used = []
+            from ..services import persona_lines
+
+            return _build_llm_response(
+                persona_lines.line(card.get("key", ""), "image_not_started"),
+                body.message, persona_name, metadata,
+                word_substitutions=card.get("word_substitutions"),
+            )
         if result.status == ST_ANSWERED and result.answer and side_effect_tools \
                 and not result.used_search:
             metadata.source_type = SourceType.TOOL_BRAIN
@@ -643,37 +707,31 @@ def _try_tool_brain(
 def chat(body: ChatBody):
     """Chat with a persona, with autonomous tool support (web search, Solana wallet) for MCP-capable personas."""
 
-    # A generation holds the machine and the companion model is unloaded for
-    # it, so every completion path raises ResourceBusyError for ~5.5 minutes.
-    # Caught HERE, at the single entry point, rather than at each of the six
-    # guard sites: the refusal is one condition with one correct answer, and
-    # spreading it would guarantee a path that renders it differently.
-    #
-    # MEASURED 2026-10-02: without this the user saw "Something went wrong on
-    # my end. Try again in a moment." twice in a row while an image they had
-    # just asked for was generating normally. The system was working exactly
-    # as designed and said it had broken — which, for a companion, is worse
-    # than the wait it was reporting.
-    try:
-        return _chat_inner(body)
-    except ResourceBusyError as exc:
-        logger.info("[Chat] refused while the machine is leased: %s", exc)
-        return _busy_drawing_response(body)
+    # The ResourceBusyError raised while a generation holds the machine is
+    # handled APP-WIDE (see server.py), not here. It was caught here first,
+    # which fixed /chat and left the endpoint the Telegram gateway actually
+    # uses — POST /sessions/{id}/chat — still answering "Something went wrong
+    # on my end". Fixing one call site of a condition that has six is this
+    # repo's own recorded failure, and I repeated it.
+    return _chat_inner(body)
 
 
-def _busy_drawing_response(body: ChatBody) -> dict:
+def busy_drawing_body(persona_key: str = "") -> dict:
     """What she says while a picture is rendering.
 
     Plain, in-character, and honest about the cause. No parse_mode, no error
     code, and deliberately no mention of a model being unloaded — that is an
     implementation detail the person on the other end did not ask about.
     """
+    from ..services import persona_lines
+
     metadata = ResponseMetadata(source_type=SourceType.LLM, tools_used=[])
+    # ⚠️ The companion model is UNLOADED right now, so this cannot be
+    # generated here — `persona_lines.line` would fail and fall back. The
+    # worker warms `image_busy` BEFORE it evicts, which is the only moment
+    # this line can be in voice at all.
     return {
-        "answer": (
-            "I'm still drawing — it takes me a few minutes and I can't talk "
-            "while I do it. I'll send it over as soon as it's done."
-        ),
+        "answer": persona_lines.line(persona_key, "image_busy"),
         "message_flow": "single",
         "message_count": 1,
         "used_search": False,

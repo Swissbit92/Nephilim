@@ -33,6 +33,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from ...config import get_settings
@@ -123,6 +124,61 @@ class ImageGenWorker:
                 except Exception:
                     logger.exception("[ImageGen] could not even record the failure")
 
+    # ---------- adopting a job that outlived the coordinator ----------
+
+    def adopt(self, job) -> None:
+        """Take over a generation that is still running from a previous process.
+
+        THE LEASE DOES NOT SURVIVE A RESTART BUT THE JOB DOES, and that
+        asymmetry is a swap-storm waiting to happen: `start_new_session=True`
+        keeps the subprocess alive across a launchd restart, the sweep adopts
+        its row, and then nothing holds the arbiter — so the next chat turn
+        reloads 16-19 GiB of companion model alongside a generation already
+        peaking at 20 GB on a 48 GB box. Found by reading, before it fired.
+
+        So adoption re-takes the lease and watches the EXISTING process to
+        completion. It never spawns: the generator is already running, and a
+        second one would be the collision twice over.
+
+        Runs on its own thread because it blocks for the remainder of the job —
+        up to five and a half minutes — and lifespan startup must not.
+        """
+        thread = threading.Thread(
+            target=self._adopt_blocking, args=(job,),
+            name=f"image-gen-adopt-{job.id[:8]}", daemon=True,
+        )
+        thread.start()
+
+    def _adopt_blocking(self, job) -> None:
+        cfg = get_settings().image_gen
+        job_dir = Path(job.job_dir)
+        try:
+            with self._arbiter.exclusive(f"image-gen:{job.id} (adopted)"):
+                logger.info(
+                    "[ImageGen] adopted %s (pid %s) — holding the machine for it",
+                    job.id, job.pid,
+                )
+                self.current_job_id = job.id
+                spawned = _Adopted(pid=job.pid or 0, pgid=job.pgid or 0,
+                                   proc_start=job.proc_start)
+                outcome = self._watch(job, spawned, job_dir, cfg)
+                if outcome is not None:
+                    self._repo.finish(job.id, status=JobStatus.FAILED, error=outcome)
+                else:
+                    self._finish_from_disk(job, job_dir)
+        except ResourceBusyError:
+            # Another job holds the machine. Cannot happen on the startup path
+            # (the sweep runs before the worker), but an adopted job must not
+            # crash the thread if it ever does.
+            logger.warning("[ImageGen] could not adopt %s — machine is busy", job.id)
+        except Exception:
+            logger.exception("[ImageGen] adoption of %s failed", job.id)
+        finally:
+            self.current_job_id = None
+            st = get_settings()
+            repin(st.ollama.base, st.ollama.model,
+                  keep_alive=type(st.ollama).wire_keep_alive(st.ollama.keep_alive))
+
     # ---------- one job ----------
 
     def run_job(self, job) -> None:
@@ -142,6 +198,18 @@ class ImageGenWorker:
 
     def _run_under_lease(self, job, cfg) -> None:
         st = get_settings()
+
+        # 0. ⚠️ ORDER IS LOAD-BEARING: warm the in-voice "I'm still drawing"
+        # line BEFORE the model is evicted. That line is said exactly when the
+        # companion model is gone, so this is the only moment it can be
+        # generated at all. Evict first and the one line the user sees most
+        # during a generation is the one guaranteed to be a canned fallback.
+        from ..persona_lines import warm as warm_lines
+
+        try:
+            warm_lines(job.persona_key, ("image_busy",))
+        except Exception:  # noqa: BLE001 — phrasing must never fail a job
+            logger.exception("[ImageGen] could not warm the busy line")
 
         # 1. Evict the chat model, and VERIFY it left. The 200 is not evidence.
         result = unload(st.ollama.base, st.ollama.model, timeout_seconds=120)
@@ -341,3 +409,17 @@ def _tail(job_dir: Path, limit: int = 300) -> str:
         return ""
     last = text.strip().splitlines()[-1:] or [""]
     return f" — {last[0][-limit:]}" if last[0] else ""
+
+
+@dataclass(frozen=True)
+class _Adopted:
+    """The subset of a Spawned that an adopted job can reconstruct from its row.
+
+    There is no Popen: we are not this process's parent and never will be, so
+    `_watch` must rely only on the job lock (which the child still holds) and
+    on pgid/proc_start for cancellation. That is exactly what it does.
+    """
+
+    pid: int
+    pgid: int
+    proc_start: float | None

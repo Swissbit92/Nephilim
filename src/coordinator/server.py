@@ -31,6 +31,7 @@ from .routes.notifications import router as notifications_router
 from .routes.personas import router as personas_router
 from .routes.sessions import router as sessions_router
 from .routes.wallet import router as wallet_router
+from .services.resource_arbiter import ResourceBusyError
 from .startup import get_brave_client, get_session_repo, initialize_all
 
 logging.basicConfig(level=logging.INFO)
@@ -122,6 +123,58 @@ app.include_router(nephilim_router)
 app.include_router(notifications_router)
 app.include_router(wallet_router)
 app.include_router(auth_router)
+
+
+# ----------------- Resource-busy handling -----------------
+
+@app.exception_handler(ResourceBusyError)
+async def _resource_busy(request, exc: ResourceBusyError):
+    """A generation holds the machine — answer in voice, not as a failure.
+
+    APP-WIDE rather than per-route, deliberately. The first version of this
+    caught it inside `routes/chat.py::chat`, which fixed `/chat` and left
+    `POST /sessions/{id}/chat` — the endpoint the Telegram gateway actually
+    uses — still returning 503 "LLM service temporarily unavailable". Measured
+    live: the user asked "How are you today?" while an image they had just
+    requested was rendering normally and was told twice that something had
+    gone wrong.
+
+    HTTP 200, not 503: nothing failed. A 5xx makes every client treat a
+    correct, expected refusal as an outage, and the gateway renders it as
+    MSG_ERROR. The body is chat-shaped so existing clients parse it with no
+    change at all.
+    """
+    logger.info("[Busy] refused while the machine is leased: %s", exc)
+    from .routes.chat import busy_drawing_body
+
+    # The persona is on the request body, which an exception handler does not
+    # get. Read it back so the line is HERS; an unreadable body degrades to
+    # the voiceless fallback rather than failing the turn.
+    persona = ""
+    try:
+        body = await request.json()
+        persona = str(body.get("persona") or "")
+    except Exception:  # noqa: BLE001
+        pass
+    if not persona:
+        persona = _persona_for_session_path(request)
+
+    return JSONResponse(status_code=200, content=busy_drawing_body(persona))
+
+
+def _persona_for_session_path(request) -> str:
+    """Recover the persona for POST /sessions/{id}/chat, which does not carry
+    one in its body — the session row knows it."""
+    try:
+        parts = request.url.path.strip("/").split("/")
+        if len(parts) >= 2 and parts[0] == "sessions":
+            from .startup import get_session_repo
+
+            row = get_session_repo().get_session(parts[1])
+            return (row or {}).get("persona_key", "") or ""
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
 
 
 # ----------------- Health & Debug Endpoints -----------------

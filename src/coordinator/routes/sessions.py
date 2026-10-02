@@ -23,7 +23,7 @@ from ..schemas import (
     SourceType,
     UpdateSessionBody,
 )
-from ..services import media_storage
+from ..services import media_storage, persona_lines
 from ..services.media_fixture import build_probe_png
 from ..services.media_storage import MediaStorageError
 
@@ -301,6 +301,15 @@ def clear_session_note(session_id: str):
     return {"ok": True, "cleared": cleared}
 
 
+def _persona_of(session_id: str) -> str:
+    """The persona a session belongs to, for an in-voice line. '' if unknown."""
+    try:
+        row = startup.get_session_repo().get_session(session_id)
+        return (row or {}).get("persona_key", "") or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 @router.post("/sessions/{session_id}/media/fixture")
 def create_fixture_media(session_id: str):
     """Store a generated probe PNG and return it in a CHAT-SHAPED response.
@@ -342,11 +351,11 @@ def create_fixture_media(session_id: str):
         sha256=stored.sha256,
         width=stored.width,
         height=stored.height,
-        caption="Here, I made this for you.",
+        caption=persona_lines.line(_persona_of(session_id), "image_ready"),
     )
     metadata = ResponseMetadata(source_type=SourceType.LLM, media=[item])
     return {
-        "answer": "Here, I made this for you.",
+        "answer": item.caption,
         "message_flow": "single",
         "message_count": 1,
         "used_search": False,

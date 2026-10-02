@@ -563,3 +563,84 @@ def test_the_sweeper_survives_a_failing_sweep(repo):
             _time.sleep(0.05)
         sweeper.stop()
     assert len(calls) >= 3, "the sweeper died on the first exception"
+
+
+# ---------- adoption: the lease does not survive a restart, the job does ----------
+
+
+def test_adoption_re_takes_the_lease_for_a_surviving_job(repo, tmp_path):
+    """THE asymmetry that would have caused a swap storm.
+
+    `start_new_session=True` keeps a generation alive across a coordinator
+    restart — that is the whole point. But the arbiter's lease is in-memory
+    and dies with the process. So after a restart the subprocess is still
+    peaking at ~20 GB while nothing holds the machine, and the next chat turn
+    reloads 16-19 GiB of companion model on top of it. On a 48 GB box that is
+    the twenty-minute unresponsive Mac this subsystem exists to prevent.
+
+    Adoption must therefore re-take the lease, not merely leave the row alone.
+    """
+    import time as _time
+
+    from src.coordinator.services.image_gen.worker import ImageGenWorker
+    from src.coordinator.services.resource_arbiter import ResourceArbiter
+
+    job_dir = tmp_path / "survivor"
+    job_dir.mkdir()
+    spawned = sv.spawn(job_dir, ["/bin/sh", "-c", "sleep 20"])
+    try:
+        job = _running_with_dir(repo, job_dir)
+        arbiter = ResourceArbiter()
+        assert not arbiter.is_exclusive(), "precondition: nothing holds the machine"
+
+        worker = ImageGenWorker(repo, arbiter)
+        with patch("src.coordinator.services.image_gen.worker.repin"):
+            worker.adopt(job)
+            deadline = _time.monotonic() + 5
+            while _time.monotonic() < deadline and not arbiter.is_exclusive():
+                _time.sleep(0.05)
+            assert arbiter.is_exclusive(), (
+                "a surviving generation was adopted WITHOUT the lease — chat "
+                "would reload the companion model on top of it"
+            )
+            assert "adopted" in arbiter.describe()
+    finally:
+        os.killpg(spawned.pgid, 9)
+        spawned.popen.wait(timeout=5)
+
+
+def test_adoption_never_spawns_a_second_generator(repo, tmp_path):
+    """The generator is already running. A second would be the collision
+    twice over."""
+    from src.coordinator.services.image_gen.worker import ImageGenWorker
+    from src.coordinator.services.resource_arbiter import ResourceArbiter
+
+    job_dir = tmp_path / "nospawn"
+    job_dir.mkdir()
+    (job_dir / sv.RC_NAME).write_text("0")  # already finished
+    job = _running_with_dir(repo, job_dir)
+
+    worker = ImageGenWorker(repo, ResourceArbiter())
+    with patch("src.coordinator.services.image_gen.worker.sv.spawn") as spawn, \
+            patch("src.coordinator.services.image_gen.worker.repin"):
+        worker._adopt_blocking(job)
+    spawn.assert_not_called()
+
+
+def test_adoption_finalises_a_job_that_finished_while_we_were_down(repo, tmp_path):
+    from src.coordinator.services.image_gen.worker import ImageGenWorker
+    from src.coordinator.services.resource_arbiter import ResourceArbiter
+
+    job_dir = tmp_path / "done"
+    job_dir.mkdir()
+    (job_dir / sv.RC_NAME).write_text("0")
+    (job_dir / sv.VERIFIED_NAME).write_text("ok")
+    _write_png(job_dir / sv.OUTPUT_NAME)
+    job = _running_with_dir(repo, job_dir)
+
+    worker = ImageGenWorker(repo, ResourceArbiter())
+    with patch("src.coordinator.services.image_gen.worker.repin"), \
+            patch.object(worker, "_store_for_session") as store:
+        store.return_value = type("S", (), {"path": job_dir / sv.OUTPUT_NAME})()
+        worker._adopt_blocking(job)
+    assert repo.get(job.id).status == JobStatus.SUCCEEDED

@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -322,10 +322,9 @@ def test_a_busy_machine_produces_an_in_voice_reply_not_an_error():
     broken. For a companion that is worse than the wait it was reporting —
     and it trains the user to distrust a correct refusal.
     """
-    from src.coordinator.routes.chat import _busy_drawing_response
-    from src.coordinator.schemas import ChatBody
+    from src.coordinator.routes.chat import busy_drawing_body
 
-    resp = _busy_drawing_response(ChatBody(persona="gwen", message="how are you"))
+    resp = busy_drawing_body()
 
     assert "drawing" in resp["answer"]
     assert resp["message_flow"] == "single"
@@ -336,17 +335,206 @@ def test_a_busy_machine_produces_an_in_voice_reply_not_an_error():
         assert forbidden not in resp["answer"], f"{forbidden!r} leaked into the reply"
 
 
-def test_the_chat_entry_point_catches_the_refusal():
-    """Caught at the ONE entry point, not at each of the six guard sites: the
-    refusal is one condition with one correct answer, and spreading it would
-    guarantee a path that renders it differently."""
+def test_every_persona_route_is_covered_by_the_busy_handler():
+    """THE fix I got wrong the first time.
+
+    I caught ResourceBusyError inside `routes/chat.py::chat`, which fixed
+    `/chat` and left `POST /sessions/{id}/chat` — the endpoint the Telegram
+    gateway actually uses — still returning 503 "LLM service temporarily
+    unavailable". One call site of a condition that has several is this
+    repo's own recorded failure and I repeated it within the hour.
+
+    An app-level handler covers every route including ones not yet written,
+    which is why the assertion is about the HANDLER and not about any route.
+    """
+    from src.coordinator.server import app
+    from src.coordinator.services.resource_arbiter import ResourceBusyError
+
+    assert ResourceBusyError in app.exception_handlers, (
+        "the app-level ResourceBusyError handler is gone — a chat turn during "
+        "a generation will surface as a 503 on every route again"
+    )
+
+
+def test_the_busy_handler_answers_200_not_5xx():
+    """A 5xx makes every client treat a correct, expected refusal as an
+    outage; the gateway renders it as MSG_ERROR. Nothing failed."""
+    import asyncio
+
+    from src.coordinator.server import app
+    from src.coordinator.services.resource_arbiter import ResourceBusyError
+
+    handler = app.exception_handlers[ResourceBusyError]
+    resp = asyncio.run(handler(None, ResourceBusyError("leased for 42s")))
+    assert resp.status_code == 200
+    assert b"drawing" in resp.body
+    assert b"leased" not in resp.body, "the internal reason leaked to the user"
+
+
+def test_complete_or_503_lets_the_busy_error_through():
+    """It wrapped EVERY exception into a 503, which is what hid the refusal."""
     import inspect
 
     from src.coordinator.routes import chat as chat_mod
 
-    src = inspect.getsource(chat_mod.chat)
-    assert "ResourceBusyError" in src, (
-        "the chat entry point no longer catches ResourceBusyError — a chat "
-        "turn during a generation will surface as a crash again"
+    src = inspect.getsource(chat_mod._complete_or_503)
+    assert "except ResourceBusyError" in src, (
+        "_complete_or_503 masks the busy refusal as a 503 again"
     )
-    assert "_busy_drawing_response" in src
+
+
+# ---------- the generation trigger: a property of the MESSAGE ----------
+
+
+@pytest.mark.parametrize("phrase", [
+    "draw me a fox in the snow",
+    "make me a picture of a cat",
+    "generate an image of a fox",
+    "paint me a field of poppies",
+    "sketch a harbour at night",
+    "create an illustration of a lake",
+    "use your image generator: a fox",
+    "can you draw a mountain lake for me",
+])
+def test_generation_intent_fires_on_a_drawing_request(phrase):
+    from src.coordinator.tools.intent_classifier import generation_intent
+
+    assert generation_intent(phrase) is True
+
+
+@pytest.mark.parametrize("phrase", [
+    # SEARCH, not generation — media_search_type owns these
+    "show me a picture of a fox",
+    "find me images of foxes",
+    # passive mention
+    "that painting you described earlier",
+    # figurative: the noun requirement is what keeps these out, exactly as it
+    # does for bare "find me" roleplay in the media rule
+    "draw me closer",
+    "make me yours",
+    "make me a coffee",
+    "you make me happy",
+    "create a problem for yourself",
+    "what is the weather tomorrow",
+])
+def test_generation_intent_stays_out_of_roleplay_and_search(phrase):
+    from src.coordinator.tools.intent_classifier import generation_intent
+
+    assert generation_intent(phrase) is False
+
+
+def test_generation_and_media_search_never_both_claim_a_turn():
+    """They narrow the surface to DIFFERENT single tools. If both matched,
+    whichever is checked first would silently win and the other phrasing
+    class would route to the wrong tool forever."""
+    from src.coordinator.tools.intent_classifier import (
+        generation_intent,
+        media_search_type,
+    )
+
+    for phrase in ("draw me a picture of a fox", "show me a picture of a fox",
+                   "find me images of foxes", "paint me a sunset",
+                   "make me a picture of a cat", "get me some photos of cats"):
+        assert not (generation_intent(phrase) and media_search_type(phrase)), (
+            f"{phrase!r} matched BOTH rules"
+        )
+
+
+def test_the_trigger_knows_no_persona_names():
+    """A general rule, by request. A persona-specific trigger would be a
+    second thing to keep in sync with the grant, and the two would drift."""
+    import inspect
+
+    from src.coordinator.tools import intent_classifier
+
+    src = inspect.getsource(intent_classifier.generation_intent)
+    for name in ("gwen", "eeva", "nephilim", "persona"):
+        assert name not in src.lower(), f"the trigger references {name!r}"
+
+
+# ---------- in-voice lines, not status strings ----------
+
+
+def test_the_busy_line_is_warmed_BEFORE_the_model_is_evicted():
+    """⚠️ THE ordering constraint.
+
+    "I'm still drawing" is said exactly when the arbiter has unloaded the
+    companion model — so it cannot be generated at the moment it is needed.
+    The worker warms it first. Evict before warming and the single line a
+    user sees most during a generation is the one guaranteed to be canned.
+    """
+    import inspect
+
+    from src.coordinator.services.image_gen import worker as w
+
+    src = inspect.getsource(w.ImageGenWorker._run_under_lease)
+    assert src.index("warm_lines") < src.index("unload("), (
+        "the busy line is warmed AFTER the eviction — it can never be in voice"
+    )
+
+
+def test_every_user_facing_image_line_is_persona_generated():
+    """A general rule, by request: these are things SHE says, not status
+    strings. The hardcoded versions are fallbacks for an unreachable model
+    and must live only in persona_lines."""
+    import pathlib
+
+    from src.coordinator.services import persona_lines
+
+    root = pathlib.Path(__file__).resolve().parents[3] / "src" / "coordinator"
+    canned = [
+        "Here, I made this for you.",
+        "I tried to make that picture and it didn't work out.",
+        "I stopped making that picture.",
+    ]
+    offenders = []
+    for path in sorted(root.rglob("*.py")):
+        if path.name == "persona_lines.py":
+            continue  # the fallbacks legitimately live here
+        # CODE lines only. A comment may quote a canned line as the example
+        # of what not to do — that is documentation, not a message anyone
+        # receives, and matching it would push the explanation out of the file.
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            stripped = raw.lstrip()
+            if stripped.startswith("#"):
+                continue
+            for phrase in canned:
+                if phrase in raw:
+                    offenders.append(f"{path.relative_to(root)}: {phrase!r}")
+    assert not offenders, (
+        "a canned user-facing line escaped persona_lines: " + "; ".join(offenders)
+    )
+    # ...and every situation the code asks for must have a fallback, or an
+    # unreachable model yields an empty message.
+    assert set(persona_lines.SITUATIONS) == set(persona_lines._FALLBACK)
+
+
+def test_a_line_falls_back_rather_than_failing_when_the_model_is_gone():
+    from src.coordinator.services import persona_lines
+
+    persona_lines.reset_cache()
+    with patch.object(persona_lines, "_generate", return_value=[]):
+        got = persona_lines.line("gwen", "image_busy")
+    assert got == persona_lines._FALLBACK["image_busy"]
+
+
+def test_a_generated_line_is_cleaned_of_quotes_and_speaker_tags():
+    """Models wrap these in quotes, numbering and a 'Gwen:' prefix unprompted."""
+    from src.coordinator.services import persona_lines
+
+    assert persona_lines._clean('1. "Here you go, Daddy."') == "Here you go, Daddy."
+    assert persona_lines._clean("Gwen: all yours") == "all yours"
+    assert persona_lines._clean("```\nsomething\n```") == "something"
+    assert persona_lines._clean("") == ""
+
+
+def test_variants_are_cached_and_rotated():
+    """One cached line would be in voice and still read as canned."""
+    from src.coordinator.services import persona_lines
+
+    persona_lines.reset_cache()
+    with patch.object(persona_lines, "_generate",
+                      return_value=["one", "two", "three"]) as gen:
+        seen = {persona_lines.line("gwen", "image_ready") for _ in range(40)}
+        assert gen.call_count == 1, "regenerated instead of using the cache"
+    assert len(seen) > 1, "cached a single variant — it will sound scripted"

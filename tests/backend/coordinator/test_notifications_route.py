@@ -212,12 +212,18 @@ def test_the_payload_matches_the_frozen_contract(repo, client, tmp_path):
     job = _finished(repo, tmp_path)
     note = client.post("/notifications/claim").json()["notifications"][0]
 
-    # Normalise the parts that legitimately vary per run.
+    # Normalise the parts that legitimately vary per run. `answer` and
+    # `caption` are generated IN THE PERSONA'S VOICE, so they differ per
+    # persona and per call by design — the contract is about SHAPE, and
+    # pinning the wording here would make every voice change a cross-repo
+    # contract break.
     note["job_id"] = "JOB_ID"
+    note["answer"] = "<IN-VOICE>"
     if note["metadata"]["media"]:
         m = note["metadata"]["media"][0]
         m["path"], m["media_id"], m["sha256"] = "MEDIA_PATH", "MEDIA_ID", "SHA256"
         m["filename"] = "nephilim_MEDIA_ID.png"
+        m["caption"] = "<IN-VOICE>"
 
     assert note == fixture["succeeded"], (
         "the notification payload changed shape. The Telegram gateway parses "

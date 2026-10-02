@@ -43,10 +43,11 @@ from ..services import media_storage
 router = APIRouter(tags=["notifications"])
 logger = logging.getLogger(__name__)
 
-#: Plain text, never a parse_mode. These reach a user verbatim.
-_FAILED_TEXT = "I tried to make that picture and it didn't work out."
-_CANCELLED_TEXT = "I stopped making that picture."
-_SUCCESS_TEXT = "Here, I made this for you."
+#: Every user-facing line here is GENERATED IN THE PERSONA'S VOICE
+#: (services/persona_lines.py). A companion that speaks in character for
+#: forty turns and then says "Here, I made this for you." has broken
+#: character at the one moment the user is paying attention. The fallbacks
+#: live in persona_lines and are used only when the model is unreachable.
 
 
 def _repo():
@@ -75,6 +76,8 @@ def _media_for(job) -> list[MediaItem]:
         logger.warning("[Notify] %s succeeded but its file is unreadable: %s", job.id, exc)
         return []
 
+    from ..services import persona_lines
+
     dims = media_storage.png_dimensions(data)
     return [
         MediaItem(
@@ -85,7 +88,7 @@ def _media_for(job) -> list[MediaItem]:
             sha256=hashlib.sha256(data).hexdigest(),
             width=dims[0] if dims else None,
             height=dims[1] if dims else None,
-            caption=_SUCCESS_TEXT,
+            caption=persona_lines.line(job.persona_key, "image_ready"),
         )
     ]
 
@@ -94,17 +97,19 @@ def _render(job) -> dict:
     """One job as a chat-shaped payload the gateway can deliver as-is."""
     media = _media_for(job)
 
+    from ..services import persona_lines
+
     if job.status == JobStatus.SUCCEEDED and media:
-        answer = _SUCCESS_TEXT
+        answer = media[0].caption or persona_lines.line(job.persona_key, "image_ready")
     elif job.status == JobStatus.SUCCEEDED:
         # Succeeded but the file vanished. Say so — a success with nothing
         # attached is exactly the silent failure this feature was built to
         # avoid rendering as success.
-        answer = "I made that picture but I can't find it any more."
+        answer = persona_lines.line(job.persona_key, "image_missing")
     elif job.status == JobStatus.CANCELLED:
-        answer = _CANCELLED_TEXT
+        answer = persona_lines.line(job.persona_key, "image_cancelled")
     else:
-        answer = _FAILED_TEXT
+        answer = persona_lines.line(job.persona_key, "image_failed")
 
     metadata = ResponseMetadata(source_type=SourceType.LLM, media=media)
     return {

@@ -65,8 +65,12 @@ async def image_gen_lifespan(app=None) -> AsyncIterator[None]:
     # Order matters: a job still generating must be ADOPTED here, or the worker
     # would see a queued-looking row and start a second generation on top of
     # the first one.
+    adopted: list = []
     try:
         sweep(repo)
+        # Anything STILL running after the sweep outlived the last process and
+        # needs the lease re-taken for it — see ImageGenWorker.adopt.
+        adopted = [j for j in repo.active() if j.status == "running" and j.job_dir]
     except Exception:
         # A broken sweep must not stop the app booting; the worst case is a
         # stale row, which the periodic sweep retries.
@@ -74,6 +78,9 @@ async def image_gen_lifespan(app=None) -> AsyncIterator[None]:
 
     worker = ImageGenWorker(repo, arbiter, poll_seconds=cfg.poll_seconds)
     worker.start()
+
+    for job in adopted:
+        worker.adopt(job)
 
     # A PERIODIC sweep as well as the startup one. The startup sweep settles
     # what a restart left behind; this settles what happens while we are up —
