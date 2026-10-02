@@ -346,6 +346,11 @@ world's lore, opinions, creative writing, or anything the user tells you.
 </tool_guidance>"""
 
 
+#: Tools whose value is what they DO, not what they return. They answer
+#: without searching, so they need their own success branch — see below.
+_SIDE_EFFECT_TOOLS = frozenset({"generate_image"})
+
+
 def _try_tool_brain(
     *, card, system: str, body: ChatBody, history, intent,
     metadata: ResponseMetadata, persona_name: str, deps,
@@ -417,9 +422,23 @@ def _try_tool_brain(
         return None
 
     try:
-        # Web-toolset ONLY (respects a persona's granted subset, e.g. Gwen's
-        # image/video). Wallet specs are never placed in the native surface.
-        web_specs = [s for s in registry.specs_for_persona(card) if s.toolset == "web"]
+        # Web toolset, plus `image` ONLY when generation is switched on
+        # (respects a persona's granted subset, e.g. Gwen's image/video).
+        # Wallet specs are never placed in the native surface.
+        #
+        # Gated on the flag rather than simply added to the set, so that with
+        # IMAGE_GEN_ENABLED off this list is byte-for-byte what it was before
+        # generation existed. This is the hottest path in the repo — every
+        # persona's every turn runs it — and
+        # `test_the_offered_surface_is_unchanged_when_generation_is_off`
+        # asserts that identity rather than trusting the reading.
+        offered_toolsets = {"web"}
+        if get_settings().image_gen.enabled:
+            offered_toolsets.add("image")
+        web_specs = [
+            s for s in registry.specs_for_persona(card)
+            if s.toolset in offered_toolsets
+        ]
 
         # Media forcing: a colloquial "find me a video / find me images" query
         # deterministically NARROWS the surface to the single matching media
@@ -492,10 +511,25 @@ def _try_tool_brain(
         # schema is a fallback rather than the point. When the router actually
         # asked for a web search the first call is a tool DECISION and keeps the
         # deliberate low temperature — persona voice has no business in tool JSON.
-        result = svc.run(persona_card=card, system_prompt=tb_system,
-                         user_message=body.message, history=hist, tools=tools,
-                         sampling_overrides=get_persona_sampling_overrides(card),
-                         prose_expected=(intent != QueryIntent.NEEDS_WEB_SEARCH))
+        # The executor contract is (arguments, persona_card) and carries no
+        # session. Widening it would break the four search executors bound
+        # with two parameters, so the session travels in a ContextVar. Safe
+        # here specifically because the tool brain runs SYNCHRONOUSLY in this
+        # request's own thread: the value set here is the value it reads, and
+        # a concurrent turn in another thread has its own.
+        from ..tools.image_executor import current_session_id
+        _session_token = current_session_id.set(getattr(body, "session_id", "") or "")
+        try:
+            result = svc.run(persona_card=card, system_prompt=tb_system,
+                             user_message=body.message, history=hist, tools=tools,
+                             sampling_overrides=get_persona_sampling_overrides(card),
+                             prose_expected=(intent != QueryIntent.NEEDS_WEB_SEARCH))
+        finally:
+            # Reset rather than leave it set: this thread is returned to the
+            # anyio pool and will serve a different session's turn next. A
+            # leaked session id would make a later generate_image enqueue a job
+            # against the WRONG conversation, and it would look correct.
+            current_session_id.reset(_session_token)
 
         if result.status in (ST_HITL, ST_DELEGATE_WALLET):
             # Wallet stays entirely on the existing propose->confirm / read flow.
@@ -524,6 +558,33 @@ def _try_tool_brain(
                 "-> falling through to legacy (no citations stapled)"
             )
             return None
+
+        # A SIDE-EFFECT tool answered. This branch exists because the search
+        # gate below cannot serve one: `used_search` is set only for the web
+        # toolset, so a turn that queued an image generation would satisfy
+        # none of its conditions, `_try_tool_brain` would return None, and the
+        # LEGACY path would regenerate the turn from scratch. The job would be
+        # queued, the reply that mentioned it discarded, and the user would get
+        # an unrelated answer plus a picture arriving five minutes later with
+        # no explanation. Two generations for one turn, and the visible half
+        # is the wrong one.
+        #
+        # No citations are appended: nothing was searched, and stapling a
+        # Sources block onto "I've started drawing that" is the exact
+        # tool-fired-therefore-grounded confusion measured on this path before.
+        side_effect_tools = [
+            t["tool"] for t in result.tool_trace
+            if t.get("allowed") and t.get("tool") in _SIDE_EFFECT_TOOLS
+        ]
+        if result.status == ST_ANSWERED and result.answer and side_effect_tools \
+                and not result.used_search:
+            metadata.source_type = SourceType.TOOL_BRAIN
+            metadata.tools_used = side_effect_tools
+            logger.info("[ToolBrain] side-effect tools ran: %s", side_effect_tools)
+            return _build_llm_response(
+                result.answer, body.message, persona_name, metadata,
+                word_substitutions=card.get("word_substitutions"),
+            )
 
         if result.status == ST_ANSWERED and result.answer and result.used_search \
                 and result.search_results:

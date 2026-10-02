@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from .registry import register_tool
 from .tool_generators import get_brave_search_tool
+from .image_tool_generators import get_generate_image_tool
 from .web_tool_generators import (
     get_extract_tool,
     get_fetch_url_tool,
@@ -58,6 +59,19 @@ def register_builtin_tools() -> None:
     register_tool(
         "image_search", "web", get_image_search_tool,
         blast_radius="low", requires_hitl=False, nsfw_modulated=True,
+    )
+
+    # Its OWN toolset, not "web": web tools READ the internet, this one spends
+    # five and a half minutes of the whole machine. Grouping them would mean a
+    # persona granted web search silently also gets a GPU job.
+    #
+    # requires_hitl stays FALSE and that is deliberate, not an oversight:
+    # routes/chat.py routes ST_HITL to the WALLET handler, so setting it here
+    # would send an image request into the trade-proposal flow. The guard that
+    # belongs here is the throttle, which lives in the executor.
+    register_tool(
+        "generate_image", "image", get_generate_image_tool,
+        blast_radius="low", requires_hitl=False,
     )
     register_tool(
         "video_search", "web", get_video_search_tool,

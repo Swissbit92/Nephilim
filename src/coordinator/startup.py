@@ -79,6 +79,7 @@ from .di.services import (  # noqa: F401 - re-exported for startup.get_X()/init_
     get_episodic_memory_rag,
     get_fact_extraction_worker,
     get_fact_extractor,
+    get_generation_throttle,
     get_memory_fact_repo,
     get_memory_manager,
     get_neo4j_driver,

@@ -40,6 +40,7 @@ _fact_extraction_worker = None  # Optional[FactExtractionWorker]
 # HERMES-Agents Phase 3: deterministic tool-call interceptor (stateless singleton)
 _tool_interceptor = None
 _resource_arbiter = None
+_generation_throttle = None
 
 # ADR-014: the Neo4j driver. Untyped `= None` rather than Optional["Driver"] so
 # importing this module never pulls in the neo4j package — the same reason
@@ -108,6 +109,19 @@ def get_tool_interceptor():
         from ..services.tool_interceptor import ToolCallInterceptor
         _tool_interceptor = ToolCallInterceptor()
     return _tool_interceptor
+
+
+def get_generation_throttle():
+    """Get the shared image-generation throttle (lazy; the state IS the point).
+
+    One per process: a second instance would have its own cooldown and both
+    would believe the session was idle.
+    """
+    global _generation_throttle
+    if _generation_throttle is None:
+        from ..services.image_gen.throttle import GenerationThrottle
+        _generation_throttle = GenerationThrottle()
+    return _generation_throttle
 
 
 def get_resource_arbiter():

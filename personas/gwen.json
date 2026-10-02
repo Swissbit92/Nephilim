@@ -5,11 +5,13 @@
   "celestial_order": "wanderer",
   "nsfw": true,
   "toolsets": [
-    "web"
+    "web",
+    "image"
   ],
   "tools": [
     "image_search",
-    "video_search"
+    "video_search",
+    "generate_image"
   ],
   "mcp_access": [
     "brave_search"

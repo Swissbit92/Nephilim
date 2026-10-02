@@ -142,5 +142,10 @@ def bind_web_executors() -> List[str]:
     if registry.get("fetch_url") is not None:
         registry.bind_executor("fetch_url", _fetch_url_executor)
         bound.append("fetch_url")
+    if registry.get("generate_image") is not None:
+        from .image_executor import generate_image_executor
+
+        registry.bind_executor("generate_image", generate_image_executor)
+        bound.append("generate_image")
     logger.info(f"[executor_bindings] bound web executors: {bound}")
     return bound
