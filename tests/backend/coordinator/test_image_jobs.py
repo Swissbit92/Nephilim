@@ -495,3 +495,71 @@ def test_bare_testclient_does_not_run_lifespan():
     with TestClient(app):
         pass
     assert ran == ["startup", "shutdown"]
+
+
+# ---------- the periodic sweeper ----------
+
+
+def test_the_sweeper_settles_a_job_that_died_while_we_were_up(repo, tmp_path):
+    """The worker only claims QUEUED rows, so a job that died while RUNNING is
+    invisible to it forever. This is the only thing that will ever look at
+    that row again — without it the user waits for an image that never
+    arrives and never fails, which is worse than a failure."""
+    import time as _time
+
+    from src.coordinator.services.image_gen.lifespan import _PeriodicSweeper
+
+    job_dir = tmp_path / "dead"
+    job_dir.mkdir()  # no lock, no rc -> DIED
+    job = _running_with_dir(repo, job_dir)
+    assert repo.get(job.id).status == JobStatus.RUNNING
+
+    sweeper = _PeriodicSweeper(repo, interval_seconds=0.05)
+    sweeper.start()
+    try:
+        deadline = _time.monotonic() + 5
+        while _time.monotonic() < deadline:
+            if repo.get(job.id).status != JobStatus.RUNNING:
+                break
+            _time.sleep(0.05)
+    finally:
+        sweeper.stop()
+
+    settled = repo.get(job.id)
+    assert settled.status == JobStatus.FAILED, "a dead RUNNING row was never settled"
+    assert "without recording an exit code" in settled.error
+
+
+def test_the_sweeper_does_not_sweep_immediately(repo, tmp_path):
+    """The startup sweep has just run; sweeping again at once is duplication."""
+    from unittest.mock import patch
+
+    from src.coordinator.services.image_gen.lifespan import _PeriodicSweeper
+
+    with patch("src.coordinator.services.image_gen.reconcile.sweep") as swept:
+        sweeper = _PeriodicSweeper(repo, interval_seconds=30)
+        sweeper.start()
+        import time as _time
+        _time.sleep(0.2)
+        sweeper.stop()
+    swept.assert_not_called()
+
+
+def test_the_sweeper_survives_a_failing_sweep(repo):
+    """It is the last line of defence for a stuck row; it must not die."""
+    import time as _time
+    from unittest.mock import patch
+
+    from src.coordinator.services.image_gen.lifespan import _PeriodicSweeper
+
+    calls = []
+    with patch("src.coordinator.services.image_gen.reconcile.sweep",
+               side_effect=lambda r: calls.append(1) or (_ for _ in ()).throw(
+                   RuntimeError("boom"))):
+        sweeper = _PeriodicSweeper(repo, interval_seconds=0.05)
+        sweeper.start()
+        deadline = _time.monotonic() + 2
+        while _time.monotonic() < deadline and len(calls) < 3:
+            _time.sleep(0.05)
+        sweeper.stop()
+    assert len(calls) >= 3, "the sweeper died on the first exception"

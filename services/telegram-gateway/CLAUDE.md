@@ -1,5 +1,20 @@
 # services/telegram-gateway — Agent Context
 
+> **The gateway now does ONE thing on its own initiative: it polls for finished image jobs.**
+> Everything else here is still request/response — a Telegram update comes in, the coordinator
+> answers, the gateway relays. The notification poller (`eeva_telegram/notifications.py`,
+> started in `post_init`, cancelled in `post_shutdown` BEFORE the HTTP client closes) breaks
+> that symmetry because a generation takes ~331 s and cannot answer on the request that asked
+> for it. It still holds no logic: it claims a chat-shaped payload and hands it to the same
+> `relay.extract_media` + `_deliver_media` the chat path uses. It runs only when
+> `TG_MEDIA_ENABLED` is on.
+>
+> ⚠️ A claimed notification that is dropped is gone — the coordinator will not offer it again.
+> Every delivery failure must `nack` it. ⚠️ `asyncio.CancelledError` must never be swallowed in
+> that loop or shutdown hangs. ⚠️ Use `Application.create_task`, not `asyncio.create_task`: PTB
+> keeps a strong reference (a bare task can be garbage-collected mid-flight) and routes
+> exceptions to the error handler.
+
 Thin Telegram gateway to the NEPHILIM personas: relays Telegram messages to the coordinator's own session API (`../../src/coordinator/`, `http://127.0.0.1:8000`) and relays persona replies back. Single/dual user (allowlisted), text-only, no agent framework. Own venv, own tests, own launchd daemon — a separate **process**, not a separate repo (see [../../docs/LESSONS_LEARNED.md](../../docs/LESSONS_LEARNED.md#2026-07-04--telegram-gateway-built-standalone-folded-in-same-session) for why).
 
 **Ecosystem/repo context: don't re-read the coordinator's own CLAUDE.md on every turn — fetch it on demand.**
@@ -34,7 +49,7 @@ Repo root: [../../CLAUDE.md](../../CLAUDE.md) · Ecosystem: [../../../CLAUDE.md]
 python3.12 -m venv venv && ./venv/bin/pip install -e ".[dev]"
 
 # Dev loop (run from this directory)
-./venv/bin/pytest tests/ -q
+./venv/bin/python -m pytest tests/ -q
 ./venv/bin/ruff check . && ./venv/bin/ruff format --check .
 
 # Live smoke test (foreground run + manual checklist; no money at risk)

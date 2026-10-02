@@ -55,6 +55,16 @@ class ImageGenSettings(BaseSettings):
         ),
         alias="IMAGE_GEN_POLL_SECONDS",
     )
+    sweep_seconds: float = Field(
+        default=300.0, ge=30.0, le=3600.0,
+        description=(
+            "How often reconciliation re-runs while the app is up. The worker "
+            "only claims QUEUED rows, so a job that died while RUNNING is "
+            "invisible to it forever — this is the only thing that will ever "
+            "look at that row again. 5 minutes is about one generation."
+        ),
+        alias="IMAGE_GEN_SWEEP_SECONDS",
+    )
     steps: int = Field(
         default=25, ge=10, le=40,
         description="Denoise steps. 25 is what the bake-off measured at 332s.",

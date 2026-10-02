@@ -22,9 +22,9 @@ from .auth import AuthSettings
 from .chunking import ChunkingSettings
 from .graph import GraphSettings
 from .groundedness import GroundednessSettings
+from .image_gen import ImageGenSettings
 from .llm import OllamaSettings
 from .lore import LoreSettings
-from .image_gen import ImageGenSettings
 from .media import MediaSettings
 from .memory import MemorySettings
 from .routing import RoutingSettings
