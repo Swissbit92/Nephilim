@@ -287,3 +287,58 @@ def test_repin_reports_true_when_it_is_back():
     with patch.object(oa, "_post", return_value={}), \
             patch.object(oa, "_get", side_effect=_FakePS([["chat-model"]])):
         assert oa.repin("http://x", "chat-model") is True
+
+
+# ---------- the floor is calibrated, not argued ----------
+
+
+def test_the_memory_floor_clears_a_real_generation():
+    """Regression-pin for a constant that was measured WRONG.
+
+    `min_free_gb` was 6.0, chosen by reasoning. The first real end-to-end
+    generation on this machine (331 s, rc 0, valid 1024x1024 PNG) bottomed at
+    5.28 GiB free during the VAE decode — the actual peak, not the denoise
+    loop, which sat at 19.2 GiB. The watchdog entered its kill grace at
+    t≈310 s and the job completed at 331 s: it survived by about a second, and
+    a marginally slower run would have been killed while succeeding.
+
+    So the floor must stay clear of the measured minimum. If someone raises it
+    back above ~5 GiB, this fails and says why.
+    """
+    from src.coordinator.config.image_gen import ImageGenSettings
+
+    s = ImageGenSettings()
+    measured_floor_gib = 5.28
+    assert s.min_free_gb < measured_floor_gib, (
+        f"min_free_gb={s.min_free_gb} would kill a HEALTHY generation: a real "
+        f"run bottomed at {measured_floor_gib} GiB free and still succeeded."
+    )
+    # ...and must stay high enough to catch the case it exists for: a
+    # generation running alongside the 16-19 GiB chat model.
+    assert s.min_free_gb >= 1.0
+
+
+def test_a_healthy_generations_dip_never_breaches_the_floor():
+    """Replays the real run's free-memory trace against the configured floor.
+
+    Asserts the floor is never BREACHED, not merely that no kill fired. The
+    first version of this test ran the trace through the watchdog and checked
+    the return value — which could not fail for the reason it claimed, because
+    synthetic samples take no wall-clock time, so the grace period never
+    elapses and `sample()` returns False no matter how low the floor is. It
+    passed at the old, wrong 6.0 setting. Breach is the honest property: once
+    the floor is breached the kill is only a matter of the job lasting longer
+    than the grace.
+    """
+    from src.coordinator.config.image_gen import ImageGenSettings
+
+    floor = ImageGenSettings().min_free_gb
+    # Sampled from the real run: steady denoise, the decode dip, recovery.
+    trace = [19.19, 19.14, 19.21, 19.11, 19.17, 19.16, 19.13, 19.24,
+             19.33, 19.21, 19.25, 5.54, 5.28, 5.40, 20.97]
+    breaches = [g for g in trace if g < floor]
+    assert not breaches, (
+        f"a SUCCESSFUL generation dipped to {breaches} GiB, below the "
+        f"{floor} GiB floor — the watchdog would kill it once the dip "
+        f"outlasted the grace period"
+    )

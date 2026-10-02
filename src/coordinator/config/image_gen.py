@@ -70,24 +70,40 @@ class ImageGenSettings(BaseSettings):
         alias="IMAGE_GEN_MEMORY_LIMIT_GB",
     )
     min_free_gb: float = Field(
-        default=6.0, ge=1.0, le=24.0,
+        default=3.0, ge=1.0, le=24.0,
         description=(
-            "Kill the job if free+inactive system memory stays below this. The "
-            "only instrument that sees BOTH workloads: ps RSS reported 0.03 "
-            "GiB while MLX held 8.00 GiB, and 8 MiB while Ollama held 16.40 "
-            "GiB; kern.memorystatus_vm_pressure_level stayed NORMAL all the "
-            "way from 13.17 GiB free down to 7.23 GiB. Free memory tracked "
-            "both honestly."
+            "Kill the job if free+inactive system memory stays below this.\n\n"
+            "⚠️ CALIBRATED AGAINST A REAL RUN, after the reasoned value was "
+            "measured wrong. This was 6.0, picked by argument. The first full "
+            "generation on this machine (331 s, rc 0, valid 1024x1024 PNG) "
+            "bottomed out at **5.28 GiB free** during the final VAE decode — "
+            "which is the true memory peak, not the denoise loop, where it sat "
+            "comfortably at 19.2 GiB. At 6.0 the watchdog entered its kill "
+            "grace at t≈310 s and the job finished at 331 s: a SUCCESSFUL "
+            "generation survived by about one second, and would have been "
+            "killed non-deterministically on a slightly slower run.\n\n"
+            "3.0 keeps the protection while clearing the measured floor by "
+            "2.28 GiB. It still separates the two cases cleanly: a healthy "
+            "generation bottoms near 5.3 GiB, whereas a generation running "
+            "alongside the 16-19 GiB chat model would drive free memory "
+            "straight through zero into swap.\n\n"
+            "Free memory is the only instrument that sees both workloads: ps "
+            "RSS reported 0.03 GiB while MLX held 8.00 GiB, and 8 MiB while "
+            "Ollama held 16.40 GiB; kern.memorystatus_vm_pressure_level stayed "
+            "NORMAL from 13.17 GiB free down to 7.23 GiB."
         ),
         alias="IMAGE_GEN_MIN_FREE_GB",
     )
     min_free_grace_seconds: int = Field(
-        default=20, ge=5, le=300,
+        default=45, ge=5, le=300,
         description=(
             "How long free memory must stay below min_free_gb before the job "
             "is killed. A single dip is normal — macOS reclaims lazily, and "
             "killing a five-minute generation on one sample is worse than the "
-            "dip."
+            "dip. Raised 20 -> 45 by the same measurement that moved the "
+            "floor: the decode-stage dip is a real, sustained phase of a "
+            "healthy run, so the grace has to outlast it rather than expire "
+            "inside it."
         ),
         alias="IMAGE_GEN_MIN_FREE_GRACE_SECONDS",
     )
