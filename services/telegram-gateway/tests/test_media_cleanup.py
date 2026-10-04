@@ -104,7 +104,7 @@ async def test_nothing_recorded_is_not_an_error():
 async def test_only_the_deletable_are_sent_to_telegram():
     bot = _Bot()
     records = [_rec(1, 1), _rec(2, 99), _rec(3, 2)]
-    result = await remove_sent_media(bot, 111, records)
+    result = await remove_sent_media(bot, 111, records, now=NOW)
     assert bot.batches == [[1, 3]]
     assert (result.removed, result.retained) == (2, 1)
 
@@ -112,7 +112,7 @@ async def test_only_the_deletable_are_sent_to_telegram():
 async def test_batches_are_chunked_at_100():
     bot = _Bot()
     records = [_rec(i, 1) for i in range(250)]
-    result = await remove_sent_media(bot, 111, records)
+    result = await remove_sent_media(bot, 111, records, now=NOW)
     assert [len(b) for b in bot.batches] == [100, 100, 50]
     assert result.removed == 250
 
@@ -121,7 +121,7 @@ async def test_a_refused_batch_counts_as_failed_not_removed():
     """Never report a number we did not compute. A BadRequest means the whole
     batch was refused, so none of it is 'removed'."""
     bot = _Bot(fail=True)
-    result = await remove_sent_media(bot, 111, [_rec(1, 1), _rec(2, 1)])
+    result = await remove_sent_media(bot, 111, [_rec(1, 1), _rec(2, 1)], now=NOW)
     assert (result.removed, result.failed) == (0, 2)
     assert result.complete is False
 

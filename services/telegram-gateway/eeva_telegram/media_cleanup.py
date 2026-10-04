@@ -98,12 +98,27 @@ def partition_by_age(
     return deletable, too_old
 
 
-async def remove_sent_media(bot: Bot, chat_id: int, records: list[tuple[int, str]]) -> CleanupResult:
-    """Delete what Telegram still allows us to, and count the rest honestly."""
+async def remove_sent_media(
+    bot: Bot,
+    chat_id: int,
+    records: list[tuple[int, str]],
+    *,
+    now: datetime | None = None,
+) -> CleanupResult:
+    """Delete what Telegram still allows us to, and count the rest honestly.
+
+    `now` is injectable for the same reason `partition_by_age` takes one, and
+    it was missing here — which made this function's tests ROT BY
+    CONSTRUCTION. They built records relative to a frozen NOW in the test
+    file while the function read the real clock, so they passed on the day
+    they were written and went red three days later when every fixture
+    aged past the 47-hour window. A deterministic test of a time-dependent
+    function needs the clock passed in, not frozen on one side of the call.
+    """
     if not records:
         return CleanupResult()
 
-    deletable, too_old = partition_by_age(records)
+    deletable, too_old = partition_by_age(records, now=now)
     if too_old:
         logger.info(
             "[Media] %d message(s) past Telegram's 48h deletion window for chat_id=%s",
