@@ -71,7 +71,21 @@ class TestIntentScoping:
         assert resp is None
         assert "tools" not in cap  # loop never even ran
 
-    def test_neither_intent_returns_none(self):
+    def test_neither_intent_returns_none(self, monkeypatch):
+        """⚠️ The ungated-web flag is forced OFF here rather than inherited.
+
+        `TOOL_BRAIN_UNGATED_WEB` (ADR-008 TB6) deliberately engages the loop
+        on NEEDS_NEITHER turns with web tools only, and it is ON in the real
+        `.env`. This test asserts the DEFAULT scoping, so it has to establish
+        the default: inherited, it silently asserted the opposite of what the
+        operator had configured and failed with a perfectly good search
+        result. A test whose name states a condition must set that condition.
+        """
+        from src.coordinator.config import get_settings
+
+        monkeypatch.setenv("TOOL_BRAIN_UNGATED_WEB", "false")
+        get_settings.cache_clear()
+
         resp, _, cap = _invoke(_grounded(), intent=QueryIntent.NEEDS_NEITHER)
         assert resp is None
         assert "tools" not in cap

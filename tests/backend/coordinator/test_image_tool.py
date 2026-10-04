@@ -331,7 +331,29 @@ def test_the_session_contextvar_does_not_leak_between_turns():
 # ---------- a refusal during a generation must not read as a crash ----------
 
 
-def test_a_busy_machine_produces_an_in_voice_reply_not_an_error():
+#: Status-page vocabulary. A refusal that uses any of these reads as an
+#: outage report rather than as her.
+_STATUS_PAGE_WORDS = ("error", "Error", "503", "unavailable", "went wrong",
+                      "model", "unloaded", "arbiter", "lease")
+
+
+@pytest.fixture
+def busy_line(monkeypatch):
+    """Pin the in-voice line, so these tests do not depend on a live model.
+
+    ⚠️ They used to assert `"drawing" in answer`, which is text from
+    `persona_lines._FALLBACK` — used ONLY when the model is unreachable. So
+    they passed headless, failed as soon as a model was available, and
+    asserted the degraded path rather than the wiring. Worse, they would
+    have stayed green with in-voice generation entirely broken.
+    """
+    from src.coordinator.services import persona_lines
+    monkeypatch.setattr(persona_lines, "line",
+                        lambda persona_key, situation: f"<<{situation}>>")
+    return "<<image_busy>>"
+
+
+def test_a_busy_machine_produces_an_in_voice_reply_not_an_error(busy_line):
     """MEASURED LIVE 2026-10-02: while an image the user had JUST asked for was
     generating normally, two consecutive chat turns returned "Something went
     wrong on my end. Try again in a moment."
@@ -344,13 +366,25 @@ def test_a_busy_machine_produces_an_in_voice_reply_not_an_error():
 
     resp = busy_drawing_body()
 
-    assert "drawing" in resp["answer"]
+    assert resp["answer"] == busy_line, "the BUSY situation must be the one asked for"
     assert resp["message_flow"] == "single"
     assert resp["used_search"] is False
-    # It must read as HER, not as a status page.
-    for forbidden in ("error", "Error", "503", "unavailable", "went wrong",
-                      "model", "unloaded", "arbiter", "lease"):
-        assert forbidden not in resp["answer"], f"{forbidden!r} leaked into the reply"
+
+
+def test_the_canned_busy_line_is_not_a_status_page():
+    """Checked against the FALLBACK STRING ITSELF, not against whatever text
+    happened to be produced.
+
+    This is the line a user sees exactly when the model is gone — the one
+    moment it cannot be generated in voice — so it is the one most at risk
+    of being written like an error message, and the only one whose wording
+    is fixed enough to assert on.
+    """
+    from src.coordinator.services.persona_lines import _FALLBACK
+
+    canned = _FALLBACK["image_busy"]
+    for forbidden in _STATUS_PAGE_WORDS:
+        assert forbidden not in canned, f"{forbidden!r} leaked into the reply"
 
 
 def test_every_persona_route_is_covered_by_the_busy_handler():
@@ -374,7 +408,7 @@ def test_every_persona_route_is_covered_by_the_busy_handler():
     )
 
 
-def test_the_busy_handler_answers_200_not_5xx():
+def test_the_busy_handler_answers_200_not_5xx(busy_line):
     """A 5xx makes every client treat a correct, expected refusal as an
     outage; the gateway renders it as MSG_ERROR. Nothing failed."""
     import asyncio
@@ -385,7 +419,7 @@ def test_the_busy_handler_answers_200_not_5xx():
     handler = app.exception_handlers[ResourceBusyError]
     resp = asyncio.run(handler(None, ResourceBusyError("leased for 42s")))
     assert resp.status_code == 200
-    assert b"drawing" in resp.body
+    assert b"<<image_busy>>" in resp.body
     assert b"leased" not in resp.body, "the internal reason leaked to the user"
 
 

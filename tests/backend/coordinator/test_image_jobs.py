@@ -401,13 +401,23 @@ def _write_png(path: Path, w: int = 8, h: int = 8) -> None:
 # ---------- the lifespan ----------
 
 
-def test_lifespan_is_a_noop_when_disabled():
+def test_lifespan_is_a_noop_when_disabled(monkeypatch):
     """Off means off: no worker, and crucially NO SWEEP. Failing rows on a box
     where the feature is switched off would destroy state a re-enable could
-    still have used."""
+    still have used.
+
+    ⚠️ The flag is forced off HERE rather than inherited. This test named a
+    precondition it did not establish: with IMAGE_GEN_ENABLED exported true
+    it silently exercised the ENABLED path and failed on an uninitialised
+    repo. A test whose name states a condition must set that condition.
+    """
     import asyncio
 
+    from src.coordinator.config import get_settings
     from src.coordinator.services.image_gen.lifespan import image_gen_lifespan
+
+    monkeypatch.setenv("IMAGE_GEN_ENABLED", "false")
+    get_settings.cache_clear()
 
     async def run():
         with patch("src.coordinator.services.image_gen.reconcile.sweep") as swept:
