@@ -56,6 +56,8 @@ from .di.repositories import (  # noqa: F401 - re-exported for startup.get_X()/i
     _DB_PATH,
     cleanup_orphaned_sessions,
     get_emotional_state_repo,
+    get_image_job_repo,
+    get_media_repo,
     get_message_repo,
     get_seeker_progression_repo,
     get_session_note_repo,
@@ -71,15 +73,20 @@ from .di.repositories import (  # noqa: F401 - re-exported for startup.get_X()/i
     init_repositories,
 )
 from .di.services import (  # noqa: F401 - re-exported for startup.get_X()/init_X()
+    close_graph_driver,
     get_brave_client,
     get_conversation_summarizer,
     get_episodic_memory_rag,
     get_fact_extraction_worker,
     get_fact_extractor,
+    get_generation_throttle,
     get_memory_fact_repo,
     get_memory_manager,
+    get_neo4j_driver,
+    get_resource_arbiter,
     get_tool_interceptor,
     init_brave_client,
+    init_graph_driver,
     init_memory_manager,
     init_phase3_memory,
     prewarm_session_indexes,
@@ -126,6 +133,7 @@ def build_app_state() -> AppState:
         user_profile_repo=_safe(get_user_profile_repo),
         seeker_progression_repo=_safe(get_seeker_progression_repo),
         user_repo=_safe(get_user_repo),
+        media_repo=_safe(get_media_repo),
         memory_manager=_safe(get_memory_manager),
         conversation_summarizer=_safe(get_conversation_summarizer),
         episodic_memory_rag=get_episodic_memory_rag(),
@@ -191,6 +199,14 @@ def initialize_all():
     except Exception as e:
         logger.warning(f"Phase 3 initialization warning: {e}")
 
+    # ADR-014: the graph driver. No-ops entirely when GRAPH_ENABLED is false.
+    try:
+        init_graph_driver()
+    except Exception as e:
+        # init_graph_driver already swallows; this is the second net, because a
+        # graph outage must never be able to abort a boot.
+        logger.warning(f"Graph driver initialization warning: {e}")
+
     # Initialize Brave MCP
     try:
         init_brave_client()
@@ -238,6 +254,11 @@ def initialize_all():
         import threading as _threading
         def _prewarm_semantic():
             try:
+                # Nobody is waiting on a prewarm thread, so waiting beats
+                # failing. A request path must NEVER call this (a chat turn
+                # would hang past the client's timeout) -- it refuses instead.
+                from . import startup as _st
+                _st.get_resource_arbiter().wait_for_idle(timeout=900)
                 from .tools.semantic_router import warm_centroids
                 # Semantic router is always primary (ROUTING_SEMANTIC_PRIMARY
                 # retired 2026-07-04) → always warm the primary centroid set.
@@ -260,13 +281,27 @@ def initialize_all():
         from .persona_memory import build_system_prompt as _build_sp
 
         def _prewarm_prompts():
+            # This is the thread that pulls the CHAT model into VRAM at boot:
+            # build_system_prompt can trigger a CV-summary LLM call. Starting it
+            # during a generation is the single worst-timed 17 GiB load there is.
+            from . import startup as _st
+            _st.get_resource_arbiter().wait_for_idle(timeout=900)
             cards = _load_all_cards_cached()
             for card in cards:
                 key = card.get("key")
                 if not key:
                     continue
                 try:
+                    # BOTH call shapes, deliberately. lru_cache keys on the call's
+                    # (args, kwargs) shape, so f(key) and f(key, include_examples=True)
+                    # are DISTINCT entries -- measured: 0 hits, 2 misses. The chat route
+                    # calls build_system_prompt(persona, include_examples=...) with a
+                    # KEYWORD (routes/chat.py), so warming only the positional form left
+                    # the hot path cold and every first turn per persona paid a full
+                    # build -- which can include an LLM call for the CV summary.
                     _build_sp(key)
+                    _build_sp(key, include_examples=True)
+                    _build_sp(key, include_examples=False)
                     logger.debug(f"[Prewarm] System prompt cached for '{key}'")
                 except Exception as exc:
                     logger.debug(f"[Prewarm] Skipped '{key}': {exc}")

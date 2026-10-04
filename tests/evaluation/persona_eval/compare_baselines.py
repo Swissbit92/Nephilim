@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import sys
+from typing import Optional
 
 # Match-or-beat tolerance: ON must not drop more than this below the OFF ruler.
 TOL = 0.01
@@ -38,6 +39,64 @@ def _n_from_baseline(random_baseline):
     return round(1.0 / random_baseline)
 
 
+# UNRECORDED is defined in frozen_gallery (the manifest's owner). Imported rather
+# than re-declared so the sentinel cannot drift between writer and reader.
+try:  # pragma: no cover - path wiring
+    from frozen_gallery import UNRECORDED
+except ImportError:  # pragma: no cover
+    from .frozen_gallery import UNRECORDED  # type: ignore
+
+
+def _sampler_fp(baseline: dict) -> Optional[str]:
+    """The recorded sampler fingerprint, or None when the artifact has no manifest.
+
+    None and the UNRECORDED sentinel mean different things and must not be merged:
+    None is "no manifest at all" (pre-manifest artifact, or a synthetic fixture),
+    while UNRECORDED is "a manifest exists and predates sampler recording". Only the
+    second is an asymmetric-knowledge refusal.
+    """
+    m = baseline.get("manifest")
+    if not isinstance(m, dict):
+        return None
+    return m.get("sampling_fingerprint", UNRECORDED)
+
+
+def _sampler_commensurability(off: dict, on: dict) -> Optional[dict]:
+    """Decide whether two baselines may be compared across sampler settings.
+
+    Returns ``{"refuse": bool, "reason": str}`` or None when there is nothing to
+    say. Deliberately NOT a blanket "missing ⇒ refuse": see Guard 0's comment.
+    """
+    fo, fn = _sampler_fp(off), _sampler_fp(on)
+
+    if fo is None and fn is None:
+        return None  # neither artifact carries a manifest — nothing knowable
+
+    if fo == UNRECORDED or fn == UNRECORDED or fo is None or fn is None:
+        which = "ruler" if fo in (None, UNRECORDED) else "candidate"
+        return {
+            "refuse": True,
+            "reason": (
+                f"the {which} does not record the sampler settings it was generated "
+                "under, and the other side does — so they cannot be shown to be "
+                "comparable. A run whose samplers are unknown is not a run whose "
+                "samplers match. Re-cut the ruler under the current settings "
+                "(manifest schema v2+) before gating against it."
+            ),
+        }
+
+    if fo != fn:
+        return {
+            "refuse": True,
+            "reason": (
+                f"sampler settings differ — ruler {fo} vs candidate {fn}. "
+                "Temperature and the repetition window change what the model emits, "
+                "so a distinctiveness delta across them measures both at once."
+            ),
+        }
+    return None
+
+
 def compare(off: dict, on: dict) -> dict:
     """Pure comparison core — no I/O. Returns a verdict dict the CLI renders.
 
@@ -52,6 +111,29 @@ def compare(off: dict, on: dict) -> dict:
     ob, nb = od.get("random_baseline"), nd.get("random_baseline")
     op, np_ = od.get("per_persona", {}), nd.get("per_persona", {})
     n_off, n_on = _n_from_baseline(ob), _n_from_baseline(nb)
+
+    # Guard 0 — sampler commensurability. Added 2026-09-24 because this module read
+    # NOTHING from the manifest: it compared only `random_baseline`, so two runs
+    # generated under different sampler settings compared cleanly and reported a
+    # verdict. The 2026-09-22 repair moved temperature 0.4 -> 0.9 on the
+    # user-facing path, repeat_penalty 1.0 -> 1.05 and repeat_last_n 64 -> 384, and
+    # no artifact recorded any of it — so the blind spot was not a missing field in
+    # a checked record, it was an unchecked record.
+    #
+    # Both-absent is a WARNING, not a refusal: the ten unit tests of the N-guard
+    # pass synthetic baselines with no manifest at all, and every artifact frozen
+    # before manifests existed is legitimately in that state. What must refuse is
+    # the asymmetric case — one side recorded its samplers and the other could not —
+    # because that is precisely "we do not know" being read as "they agree".
+    sampler_note = _sampler_commensurability(off, on)
+    if sampler_note and sampler_note["refuse"]:
+        return {
+            "commensurable": False,
+            "verdict": "INCOMMENSURABLE",
+            "reason": sampler_note["reason"],
+            "n_off": n_off,
+            "n_on": n_on,
+        }
 
     # Guard 1 — different label space (N). This is the silent-inflation hole: a
     # 2-persona candidate (chance 0.5) vs a 7-persona ruler (chance 0.14) would

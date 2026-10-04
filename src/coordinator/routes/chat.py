@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 
 from fastapi import APIRouter, HTTPException
 
@@ -13,7 +14,9 @@ from .. import startup  # module ref for call-time getter resolution (tests patc
 from ..schemas import ChatBody, GreetBody, ImpersonateBody, NarrateBody, ResponseMetadata, SourceType
 from ..config import get_settings, get_persona_sampling_overrides
 from ..llm_client import create_llm_client, log_context_stats, estimate_tokens
-from ..prompt_builder import build_constraint_reminder
+from ..prompt_builder import build_constraint_reminder, build_graph_rules_block
+from ..rule_compliance import check_reply, reinforcement_for
+from ..wall_detectors import observe
 from ..persona_memory import (
     build_system_prompt,
     build_greeting_user_prompt,
@@ -34,9 +37,150 @@ from ..services.message_processing_service import (
     strip_role_prefix_leaks,
 )
 from ..services.chat_session_service import handle_session_chat
+from ..services.resource_arbiter import ResourceBusyError
 
 router = APIRouter(tags=["chat"])
 logger = logging.getLogger(__name__)
+
+
+#: Reply paths that do NOT run the post-generation rule check, named so the gap is a
+#: recorded decision rather than an implied guarantee. Verified 2026-09-29 by reading
+#: every reply path in this module and in QueryHandlerService.
+#: Updated 2026-09-29. The tool-brain lanes WERE the largest gap and are now covered
+#: (see _enforce_on_response at the call site). These remain uncovered, and the list is
+#: deliberately longer than it was: the old version named only the paths that skip
+#: _build_llm_response, not the ones that reach it and skip the RETRY.
+_RULE_CHECK_UNCOVERED_PATHS = (
+    "greet() — builds its response dict inline",
+    "QueryHandlerService._finalize_response — the brave and wallet lanes",
+)
+
+
+def _regenerate_once_on_violation(
+    card,
+    system: str,
+    user_compiled: str,
+    user_message: str,
+    answer: str,
+    metadata,
+    *,
+    log_context: str,
+) -> tuple[str, bool]:
+    """At most ONE regeneration when a post-generation rule check fired.
+
+    Returns `(answer, still_violating)`. `still_violating` is True when the reply being
+    returned breaks a rule — either because enforcement is off, or because the retry also
+    failed. The caller does not have to act on it, but it is not hidden.
+
+    THE CAP IS THE ABSENCE OF A LOOP, copied deliberately from
+    ToolBrainService._synthesize_with_refusal_retry: straight-line code with one extra
+    `_complete_or_503`, so "at most once" is provable by reading rather than by trusting a
+    counter. `config/graph.py` and ADR-014 have both promised exactly one retry since
+    2026-09-26 while no loop existed at all, so the promise is written in code here before
+    anything can widen it.
+
+    THE REINFORCEMENT GOES ON THE USER TURN, not the system prompt. `build_system_prompt`
+    is `lru_cache`d on the persona selector, so mutating `system` would either poison that
+    cache or bypass it; and it would move llama.cpp's prefix-cache divergence point to the
+    very start of a ~3.5K-token prefix, making the retry pay full prefill. Appending to
+    `user_compiled` keeps the whole system prefix byte-identical. It also matches the
+    convention already used for `build_constraint_reminder` and the `[Remember: ...]`
+    self-reminder, which are bracketed lines on the user turn for the same recency reason.
+
+    WHAT IS RETURNED ON FINAL FAILURE: attempt 2, not attempt 1. A reply that was
+    regenerated under an explicit correction is the better of the two even when the
+    checker still objects, and silently preferring attempt 1 would make the retry
+    unobservable from the outside.
+    """
+    try:
+        violations = check_reply(answer, user_message)
+    except Exception as exc:  # noqa: BLE001 — a checker must never fail a turn
+        logger.warning("%s rule check skipped (non-fatal): %s", log_context, exc)
+        return answer, False
+    if not violations:
+        return answer, False
+
+    if not get_settings().graph.enforce_rules:
+        # Detected and reported, deliberately not corrected. This is the shipped default.
+        logger.info("%s %d violation(s) detected, enforcement OFF (GRAPH_ENFORCE_RULES)",
+                    log_context, len(violations))
+        return answer, True
+
+    line = reinforcement_for(violations[0])
+    logger.info("%s regenerating once: %s", log_context, violations[0].rule)
+    t0 = time.time()
+    try:
+        reinforced = user_compiled + "\n\n" + line
+        retry = _complete_or_503(card, system, reinforced, log_context=log_context)
+    except Exception as exc:  # noqa: BLE001 — a failed retry must not fail the turn
+        logger.warning("%s regeneration failed (%s); keeping attempt 1", log_context, exc)
+        return answer, True
+
+    # GUARDED, like the first check at the top of this function. It was not, so a checker
+    # that throws only on the retry text would 500 the turn -- and the retry text is by
+    # construction the one input no test has seen.
+    try:
+        still = bool(check_reply(retry, user_message))
+    except Exception as exc:  # noqa: BLE001 — a checker must never fail a turn
+        logger.warning("%s post-retry check skipped (non-fatal): %s", log_context, exc)
+        still = False
+    logger.info("%s regeneration took %.1fs; still violating=%s",
+                log_context, time.time() - t0, still)
+    return retry, still
+
+
+def _enforce_on_response(
+    response: dict, *, card, system: str, user_compiled: str, user_message: str,
+    persona_name: str, metadata, log_context: str,
+) -> dict:
+    """Run the one-shot enforcement retry over an ALREADY-BUILT response dict.
+
+    The legacy branch enforces on a bare string before building its response. Every other
+    lane builds the response first, so enforcing there means rebuilding it -- word
+    substitutions and the multi-message split are applied inside `_build_llm_response`,
+    so mutating `answer` in place would leave `message_flow` and `message_count`
+    describing the PREVIOUS text. That is the bug this helper exists to not have.
+
+    Lane-specific keys (`used_search`, and anything else a caller set) are carried over,
+    because they are telemetry about what the lane did and the retry does not change it.
+    """
+    # `answer` IS A LIST WHEN THE REPLY SPLIT INTO BUBBLES -- `_build_llm_response` returns
+    # `messages if flow_type == "multi" else messages[0]`, and the model emits <msg> tags
+    # on most turns. The first version of this guard read `if not isinstance(answer, str):
+    # return response`, which silently skipped enforcement on every multi-bubble reply:
+    # 24 of 37 in the one real session measured. Detection still logged the violation, so
+    # the telemetry said the wall broke while nothing acted on it.
+    #
+    # The A/B could not catch this. It posts to Ollama directly and never builds a
+    # response dict, so the -96% was measured on a path that does not contain this
+    # function. That is the same shape as the defect this whole change set exists to fix
+    # -- a guard that is correct in isolation and never reached -- and I wrote it, with a
+    # comment explaining why it was safe.
+    raw = response.get("answer")
+    if isinstance(raw, list):
+        # Joined for the CHECK and as attempt 1's text. Lossy on the <msg> tags, which is
+        # fine: the detector is sentence-based and the retry regenerates from scratch, so
+        # the tags are noise rather than content. If the retry changes the text,
+        # `_build_llm_response` re-parses whatever the model emitted, tags included.
+        answer = "\n\n".join(a for a in raw if isinstance(a, str))
+    elif isinstance(raw, str):
+        answer = raw
+    else:
+        return response
+    if not answer:
+        return response
+    new_answer, _still = _regenerate_once_on_violation(
+        card, system, user_compiled, user_message, answer, metadata,
+        log_context=log_context)
+    if new_answer == answer:
+        return response
+    rebuilt = _build_llm_response(
+        new_answer, user_message, persona_name, metadata,
+        word_substitutions=card.get("word_substitutions"))
+    for k, v in response.items():
+        if k not in rebuilt:
+            rebuilt[k] = v
+    return rebuilt
 
 
 def _build_llm_response(
@@ -49,6 +193,50 @@ def _build_llm_response(
     """Post-process LLM output into a standard response dict."""
     import re as _re
     answer, was_rewritten = post_process_first_person(answer, persona_name)
+
+    # POST-GENERATION RULE CHECKS. Detection runs unconditionally; only REGENERATION is
+    # gated on GRAPH_ENFORCE_RULES, and that happens at the generation sites rather than
+    # here (this function has the verdict but not the inputs needed to call the model).
+    #
+    # WHY IT LIVES HERE. check_reply and reinforcement_for were imported at the top of
+    # this module and NEVER CALLED -- the commit that claimed to "enforce address in
+    # code" added exactly one line to this file, the import, and ruff runs
+    # continue-on-error so nothing flagged it. Meanwhile _rule_tiers/gwen.yaml demoted
+    # her address rule to LAST of five hard walls with the justification "enforced in
+    # code, so it needs the prompt least of all", and the render budget then dropped it
+    # from the prompt entirely. Three layers deferring to each other, none running.
+    #
+    # ⚠️ CORRECTION TO AN EARLIER VERSION OF THIS COMMENT, which claimed this was "the
+    # one place every reply passes through". IT IS NOT, and the claim was checked and
+    # found false: `greet()` builds its response dict inline, and
+    # QueryHandlerService._finalize_response serves the brave and wallet lanes. Neither
+    # calls this function, so neither is covered. What this function IS is the one place
+    # every LLM-LANE reply passes through, which is where the address rule lives. The
+    # gap is named in `_RULE_CHECK_UNCOVERED_PATHS` below rather than left implied.
+    #
+    # DETECTION IS NOT GATED because it cannot change a reply -- it only records. Making
+    # it conditional would reproduce the original defect: a violation nobody can see.
+    try:
+        violations = check_reply(answer, user_message)
+        # ALWAYS assigned, never only-on-violation. `metadata` is a single object shared
+        # across a regeneration attempt, so an `if violations:` with no else would leave
+        # attempt 1's verdict standing on a compliant attempt 2 -- reporting a violation
+        # that the retry had already fixed.
+        metadata.rule_violations = [v.rule for v in violations]
+        for v in violations:
+            logger.warning("[Rules] %s violated: %s", v.rule, v.detail)
+        # Detection-only observations for the walls production does NOT enforce. Same
+        # try/except, same unconditional assignment, and deliberately NOT merged into
+        # `violations`: these feed telemetry, never _regenerate_once_on_violation. A
+        # false positive there would replace a good reply with one generated under a
+        # wrong correction, and their false-positive rate on the enforcement population
+        # has never been measured.
+        metadata.wall_observations = observe(answer)
+        for o in metadata.wall_observations:
+            logger.info("[Walls] %s appears broken (%s, detection only)",
+                        o["rule"] or o["category"], o["category"])
+    except Exception as exc:  # noqa: BLE001 — a checker must never fail a turn
+        logger.warning("[Rules] post-generation check skipped (non-fatal): %s", exc)
 
     # ADR-012: persona-configurable whole-word substitutions (e.g. shaft→cock).
     # No-op unless the card declares `word_substitutions`.
@@ -119,6 +307,13 @@ def _complete_or_503(card, system: str, user_prompt: str, *, log_context: str) -
     try:
         client = create_llm_client(card)
         return client.complete(system=system, user_prompt=user_prompt)
+    except ResourceBusyError:
+        # NOT a 503 and NOT an outage. The machine is deliberately leased to a
+        # generation and the companion model is unloaded for it. Re-raised
+        # untouched so the app-level handler can answer in voice; masking it
+        # here is what made a correct refusal read as "Something went wrong on
+        # my end" twice in a row while an image rendered normally.
+        raise
     except Exception as e:
         logger.error(f"{log_context} LLM completion failed: {e}", exc_info=True)
         raise HTTPException(
@@ -179,6 +374,11 @@ answer depends on the outside world rather than on you or this conversation:
 Do NOT search for how you feel, your own nature, this conversation, your
 world's lore, opinions, creative writing, or anything the user tells you.
 </tool_guidance>"""
+
+
+#: Tools whose value is what they DO, not what they return. They answer
+#: without searching, so they need their own success branch — see below.
+_SIDE_EFFECT_TOOLS = frozenset({"generate_image"})
 
 
 def _try_tool_brain(
@@ -252,17 +452,74 @@ def _try_tool_brain(
         return None
 
     try:
-        # Web-toolset ONLY (respects a persona's granted subset, e.g. Gwen's
-        # image/video). Wallet specs are never placed in the native surface.
-        web_specs = [s for s in registry.specs_for_persona(card) if s.toolset == "web"]
+        # Web toolset, plus `image` ONLY when generation is switched on
+        # (respects a persona's granted subset, e.g. Gwen's image/video).
+        # Wallet specs are never placed in the native surface.
+        #
+        # Gated on the flag rather than simply added to the set, so that with
+        # IMAGE_GEN_ENABLED off this list is byte-for-byte what it was before
+        # generation existed. This is the hottest path in the repo — every
+        # persona's every turn runs it — and
+        # `test_the_offered_surface_is_unchanged_when_generation_is_off`
+        # asserts that identity rather than trusting the reading.
+        offered_toolsets = {"web"}
+        if get_settings().image_gen.enabled:
+            offered_toolsets.add("image")
+        web_specs = [
+            s for s in registry.specs_for_persona(card)
+            if s.toolset in offered_toolsets
+        ]
 
         # Media forcing: a colloquial "find me a video / find me images" query
         # deterministically NARROWS the surface to the single matching media
         # tool. Native calling is unreliable at picking video_search among four
         # web tools (choice paralysis) but reliably calls the one tool it's
         # given — the regex already knows the type, so don't leave it to chance.
-        from ..tools.intent_classifier import media_search_type
-        forced = media_search_type(body.message)
+        from ..tools.intent_classifier import generation_intent, media_search_type
+
+        # GENERATION NARROWING, checked BEFORE the media-search narrowing
+        # because "draw me a picture of X" contains an art noun and would
+        # otherwise be read as a request to FIND one.
+        #
+        # Identical mechanism and identical reason to the media rule below:
+        # native calling is unreliable at picking one tool among several but
+        # reliably calls the one tool it is given. Measured here before this
+        # existed — on five natural drawing requests gwen fired 0/5 and eeva
+        # 3/5, and on the misses both told the user the image was coming.
+        #
+        # Keyed on the MESSAGE, never the persona: any persona holding
+        # `generate_image` gets this, and nothing here knows a persona name.
+        wants_generation = False
+        if generation_intent(body.message):
+            gen_specs = [s for s in web_specs if s.name == "generate_image"]
+            if gen_specs:  # only for a persona actually granted the tool
+                web_specs = gen_specs
+                wants_generation = True
+
+        # ARM B — bypass the tool call entirely. generation_intent has
+        # already decided; the only thing left for the model is filling the
+        # arguments, and a grammar does that where a tool call does not.
+        # Measured: arm A fires 0/5 for gwen at history depth >= 2 because
+        # Ollama's grammar engine is wired to `format` and NOT to `tools=`.
+        if wants_generation and get_settings().image_gen.direct_enqueue:
+            from ..services.image_gen import direct
+
+            outcome, text, decided_by = direct.queue_generation(
+                session_id=getattr(body, "session_id", "") or "",
+                persona_key=card.get("key", ""),
+                message=body.message,
+                system_prompt=system,
+            )
+            metadata.source_type = SourceType.LLM
+            metadata.tools_used = ["generate_image"] if outcome == direct.QUEUED else []
+            metadata.tool_decided_by = decided_by
+            logger.info("[ToolBrain] direct enqueue -> %s (%s)", outcome, decided_by)
+            return _build_llm_response(
+                text, body.message, persona_name, metadata,
+                word_substitutions=card.get("word_substitutions"),
+            )
+
+        forced = None if wants_generation else media_search_type(body.message)
         if forced:
             want = f"{forced}_search"
             narrowed = [s for s in web_specs if s.name == want]
@@ -327,10 +584,38 @@ def _try_tool_brain(
         # schema is a fallback rather than the point. When the router actually
         # asked for a web search the first call is a tool DECISION and keeps the
         # deliberate low temperature — persona voice has no business in tool JSON.
-        result = svc.run(persona_card=card, system_prompt=tb_system,
-                         user_message=body.message, history=hist, tools=tools,
-                         sampling_overrides=get_persona_sampling_overrides(card),
-                         prose_expected=(intent != QueryIntent.NEEDS_WEB_SEARCH))
+        # The executor contract is (arguments, persona_card) and carries no
+        # session. Widening it would break the four search executors bound
+        # with two parameters, so the session travels in a ContextVar. Safe
+        # here specifically because the tool brain runs SYNCHRONOUSLY in this
+        # request's own thread: the value set here is the value it reads, and
+        # a concurrent turn in another thread has its own.
+        from ..tools.image_executor import current_session_id
+        _session_token = current_session_id.set(getattr(body, "session_id", "") or "")
+        try:
+            result = svc.run(persona_card=card, system_prompt=tb_system,
+                             user_message=body.message, history=hist, tools=tools,
+                             sampling_overrides=get_persona_sampling_overrides(card),
+                             # A narrowed generation turn decides at the
+                             # DECISION temperature, not the persona's prose
+                             # temperature. Measured 6 runs per arm with one
+                             # tool offered: eeva 3/6 -> 6/6. It is null for
+                             # gwen (3/6 both ways), so this is not the whole
+                             # answer — but it is free here. The usual
+                             # objection, that prose_expected=False costs a
+                             # second generation (~16 tok/s, TB6), does not
+                             # bind on a turn whose user is about to wait
+                             # five and a half minutes anyway.
+                             prose_expected=(
+                                 False if wants_generation
+                                 else intent != QueryIntent.NEEDS_WEB_SEARCH
+                             ))
+        finally:
+            # Reset rather than leave it set: this thread is returned to the
+            # anyio pool and will serve a different session's turn next. A
+            # leaked session id would make a later generate_image enqueue a job
+            # against the WRONG conversation, and it would look correct.
+            current_session_id.reset(_session_token)
 
         if result.status in (ST_HITL, ST_DELEGATE_WALLET):
             # Wallet stays entirely on the existing propose->confirm / read flow.
@@ -360,6 +645,63 @@ def _try_tool_brain(
             )
             return None
 
+        # A SIDE-EFFECT tool answered. This branch exists because the search
+        # gate below cannot serve one: `used_search` is set only for the web
+        # toolset, so a turn that queued an image generation would satisfy
+        # none of its conditions, `_try_tool_brain` would return None, and the
+        # LEGACY path would regenerate the turn from scratch. The job would be
+        # queued, the reply that mentioned it discarded, and the user would get
+        # an unrelated answer plus a picture arriving five minutes later with
+        # no explanation. Two generations for one turn, and the visible half
+        # is the wrong one.
+        #
+        # No citations are appended: nothing was searched, and stapling a
+        # Sources block onto "I've started drawing that" is the exact
+        # tool-fired-therefore-grounded confusion measured on this path before.
+        side_effect_tools = [
+            t["tool"] for t in result.tool_trace
+            if t.get("allowed") and t.get("tool") in _SIDE_EFFECT_TOOLS
+        ]
+
+        # THE FALSE PROMISE. She was asked for a picture, the surface was
+        # narrowed to the one tool, and she still did not call it — but she
+        # says "your image is on the way" anyway. Measured: on the misses she
+        # promised 1 in 5 times, and a promise with no job behind it is worse
+        # than a refusal, because nothing ever arrives and nothing ever errors.
+        #
+        # The condition is PREVENTED rather than the lie detected: no attempt
+        # is made to read her prose for a promise. If a generation was asked
+        # for and no job exists, her answer does not stand.
+        if wants_generation and not side_effect_tools:
+            logger.warning(
+                "[ToolBrain] generation intent matched but generate_image did "
+                "not fire — replacing the reply so it cannot claim otherwise"
+            )
+            metadata.source_type = SourceType.LLM
+            metadata.tools_used = []
+            from ..services import persona_lines
+
+            return _build_llm_response(
+                persona_lines.line(card.get("key", ""), "image_not_started"),
+                body.message, persona_name, metadata,
+                word_substitutions=card.get("word_substitutions"),
+            )
+        if result.status == ST_ANSWERED and result.answer and side_effect_tools \
+                and not result.used_search:
+            metadata.source_type = SourceType.TOOL_BRAIN
+            metadata.tools_used = side_effect_tools
+            # The regex narrowed the surface to one tool; the model still
+            # chose to call it. Record both so "a tool ran" is never read as
+            # "the model decided this unaided".
+            metadata.tool_decided_by = (
+                "generation_intent+model" if wants_generation else "model"
+            )
+            logger.info("[ToolBrain] side-effect tools ran: %s", side_effect_tools)
+            return _build_llm_response(
+                result.answer, body.message, persona_name, metadata,
+                word_substitutions=card.get("word_substitutions"),
+            )
+
         if result.status == ST_ANSWERED and result.answer and result.used_search \
                 and result.search_results:
             metadata.source_type = SourceType.TOOL_BRAIN
@@ -373,6 +715,7 @@ def _try_tool_brain(
                 if t.get("allowed") and t.get("tool")
             ]
             metadata.tools_used = executed or ["web_search"]
+            metadata.tool_decided_by = "media_search_type+model" if forced else "model"
             answer = CitationService.strip_hallucinated_citations(result.answer)
             # Strip the model's own inline [REF]n[/REF] citation markers (it
             # sometimes invents that format; the verified 🔍 Sources block below
@@ -416,6 +759,40 @@ def _try_tool_brain(
 def chat(body: ChatBody):
     """Chat with a persona, with autonomous tool support (web search, Solana wallet) for MCP-capable personas."""
 
+    # The ResourceBusyError raised while a generation holds the machine is
+    # handled APP-WIDE (see server.py), not here. It was caught here first,
+    # which fixed /chat and left the endpoint the Telegram gateway actually
+    # uses — POST /sessions/{id}/chat — still answering "Something went wrong
+    # on my end". Fixing one call site of a condition that has six is this
+    # repo's own recorded failure, and I repeated it.
+    return _chat_inner(body)
+
+
+def busy_drawing_body(persona_key: str = "") -> dict:
+    """What she says while a picture is rendering.
+
+    Plain, in-character, and honest about the cause. No parse_mode, no error
+    code, and deliberately no mention of a model being unloaded — that is an
+    implementation detail the person on the other end did not ask about.
+    """
+    from ..services import persona_lines
+
+    metadata = ResponseMetadata(source_type=SourceType.LLM, tools_used=[])
+    # ⚠️ The companion model is UNLOADED right now, so this cannot be
+    # generated here — `persona_lines.line` would fail and fall back. The
+    # worker warms `image_busy` BEFORE it evicts, which is the only moment
+    # this line can be in voice at all.
+    return {
+        "answer": persona_lines.line(persona_key, "image_busy"),
+        "message_flow": "single",
+        "message_count": 1,
+        "used_search": False,
+        "metadata": metadata.model_dump(),
+        "rewritten": False,
+    }
+
+
+def _chat_inner(body: ChatBody):
     deps = _get_dependencies()
 
     card = get_persona_card(body.persona)
@@ -434,6 +811,41 @@ def chat(body: ChatBody):
         _agent_cfg.unpin_on_depth and len(body.history or []) >= _agent_cfg.unpin_depth_turns
     )
     system = build_system_prompt(body.persona, include_examples=_include_examples)
+
+    # ADR-014: the persona's standing rules, read from the graph.
+    #
+    # DELIBERATELY HERE AND NOT INSIDE build_system_prompt, which is lru_cached on
+    # (selector, include_examples) — graph rules are not a pure function of that
+    # key, so a supersession would leave up to 64 cached prompts serving withdrawn
+    # rules. Rendered per-request, a rule change lands on the very next turn.
+    #
+    # The list is read ONCE and used TWICE: in full as an untrimmable <rules>
+    # section, and the top two hard walls echoed in the per-turn reminder below,
+    # which sits immediately before the user's message. Two placements of the SAME
+    # instruction, never two conflicting ones — this repo already measured that
+    # adding a second, CONFLICTING style instruction "moved the needle barely at
+    # all", so consistency between the two positions is the point.
+    #
+    # Returns [] when GRAPH_ENABLED is false or the graph is unreachable, and both
+    # renderers return "" for an empty list — so the graph being down costs rules,
+    # never the turn.
+    graph_rules: list = []
+    try:
+        _graph_cfg = get_settings().graph
+        if _graph_cfg.enabled:
+            _driver = startup.get_neo4j_driver()
+            if _driver is not None:
+                from ..repositories.neo4j_rule_repository import Neo4jRuleRepository
+                graph_rules = Neo4jRuleRepository(
+                    _driver, _graph_cfg.database, ensure_schema=False
+                ).standing_rules(body.persona, limit=_graph_cfg.rule_read_limit)
+    except Exception as e:
+        # Never fatal. A persona turn must not fail because a projection is down.
+        logger.warning("[Graph] rule read skipped for %s (non-fatal): %s", body.persona, e)
+
+    _rules_block = build_graph_rules_block(body.persona, graph_rules)
+    if _rules_block:
+        system = f"{system}\n\n{_rules_block}"
 
     # Inject wallet ground-truth state for wallet-capable personas (anti-hallucination).
     # This must happen HERE (not in handle_session_chat) because this function
@@ -484,7 +896,7 @@ def chat(body: ChatBody):
     # turns on are repeated here — immediately before the latest user turn —
     # rather than relying on the single statement at the top of the system
     # prompt, which is the least-attended position by turn 80.
-    constraint_reminder = build_constraint_reminder(body.persona)
+    constraint_reminder = build_constraint_reminder(body.persona, graph_rules)
     if constraint_reminder:
         lines.append(constraint_reminder)
     # R2: Self-reminder wrapper reduces jailbreak success (Self-Reminder technique ~48pp reduction)
@@ -569,7 +981,24 @@ def chat(body: ChatBody):
             classifier_available=_intent_decision.classifier_available,
         )
         if tb_response is not None:
-            return tb_response
+            # ENFORCEMENT ON THE PATH PRODUCTION ACTUALLY USES.
+            #
+            # Measured on a real 102-message Telegram session: all five breaching turns
+            # returned from inside _try_tool_brain, which is the DEFAULT for every gwen
+            # chitchat turn (TOOL_BRAIN_ENABLED + TOOL_BRAIN_UNGATED_WEB). The single
+            # existing call to _regenerate_once_on_violation sits in the legacy no-tools
+            # branch below, which ungated tool-brain exists precisely to avoid. The live
+            # log is unambiguous: 68 "ungated no-tool turn", 5 wall detections, ZERO
+            # "violated". So GRAPH_ENFORCE_RULES=true was a no-op on her real traffic --
+            # the flag was never the blocker, the call-site coverage was.
+            #
+            # Wrapped at the CALL SITE rather than inside _try_tool_brain because
+            # `user_compiled` and `system` are in scope here and the tool brain builds its
+            # own prompt; reaching into it would duplicate the assembly.
+            return _enforce_on_response(
+                tb_response, card=card, system=system, user_compiled=user_compiled,
+                user_message=body.message, persona_name=persona_name,
+                metadata=metadata, log_context=f"[Rules] {persona_key} tool-brain:")
 
     # Route wallet intent before MongoDB/Brave checks
     if intent == QueryIntent.NEEDS_WALLET:
@@ -596,6 +1025,11 @@ def chat(body: ChatBody):
             f"(persona={persona_key} intent={intent.value})")
         answer = _complete_or_503(card, system, user_compiled, log_context=f"[Chat] {persona_key} no-tools:")
         answer = _apply_groundedness_gate(card, body.message, answer, metadata)
+        # Covers /sessions/{id}/chat, /regenerate, /continue and /narrate too: all four
+        # funnel through handle_session_chat -> this function, and none generates its own.
+        answer, _still = _regenerate_once_on_violation(
+            card, system, user_compiled, body.message, answer, metadata,
+            log_context=f"[Rules] {persona_key}:")
         return _build_llm_response(answer, body.message, persona_name, metadata, word_substitutions=card.get("word_substitutions"))
 
     brave_tools = [t for t in tools if t.get("function", {}).get("name", "") == "brave_web_search"]

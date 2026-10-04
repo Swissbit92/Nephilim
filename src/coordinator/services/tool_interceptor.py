@@ -135,6 +135,32 @@ def _validate_arguments(tool_name: str, args: Dict[str, Any]) -> Optional[str]:
             return f"token must be one of {sorted(ALLOWED_TOKENS)}"
         return None
 
+    if tool_name == "generate_image":
+        # These arguments start a ~331-second job that occupies the whole
+        # machine, so they get a structural check here as well as inside the
+        # composer. Without this branch the function falls through to the
+        # `return None` at the bottom and an unknown tool gets NO argument
+        # validation at all — which is the state every tool added after the
+        # search family has quietly been in.
+        #
+        # Structural only, matching the search family: non-empty, bounded,
+        # no control characters. Content is not judged — this is a private
+        # single-user system and the composer owns semantics.
+        subject = args.get("subject", "")
+        if not isinstance(subject, str) or not subject.strip():
+            return "subject must be a non-empty string"
+        for field_name in ("subject", "setting", "mood", "style"):
+            value = args.get(field_name)
+            if value is None:
+                continue
+            if not isinstance(value, str):
+                return f"{field_name} must be a string"
+            if len(value) > _MAX_QUERY_LEN:
+                return f"{field_name} exceeds {_MAX_QUERY_LEN} characters"
+            if _CONTROL_CHARS.search(value):
+                return f"{field_name} contains disallowed control characters"
+        return None
+
     if tool_name == "wallet_create_guided":
         name = args.get("wallet_name", "")
         if not isinstance(name, str) or not name.strip():

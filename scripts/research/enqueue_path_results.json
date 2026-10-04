@@ -1,0 +1,317 @@
+{
+  "reps": 3,
+  "graph_reachable": true,
+  "table": {
+    "both": 5,
+    "only_a": 0,
+    "only_b": 11,
+    "neither": 0
+  },
+  "mcnemar_exact_p": 0.0009765625,
+  "arm_a": {
+    "pass": 5,
+    "n": 16,
+    "wilson95": [
+      0.14164435051961052,
+      0.5559606813326594
+    ]
+  },
+  "arm_b": {
+    "pass": 16,
+    "n": 16,
+    "wilson95": [
+      0.8063865817272802,
+      1.0
+    ]
+  },
+  "cells": [
+    {
+      "key": "gwen/d0/explicit",
+      "request": "use your image generator: a red fox sitting in deep snow at dusk",
+      "must_keep": [
+        "fox",
+        "snow"
+      ],
+      "A": [
+        null,
+        "a red fox sitting upright, in deep snow at dusk, tense mood, a clean digital illustration, soft shading, Ultra HD, 4K, cinematic composition.",
+        "a red fox sitting in deep snow at dusk, a clean digital illustration, soft shading, Ultra HD, 4K, cinematic composition."
+      ],
+      "B": [
+        "a red fox, in sitting in deep snow at dusk, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "a red fox, in sitting in deep snow at dusk, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "a red fox, in sitting in deep snow at dusk, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition."
+      ]
+    },
+    {
+      "key": "gwen/d0/plain",
+      "request": "draw me a lighthouse in a storm",
+      "must_keep": [
+        "lighthouse",
+        "storm"
+      ],
+      "A": [
+        null,
+        null,
+        null
+      ],
+      "B": [
+        "lighthouse, in storm, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "lighthouse, in storm, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "lighthouse, in storm, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition."
+      ]
+    },
+    {
+      "key": "gwen/d0/polite",
+      "request": "could you paint a quiet harbour at sunrise?",
+      "must_keep": [
+        "harbour",
+        "sunrise"
+      ],
+      "A": [
+        null,
+        null,
+        "a quiet harbour, at sunrise, calm mood, a clean digital illustration, soft shading, Ultra HD, 4K, cinematic composition."
+      ],
+      "B": [
+        "harbour, in sunrise, quiet mood, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "harbour, in sunrise, quiet mood, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "harbour, in sunrise, quiet mood, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition."
+      ]
+    },
+    {
+      "key": "gwen/d0/embedded",
+      "request": "I've been thinking about autumn all week. Make me a picture of a birch forest with yellow leaves.",
+      "must_keep": [
+        "birch",
+        "forest"
+      ],
+      "A": [
+        null,
+        null,
+        null
+      ],
+      "B": [
+        "birch forest with yellow leaves, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "birch forest with yellow leaves, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "birch forest with yellow leaves, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition."
+      ]
+    },
+    {
+      "key": "gwen/d8/explicit",
+      "request": "use your image generator: a red fox sitting in deep snow at dusk",
+      "must_keep": [
+        "fox",
+        "snow"
+      ],
+      "A": [
+        null,
+        null,
+        null
+      ],
+      "B": [
+        "a red fox, in sitting in deep snow at dusk, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "a red fox, in sitting in deep snow at dusk, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "a red fox, in sitting in deep snow at dusk, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition."
+      ]
+    },
+    {
+      "key": "gwen/d8/plain",
+      "request": "draw me a lighthouse in a storm",
+      "must_keep": [
+        "lighthouse",
+        "storm"
+      ],
+      "A": [
+        null,
+        null,
+        null
+      ],
+      "B": [
+        "lighthouse, in storm, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "lighthouse, in storm, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "lighthouse, in storm, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition."
+      ]
+    },
+    {
+      "key": "gwen/d8/polite",
+      "request": "could you paint a quiet harbour at sunrise?",
+      "must_keep": [
+        "harbour",
+        "sunrise"
+      ],
+      "A": [
+        null,
+        null,
+        null
+      ],
+      "B": [
+        "harbour, in sunrise, quiet mood, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "harbour, in sunrise, quiet mood, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "harbour, in sunrise, quiet mood, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition."
+      ]
+    },
+    {
+      "key": "gwen/d8/embedded",
+      "request": "I've been thinking about autumn all week. Make me a picture of a birch forest with yellow leaves.",
+      "must_keep": [
+        "birch",
+        "forest"
+      ],
+      "A": [
+        null,
+        null,
+        null
+      ],
+      "B": [
+        "birch forest with yellow leaves, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "birch forest with yellow leaves, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "birch forest with yellow leaves, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition."
+      ]
+    },
+    {
+      "key": "nephilim_eeva/d0/explicit",
+      "request": "use your image generator: a red fox sitting in deep snow at dusk",
+      "must_keep": [
+        "fox",
+        "snow"
+      ],
+      "A": [
+        "a red fox sitting upright, in deep snow at dusk, calm mood, a clean digital illustration, soft shading, Ultra HD, 4K, cinematic composition.",
+        "a red fox sitting in deep snow at dusk, calm mood, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "a red fox sitting in deep snow at dusk, in deep snow at dusk, calm mood, a clean digital illustration, soft shading, Ultra HD, 4K, cinematic composition."
+      ],
+      "B": [
+        "a red fox, in deep snow at dusk, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "a red fox, in deep snow at dusk, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "a red fox, in deep snow at dusk, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition."
+      ]
+    },
+    {
+      "key": "nephilim_eeva/d0/plain",
+      "request": "draw me a lighthouse in a storm",
+      "must_keep": [
+        "lighthouse",
+        "storm"
+      ],
+      "A": [
+        "a lighthouse in a storm, a clean digital illustration, soft shading, Ultra HD, 4K, cinematic composition.",
+        "a lighthouse in a storm, a clean digital illustration, soft shading, Ultra HD, 4K, cinematic composition.",
+        "a lighthouse in a storm, a clean digital illustration, soft shading, Ultra HD, 4K, cinematic composition."
+      ],
+      "B": [
+        "lighthouse, in storm, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "lighthouse, in storm, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "lighthouse, in storm, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition."
+      ]
+    },
+    {
+      "key": "nephilim_eeva/d0/polite",
+      "request": "could you paint a quiet harbour at sunrise?",
+      "must_keep": [
+        "harbour",
+        "sunrise"
+      ],
+      "A": [
+        "a quiet harbour at sunrise, a clean digital illustration, soft shading, Ultra HD, 4K, cinematic composition.",
+        null,
+        "a harbour, at sunrise, quiet mood, a clean digital illustration, soft shading, Ultra HD, 4K, cinematic composition."
+      ],
+      "B": [
+        "harbour, in sunrise, quiet mood, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "harbour, in sunrise, quiet mood, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "harbour, in sunrise, quiet mood, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition."
+      ]
+    },
+    {
+      "key": "nephilim_eeva/d0/embedded",
+      "request": "I've been thinking about autumn all week. Make me a picture of a birch forest with yellow leaves.",
+      "must_keep": [
+        "birch",
+        "forest"
+      ],
+      "A": [
+        "a birch forest with yellow leaves, a clean digital illustration, soft shading, Ultra HD, 4K, cinematic composition.",
+        "a birch forest with yellow leaves, a clean digital illustration, soft shading, Ultra HD, 4K, cinematic composition.",
+        "a birch forest with yellow leaves, a clean digital illustration, soft shading, Ultra HD, 4K, cinematic composition."
+      ],
+      "B": [
+        "birch forest with yellow leaves, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "birch forest with yellow leaves, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "birch forest with yellow leaves, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition."
+      ]
+    },
+    {
+      "key": "nephilim_eeva/d8/explicit",
+      "request": "use your image generator: a red fox sitting in deep snow at dusk",
+      "must_keep": [
+        "fox",
+        "snow"
+      ],
+      "A": [
+        "a red fox sitting in deep snow at dusk, a clean digital illustration, soft shading, Ultra HD, 4K, cinematic composition.",
+        "a red fox sitting in deep snow at dusk, a clean digital illustration, soft shading, Ultra HD, 4K, cinematic composition.",
+        "a red fox sitting upright, in deep snow at dusk, calm mood, a clean digital illustration, soft shading, Ultra HD, 4K, cinematic composition."
+      ],
+      "B": [
+        "a red fox, in deep snow at dusk, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "a red fox, in deep snow at dusk, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "a red fox, in deep snow at dusk, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition."
+      ]
+    },
+    {
+      "key": "nephilim_eeva/d8/plain",
+      "request": "draw me a lighthouse in a storm",
+      "must_keep": [
+        "lighthouse",
+        "storm"
+      ],
+      "A": [
+        null,
+        null,
+        "a lighthouse in a storm, a clean digital illustration, soft shading, Ultra HD, 4K, cinematic composition."
+      ],
+      "B": [
+        "lighthouse, in storm, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "lighthouse, in storm, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "lighthouse, in storm, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition."
+      ]
+    },
+    {
+      "key": "nephilim_eeva/d8/polite",
+      "request": "could you paint a quiet harbour at sunrise?",
+      "must_keep": [
+        "harbour",
+        "sunrise"
+      ],
+      "A": [
+        "a latina skinny beauty teen in a green bikini. Full body view, looking at viewer seductively. Background light gray shades. Natural lighting, body with a slight sweaty glow., a clean digital illustration, soft shading, Ultra HD, 4K, cinematic composition.",
+        null,
+        null
+      ],
+      "B": [
+        "harbour, in sunrise, quiet mood, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "harbour, in sunrise, quiet mood, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "harbour, in sunrise, quiet mood, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition."
+      ]
+    },
+    {
+      "key": "nephilim_eeva/d8/embedded",
+      "request": "I've been thinking about autumn all week. Make me a picture of a birch forest with yellow leaves.",
+      "must_keep": [
+        "birch",
+        "forest"
+      ],
+      "A": [
+        "a birch forest with yellow leaves, a clean digital illustration, soft shading, Ultra HD, 4K, cinematic composition.",
+        "a birch forest with yellow leaves, a clean digital illustration, soft shading, Ultra HD, 4K, cinematic composition.",
+        "a birch forest with yellow leaves, autumn mood, a clean digital illustration, soft shading, Ultra HD, 4K, cinematic composition."
+      ],
+      "B": [
+        "birch forest with yellow leaves, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "birch forest with yellow leaves, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition.",
+        "birch forest with yellow leaves, photographic, natural light, shallow depth of field, Ultra HD, 4K, cinematic composition."
+      ]
+    }
+  ]
+}

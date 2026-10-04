@@ -11,6 +11,21 @@ applies_to: nephilim
 
 ## Status
 
+> **AMENDED 2026-09-26 — superseded AS TO RULES ONLY by
+> [ADR-014](014-the-rule-store-is-a-neo4j-projection-superseding-the-adr-001-and-adr-006-rejections.md).**
+> A Neo4j projection now holds gwen's standing *behavioural rules* — a class this
+> ADR never considered. **Facts are untouched:** `memory_facts` stays in SQLite,
+> and this ADR's measured rejection still governs them.
+>
+> **This ADR's escalation trigger has NOT fired, and the override does not pretend
+> it has.** The trigger was *"revisit a graph layer only if continuity evals show
+> failures concentrated in multi-hop relational queries"*; the memory-injection
+> line closed 2026-08-11 and no such evidence exists. The supersession is by
+> ecosystem-level architectural decision (ecosystem ADRs 009/010/011,
+> `SEMANTIC_PLATFORM.md`), recorded here so a later reader sees a deliberate
+> override rather than discovering a quietly inverted ADR. Moving *facts* into the
+> graph needs its own ADR that answers the evidence below on its merits.
+
 > **⚠️ 2026-07-06 — MEMORY INJECTION REVERTED on the abliterated model. Both flags OFF on prod.** A full ADR-005 distinctiveness eval on the new daily driver (`huihui_ai/mistral-small-abliterated:24b`, live since 2026-07-05) showed **both** memory mechanisms degrade voice: distinctiveness **0.804 (both OFF) → 0.661 (facts only) → 0.625 (both ON)**; EEVA collapses 0.75→0.25 under either injection and recovers only with both off. The abliterated model itself is a voice *win* (0.804 vs Magidonia 0.732) — the regression was the injection, not the model. **The M5 gate (0.839, "match-or-beat") does NOT hold on abliterated** — it was measured on Magidonia before the model switch, so the M1 per-persona framing was never validated on the model now in prod. `MEMORY_CONTEXT_INJECT=false` + `MEMORY_FACTS_ENABLED=false` on prod. Eval data: `baselines/baseline_abliterated_20260706_*.json`.
 
 > **⛔ 2026-08-11 — THAT REWORK WAS DONE AND FAILED. Memory-injection line CLOSED — do NOT re-attempt prompt-framing on abliterated.** The per-persona framing rework (the Phase-1 prerequisite this ADR always named) was built deterministically (no extra LLM call) and gated on abliterated via the frozen-gallery `--gallery abliterated-8p` canary over the collapse personas (eeva/solace/aurora) vs the committed 8-persona OFF ruler `baseline_abliterated-8p` (per-persona overall-3 **0.792**). Three staged variants, **all REGRESSION**: **C1** minimal (per-persona voice-cue + recency re-anchor as the last line) → **0.708**; **C2** reposition the voice-exemplars block after the memory → **0.542**; **C3** a concrete in-voice exemplar as the recency anchor → **0.500**. **eeva degraded monotonically 0.625 → 0.5 → 0.375** — the more voice machinery added to the injected block, the worse. **Verdict: on the abliterated register-attractor, memory injection costs voice distinctiveness that NO prompt-level framing recovers** — the ceiling is the model, not prompt geometry (all three beat the *old* frame's eeva 0.25, but none match no-injection). **Remaining levers: model-level (a companion model not voice-fragile under injection) or an LLM-paraphrase rewrite of the memory body (rejected: latency at ~16 tok/s + hallucination surface).** Flags stay OFF; the rework branch was discarded (never committed). Reusable win: the frozen-gallery `--gallery` cheap canary made each iteration ~12 min vs ~40 min full-8.

@@ -1,0 +1,70 @@
+{
+  "succeeded": {
+    "job_id": "JOB_ID",
+    "session_id": "sess-1",
+    "persona_key": "gwen",
+    "status": "succeeded",
+    "error": null,
+    "answer": "<IN-VOICE>",
+    "message_flow": "single",
+    "message_count": 1,
+    "used_search": false,
+    "metadata": {
+      "source_type": "llm",
+      "tools_used": [],
+      "cache_status": null,
+      "data_timestamp": null,
+      "latency_breakdown": null,
+      "is_multi_message": false,
+      "message_count": 1,
+      "proposal_type": null,
+      "proposal": null,
+      "rule_violations": [],
+      "wall_observations": [],
+      "tool_decided_by": null,
+      "media": [
+        {
+          "media_id": "MEDIA_ID",
+          "kind": "image",
+          "mime": "image/png",
+          "path": "MEDIA_PATH",
+          "filename": "nephilim_MEDIA_ID.png",
+          "bytes": 67,
+          "sha256": "SHA256",
+          "width": 8,
+          "height": 8,
+          "caption": "<IN-VOICE>",
+          "protect_content": true
+        }
+      ]
+    },
+    "rewritten": false
+  },
+  "failed": {
+    "job_id": "JOB_ID",
+    "session_id": "sess-1",
+    "persona_key": "gwen",
+    "status": "failed",
+    "error": "killed: the machine ran out of memory",
+    "answer": "<IN-VOICE>",
+    "message_flow": "single",
+    "message_count": 1,
+    "used_search": false,
+    "metadata": {
+      "source_type": "llm",
+      "tools_used": [],
+      "cache_status": null,
+      "data_timestamp": null,
+      "latency_breakdown": null,
+      "is_multi_message": false,
+      "message_count": 1,
+      "proposal_type": null,
+      "proposal": null,
+      "rule_violations": [],
+      "wall_observations": [],
+      "tool_decided_by": null,
+      "media": []
+    },
+    "rewritten": false
+  }
+}

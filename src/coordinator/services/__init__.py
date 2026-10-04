@@ -27,6 +27,8 @@ from .query_handler_service import QueryHandlerService
 # Message processing utilities
 from .message_processing_service import (
     force_multi_message_split,
+    legacy_force_split,
+    split_bubbles,
     parse_multi_message_response,
 )
 
@@ -61,6 +63,8 @@ __all__ = [
     "QueryHandlerService",
     # Message processing
     "force_multi_message_split",
+    "legacy_force_split",
+    "split_bubbles",
     "parse_multi_message_response",
     # Strategy & wallet
     "StrategyService",

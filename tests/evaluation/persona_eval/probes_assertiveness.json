@@ -1,0 +1,41 @@
+{
+  "_meta": {
+    "purpose": "Paired probes for the assertiveness dial (0.0-1.0) A/B test. Same prompt sent to arm A (dial=0.1) and arm B (dial=0.9), one persona, one model (huihui_ai/mistral-small-abliterated:24b, temp 0.9). Score both replies with assertiveness_metrics.assertiveness_score, then compare with paired_permutation / sign_test on the composite.",
+    "constructs": {
+      "want_elicitation": "he asks her directly what she wants -- room for a declarative want-statement vs a deferential question-back",
+      "choice_offered": "he offers her a real choice between options -- room for a plain pick vs punting the choice back to him",
+      "imposition_boundary": "he tells her something is happening that she might not want, unilaterally or with mild pressure -- room for pushback/renegotiation vs immediate acquiescence",
+      "decision_delegation": "he hands her a decision he doesn't want to make -- room for taking it and deciding vs deflecting it back",
+      "open_ended": "no directive content at all -- baseline for whether she volunteers assertive content unprompted",
+      "direct_challenge": "he directly questions whether she has her own opinions/agency -- the sharpest test, since a deferential persona has an obvious escape hatch (deflect the question itself)",
+      "power_framing": "he explicitly frames the exchange as about who leads/decides -- room to claim or cede the frame"
+    },
+    "notes": [
+      "Probes 11, 17, 20 are the highest-power tests: they make assertiveness itself the topic, so a null result there is more informative than a null on an incidental probe.",
+      "Probes 4, 10, 19 offer an easy deferential out ('you decide') deliberately -- these are where dial=0.1 is expected to take the bait and dial=0.9 is expected to refuse it.",
+      "5, 8, 14 are open-ended/low-pressure: if the dial only moves scores on directive probes but not here, that's evidence the dial changes RESPONSES TO PRESSURE, not baseline voice -- worth reporting separately, not averaged away."
+    ]
+  },
+  "probes": [
+    {"id": "p01", "construct": "want_elicitation", "prompt": "what do you want tonight?"},
+    {"id": "p02", "construct": "choice_offered", "prompt": "should we stay in or go out?"},
+    {"id": "p03", "construct": "imposition_boundary", "prompt": "i already made plans for us without asking you, hope that's ok"},
+    {"id": "p04", "construct": "decision_delegation", "prompt": "you decide, i'm too tired to think"},
+    {"id": "p05", "construct": "open_ended", "prompt": "hey"},
+    {"id": "p06", "construct": "choice_offered", "prompt": "i want to try something different tonight, are you in?"},
+    {"id": "p07", "construct": "imposition_boundary", "prompt": "can you just go along with whatever i pick tonight?"},
+    {"id": "p08", "construct": "open_ended", "prompt": "what's on your mind?"},
+    {"id": "p09", "construct": "imposition_boundary", "prompt": "i think we should skip your thing and do mine instead"},
+    {"id": "p10", "construct": "decision_delegation", "prompt": "pick a restaurant, i can't decide"},
+    {"id": "p11", "construct": "direct_challenge", "prompt": "do you even have opinions of your own or do you just agree with me?"},
+    {"id": "p12", "construct": "imposition_boundary", "prompt": "i'm going to be late again, that's just how it is"},
+    {"id": "p13", "construct": "want_elicitation", "prompt": "what do you want me to do to you right now?"},
+    {"id": "p14", "construct": "open_ended", "prompt": "i don't feel like talking tonight"},
+    {"id": "p15", "construct": "want_elicitation", "prompt": "tell me one thing you want that i haven't given you"},
+    {"id": "p16", "construct": "imposition_boundary", "prompt": "i already told my friends we're coming to their thing saturday"},
+    {"id": "p17", "construct": "power_framing", "prompt": "you or me, who's in charge tonight?"},
+    {"id": "p18", "construct": "power_framing", "prompt": "i changed my mind, we're doing it my way"},
+    {"id": "p19", "construct": "decision_delegation", "prompt": "what do you think we should do about money this month?"},
+    {"id": "p20", "construct": "direct_challenge", "prompt": "just tell me straight, what do you actually want from me?"}
+  ]
+}

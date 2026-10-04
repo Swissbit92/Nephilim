@@ -12,6 +12,9 @@ from .persona_loader import (
     _load_all_cards_cached,
     _cards_by_all_names,
     resolve_persona_to_card,
+    resolve_persona_strict,
+    progression_participant,
+    progression_key,
     get_persona_card,
 )
 
@@ -57,6 +60,9 @@ __all__ = [
     "_load_all_cards_cached",
     "_cards_by_all_names",
     "resolve_persona_to_card",
+    "resolve_persona_strict",
+    "progression_participant",
+    "progression_key",
     "get_persona_card",
     # Prompt building
     "_summarize",

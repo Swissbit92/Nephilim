@@ -45,6 +45,74 @@ _MEDIA_SEARCH = re.compile(
 )
 
 
+# Generation fast-path (2026-10-02). The MIRROR of the media-search rule above,
+# and for the identical reason: native tool-calling is unreliable at picking one
+# tool among several but reliably calls the one tool it is given. Measured on
+# this deployment before the rule existed — on five natural drawing requests
+# gwen fired 0/5 and eeva 3/5, and on the misses they told the user the image
+# was coming anyway.
+#
+# A PROPERTY OF THE MESSAGE, never of the speaker. Any persona granted
+# `generate_image` gets the same narrowing; nothing here knows a persona name.
+# A persona-specific trigger would be a second thing to keep in sync with the
+# grant, and the two would drift.
+#
+# ⚠️ MUST NOT overlap _MEDIA_SEARCH. "show me a picture of a fox" is a SEARCH
+# and "draw me a picture of a fox" is a GENERATION; the verb decides and the
+# verb sets are disjoint by construction (fetch verbs above, creation verbs
+# here). Checked by a test that runs every phrase against both.
+_CREATE_VERB = (
+    r"\b(?:draw|paint|sketch|render|generate|create|design|illustrate|"
+    r"make|whip\s+up|come\s+up\s+with)\b"
+)
+#: The noun requirement is what keeps roleplay out, exactly as the media rule's
+#: noun requirement keeps bare "find me" RP out. Without it "draw me closer"
+#: and "make me yours" would both start a five-minute GPU job.
+_ART_NOUN = (
+    r"(?:picture|image|drawing|painting|sketch|illustration|art|artwork|"
+    r"portrait|scene|diagram|render)\b"
+)
+# Two shapes, because English puts the object either after the noun
+# ("draw a picture of a fox") or straight after the verb ("draw me a fox").
+_GEN_WITH_NOUN = re.compile(
+    _CREATE_VERB + r"[^.?!]{0,20}?\b" + _ART_NOUN, re.IGNORECASE
+)
+#: The explicit form, which is what a user falls back to when the natural one
+#: fails. Kept separate so it cannot be weakened by tightening the others.
+_GEN_EXPLICIT = re.compile(
+    r"\buse\s+your\s+(?:image\s+)?(?:generator|image\s+gen)\b", re.IGNORECASE
+)
+#: "draw me a fox" — a creation verb with a direct object and no art noun at
+#: all. Deliberately narrow: only `draw|paint|sketch|illustrate`, which have no
+#: common figurative use in this register, and NOT `make|create|generate`,
+#: which do ("make me happy", "create a problem").
+_GEN_BARE = re.compile(
+    r"\b(?:draw|paint|sketch|illustrate)\s+(?:me\s+)?(?:a|an|the|some)\s+\w+",
+    re.IGNORECASE,
+)
+
+
+def generation_intent(query: str) -> bool:
+    """True when the user is asking for a NEW image to be made.
+
+    Lets the tool-brain route deterministically narrow the offered surface to
+    `generate_image`, the same mechanism `media_search_type` uses for
+    image/video search and for the same measured reason.
+
+    Returns False for a request to FIND an existing picture — that is
+    `media_search_type`'s job and the two must not both claim a turn.
+    """
+    if _MEDIA_SEARCH.search(query):
+        # A fetch verb won. "show me a picture" is search, not generation,
+        # even though it contains an art noun.
+        return False
+    return bool(
+        _GEN_EXPLICIT.search(query)
+        or _GEN_WITH_NOUN.search(query)
+        or _GEN_BARE.search(query)
+    )
+
+
 def media_search_type(query: str) -> Optional[str]:
     """Return "video", "image", or None for a colloquial media-find query.
 

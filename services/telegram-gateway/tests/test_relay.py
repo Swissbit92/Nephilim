@@ -95,7 +95,8 @@ async def test_ensure_session_reuses_when_present(store: SessionStore):
 async def test_handle_user_message_happy(store: SessionStore):
     client = FakeClient()
     msgs = await relay.handle_user_message(client, store, 111, "nephilim_eeva", "hi")
-    assert msgs == ["hi there"]
+    assert msgs.messages == ["hi there"]
+    assert msgs.media == []
     assert client.chat_calls == [("sess-1", "hi")]
 
 
@@ -107,7 +108,8 @@ async def test_handle_user_message_recreates_on_stale_404(store: SessionStore):
 
     msgs = await relay.handle_user_message(client, store, 111, "nephilim_eeva", "hi")
 
-    assert msgs == ["hi there"]
+    assert msgs.messages == ["hi there"]
+    assert msgs.media == []
     # A fresh session was created and stored, replacing the stale one.
     assert store.get(111, "nephilim_eeva") == "sess-1"
     assert client.chat_calls == [("sess-1", "hi")]
@@ -172,3 +174,95 @@ async def test_reset_recreates_on_stale_404(store: SessionStore):
     # Stale cleared attempt 404'd -> recreated sess-1 -> cleared it.
     assert client.cleared == ["sess-1"]
     assert store.get(111, "nephilim_eeva") == "sess-1"
+
+
+# ---------- extract_media (M4) ----------
+# Defensive at every level: the text reply is the important part of a turn and
+# a malformed media item must never be able to swallow it.
+
+
+def _body(media):
+    """A chat-shaped response, as the coordinator actually returns it."""
+    return {
+        "answer": "here",
+        "message_flow": "single",
+        "message_count": 1,
+        "used_search": False,
+        "metadata": {"source_type": "llm", "media": media},
+        "rewritten": False,
+    }
+
+
+def test_extract_media_reads_a_well_formed_item():
+    item = {
+        "media_id": "abc",
+        "path": "/abs/img/a.png",
+        "filename": "a.png",
+        "caption": "look",
+        "protect_content": True,
+    }
+    (ref,) = relay.extract_media(_body([item]))
+    assert (ref.path, ref.filename, ref.caption, ref.protect_content) == (
+        "/abs/img/a.png",
+        "a.png",
+        "look",
+        True,
+    )
+
+
+def test_extract_media_preserves_order():
+    body = _body([{"path": "/a.png"}, {"path": "/b.png"}])
+    assert [m.path for m in relay.extract_media(body)] == ["/a.png", "/b.png"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"answer": "x"},
+        {"metadata": None},
+        {"metadata": "nope"},
+        {"metadata": {}},
+        {"metadata": {"media": None}},
+        {"metadata": {"media": "nope"}},
+        {"metadata": {"media": {}}},
+    ],
+)
+def test_extract_media_tolerates_a_missing_or_malformed_envelope(body):
+    assert relay.extract_media(body) == []
+
+
+@pytest.mark.parametrize(
+    "item",
+    ["not-a-dict", None, 42, {}, {"path": ""}, {"path": "   "}, {"path": 99}],
+)
+def test_extract_media_skips_an_unusable_item(item):
+    assert relay.extract_media(_body([item])) == []
+
+
+def test_extract_media_skips_only_the_bad_item():
+    """One malformed entry must not cost the good one."""
+    body = _body([{"nope": 1}, {"path": "/good.png"}])
+    assert [m.path for m in relay.extract_media(body)] == ["/good.png"]
+
+
+def test_extract_media_defaults_a_missing_filename():
+    (ref,) = relay.extract_media(_body([{"path": "/a.png"}]))
+    assert ref.filename == "image.png"
+
+
+def test_extract_media_defaults_protect_content_on():
+    """If the coordinator omits the flag, the privacy-preserving choice is the
+    one that must happen by accident."""
+    (ref,) = relay.extract_media(_body([{"path": "/a.png"}]))
+    assert ref.protect_content is True
+
+
+def test_extract_media_honours_an_explicit_protect_content_false():
+    (ref,) = relay.extract_media(_body([{"path": "/a.png", "protect_content": False}]))
+    assert ref.protect_content is False
+
+
+def test_extract_media_treats_an_empty_caption_as_none():
+    (ref,) = relay.extract_media(_body([{"path": "/a.png", "caption": ""}]))
+    assert ref.caption is None

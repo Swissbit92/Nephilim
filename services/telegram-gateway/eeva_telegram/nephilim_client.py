@@ -104,9 +104,54 @@ class NephilimClient:
         """Send one chat turn. Returns the raw nephilim response dict."""
         return await self._request("POST", f"/sessions/{session_id}/chat", json={"message": message})
 
-    async def clear_messages(self, session_id: str) -> None:
-        """Delete all messages + emotional state for the session (true reset)."""
-        await self._request("DELETE", f"/sessions/{session_id}/messages")
+    async def clear_messages(self, session_id: str) -> dict[str, Any]:
+        """Delete all messages + emotional state for the session (true reset).
+
+        Returns the body so the caller can read ``cleared.images`` — the count
+        the coordinator actually quarantined. Previously the body was discarded,
+        which is why nothing could report what a reset had done.
+        """
+        return await self._request("DELETE", f"/sessions/{session_id}/messages")
+
+    async def request_fixture_image(self, session_id: str) -> dict[str, Any]:
+        """POST /sessions/{id}/media/fixture — dev probe, 404s unless enabled."""
+        return await self._request("POST", f"/sessions/{session_id}/media/fixture", json={})
+
+    async def claim_notifications(
+        self, limit: int = 10, personas: set[str] | None = None
+    ) -> dict[str, Any]:
+        """POST /notifications/claim — take delivery of finished image jobs.
+
+        MUTATING despite reading like a fetch: the coordinator marks each
+        returned job notified before handing it over, so anything this returns
+        is ours to deliver and nobody else's. Hand one back with
+        ``nack_notification`` if the send fails, or it is lost.
+        """
+        query = f"/notifications/claim?limit={int(limit)}"
+        if personas:
+            # Only OUR personas. Without this a second bot instance claims and
+            # delivers this one's images, from the wrong chat.
+            query += "&personas=" + ",".join(sorted(personas))
+        return await self._request("POST", query, json={})
+
+    async def nack_notification(self, job_id: str) -> dict[str, Any]:
+        """POST /notifications/{id}/nack — return an undelivered notification."""
+        return await self._request("POST", f"/notifications/{job_id}/nack", json={})
+
+    async def enqueue_generation(
+        self, session_id: str, prompt: str, persona_key: str
+    ) -> dict[str, Any]:
+        """POST /sessions/{id}/image/generate — queue a real generation.
+
+        Returns a job id immediately; the image arrives later via the
+        notification poller. 404s unless the coordinator has both
+        IMAGE_GEN_ENABLED and IMAGE_GEN_DEV_ENDPOINT on.
+        """
+        return await self._request(
+            "POST",
+            f"/sessions/{session_id}/image/generate",
+            json={"prompt": prompt, "persona_key": persona_key},
+        )
 
     async def get_toolkit(self, persona_key: str) -> dict[str, Any]:
         """Fetch the registry-driven toolkit summary for a persona (ADR-009 W3)."""

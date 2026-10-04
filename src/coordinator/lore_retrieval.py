@@ -11,6 +11,7 @@ import logging
 from typing import Any, Dict, List
 
 from . import lore_loader
+from .persona_loader import progression_key
 from .repositories.seeker_progression_repository import RANK_THRESHOLDS
 
 logger = logging.getLogger(__name__)
@@ -53,7 +54,7 @@ def build_capability_context(persona_key: str, rank_name: str, affinity_level: i
 
     The block shapes behaviour; it is not a user-facing menu.
     """
-    if not persona_key.startswith("nephilim_"):
+    if progression_key(persona_key) is None:
         return ""
 
     bodies: List[str] = []
@@ -85,7 +86,7 @@ def detect_new_capability_unlocks(seeker_repo, user_id: str, persona_key: str,
     """
     if seeker_repo is None:
         return []
-    if not persona_key.startswith("nephilim_"):
+    if progression_key(persona_key) is None:
         return []
 
     try:

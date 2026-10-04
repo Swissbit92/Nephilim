@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from eeva_telegram import handlers
+from eeva_telegram import handlers, relay
 from eeva_telegram.config import TelegramConfig
 from eeva_telegram.handlers import Gateway
 from eeva_telegram.nephilim_client import NephilimSessionNotFoundError, NephilimUnavailableError
@@ -187,7 +187,11 @@ async def test_reset_clears_and_confirms(gateway):
     ctx = make_context(gateway, bot)
     await handlers.reset_command(make_update(111), ctx)
     assert gateway.client.cleared == ["sess-existing"]
-    assert bot.texts == [handlers.MSG_RESET_DONE]
+    # The confirmation now carries an image line too — a reset that says
+    # nothing about images cannot be distinguished from one that missed them.
+    assert len(bot.texts) == 1
+    assert bot.texts[0].startswith(handlers.MSG_RESET_DONE)
+    assert "No images to remove." in bot.texts[0]
 
 
 async def test_reset_non_allowlisted_silent(gateway):
@@ -259,3 +263,102 @@ async def test_tools_command_unavailable_maps_to_fixed_string(gateway):
     bot = FakeBot()
     await handlers.tools_command(make_update(111), make_context(gateway, bot))
     assert bot.texts == [handlers.MSG_UNAVAILABLE]
+
+
+# ---------- media delivery (M4) ----------
+
+
+class _MediaBot:
+    """Records sends in ORDER, so a test can assert the turn reads as one turn."""
+
+    def __init__(self):
+        self.sent: list[tuple[str, object]] = []
+
+    async def send_message(self, chat_id, text, link_preview_options=None):
+        self.sent.append(("text", text))
+
+    async def send_document(self, chat_id, document, filename=None, caption=None, protect_content=None):
+        self.sent.append(("doc", document))
+
+    async def send_chat_action(self, *a, **k):
+        pass
+
+
+def _media_gateway(cfg, tmp_path, store):
+    """A gateway whose media root is a throwaway directory."""
+    import dataclasses
+
+    from eeva_telegram.handlers import Gateway
+
+    root = tmp_path / "media"
+    (root / "img").mkdir(parents=True)
+    return Gateway(
+        config=dataclasses.replace(cfg, media_enabled=True, media_root=root),
+        client=object(),
+        store=store,
+        llm_lock=asyncio.Lock(),
+    )
+
+
+async def test_media_is_sent_after_the_text(cfg, tmp_path, store):
+    """Text first: the reply gives the image its context, and a persona reply
+    can exceed the 1024-char caption limit so it cannot ride along as one."""
+    gw = _media_gateway(cfg, tmp_path, store)
+    good = gw.config.media_root / "img" / "a.png"
+    good.write_bytes(b"x" * 10)
+    bot = _MediaBot()
+
+    await handlers._deliver_media(bot, 111, gw, [])
+    await bot.send_message(111, "she speaks")
+    await handlers._deliver_media(
+        bot, 111, gw, [relay.MediaRef(path=str(good), filename="a.png")]
+    )
+    assert [kind for kind, _ in bot.sent] == ["text", "doc"]
+
+
+async def test_a_rejected_item_reports_once_and_never_leaks_the_path(cfg, tmp_path, store):
+    gw = _media_gateway(cfg, tmp_path, store)
+    bot = _MediaBot()
+    secret = tmp_path / "outside" / "very-secret.png"
+    secret.parent.mkdir()
+    secret.write_bytes(b"x")
+
+    await handlers._deliver_media(
+        bot, 111, gw, [relay.MediaRef(path=str(secret), filename="x.png")]
+    )
+
+    assert [kind for kind, _ in bot.sent] == ["text"]
+    body = bot.sent[0][1]
+    assert body == handlers.MSG_MEDIA_UNAVAILABLE
+    assert "very-secret" not in body
+
+
+async def test_one_bad_item_does_not_cost_the_good_one(cfg, tmp_path, store):
+    """Send what you can. N failures still report ONCE, because N messages is
+    the confusion that makes partial delivery worse than none."""
+    gw = _media_gateway(cfg, tmp_path, store)
+    good = gw.config.media_root / "img" / "good.png"
+    good.write_bytes(b"x" * 10)
+    bot = _MediaBot()
+
+    await handlers._deliver_media(
+        bot,
+        111,
+        gw,
+        [
+            relay.MediaRef(path="/nope/missing.png", filename="a.png"),
+            relay.MediaRef(path=str(good), filename="good.png"),
+            relay.MediaRef(path="/nope/also-missing.png", filename="b.png"),
+        ],
+    )
+
+    kinds = [kind for kind, _ in bot.sent]
+    assert kinds.count("doc") == 1
+    assert kinds.count("text") == 1  # two failures, one report
+
+
+async def test_no_media_sends_nothing_extra(cfg, tmp_path, store):
+    gw = _media_gateway(cfg, tmp_path, store)
+    bot = _MediaBot()
+    await handlers._deliver_media(bot, 111, gw, [])
+    assert bot.sent == []

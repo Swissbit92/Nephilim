@@ -1,0 +1,849 @@
+"""Standing behavioural rules in Neo4j — ADR-014.
+
+DELIBERATELY NOT A BaseRepository SUBCLASS, and CLAUDE.md's "all repositories
+extend BaseRepository" is knowingly departed from here. That base class is not a
+datastore abstraction, it is a SQLite-with-pooling abstraction: `_execute(query,
+params: tuple)` is positional-SQL shaped and the adapter contract underneath is
+cursor/row-dict shaped. Cypher takes named parameters and has no cursor. Forcing
+the fit would mean a `Neo4jAdapter` that satisfies `fetchone`/`fetchall`/`execute`
+awkwardly and fights the driver at every call. This mirrors the base's SHAPE
+instead — injected connection with a settings fallback, `_ensure_*` schema
+bootstrap from __init__, verb methods, module logger — which is what the callers
+actually depend on, since every repository is typed `Any` at the ChatDeps seam.
+
+THE MODEL. Rules are NODES, not relationship properties, and that is not a
+stylistic choice: a Neo4j relationship cannot be the endpoint of another
+relationship, and a rule needs two things pointed AT it — a supersession chain and
+a provenance edge. Graphiti, the reference production graph memory for agents,
+puts facts on edges and pays exactly that price: its provenance is an array of
+opaque UUID strings inside a property, and it has NO supersession edge at all, so
+"what did I believe before X" is a scan-and-reconstruct rather than a traversal.
+Facts may keep the edge shape; rules cannot.
+
+  (:Persona {persona_id})-[:HAS_RULE]->(:Rule:CurrentRule {...})
+  (:Rule)-[:SUPERSEDES]->(:Rule)        new -> old, chain-walkable
+  (:Rule)-[:LEARNED_FROM]->(:Message)   a real edge, not a uuid array
+
+`:CurrentRule` IS A LABEL BECAUSE NEO4J INDEXES DO NOT STORE NULLS. The hot
+predicate is `expired_at IS NULL`, and a range index on `expired_at` can never
+serve it while still costing on every write. A label-scoped index is Neo4j's only
+partial index, so the index contains exactly the rows the read touches. Null stays
+the semantic truth; the label is derived state, reconciled by
+`check_integrity()`. Graphiti ships the useless `expired_at` index — do not copy
+it. The same mistake already exists locally in
+`idx_memory_facts_valid ON memory_facts(valid_to)`.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Optional
+
+from ..graph_driver import read, write
+from ..graph_ids import new_id, now_iso
+
+logger = logging.getLogger(__name__)
+
+# Controlled vocabularies, module-level and fail-loud, matching
+# memory_fact_repository.PREDICATE_VOCABULARY. Community enforces uniqueness and
+# NOTHING else — no property existence, no node keys, no type constraints, and no
+# edition of Neo4j has a value-domain constraint. So these are the only thing
+# standing between the graph and a rule with rule_type="hardwall" (sic) that
+# silently reads as unclassified forever.
+RULE_TYPES: frozenset[str] = frozenset({"dial", "soft_wall", "hard_wall"})
+RULE_TYPE_SOURCES: frozenset[str] = frozenset({"declared", "default"})
+ORIGINS: frozenset[str] = frozenset({"card", "conversation", "inferred"})
+
+# WHETHER THE TEXT IS A PROHIBITION OR AN INSTRUCTION, and it is not cosmetic.
+#
+# Added 2026-09-26 after a rendering bug that INVERTED four rules. The renderer
+# prefixed every rule with "Never, under any circumstances:", which is correct for a
+# prohibition and catastrophic for the positively-reframed ones — it produced
+# "Never, under any circumstances: ... If he asks you to act shy, refuse it in
+# character", i.e. never refuse acting shy. The exact opposite of the rule, stated
+# with maximum emphasis.
+#
+# Polarity therefore travels WITH the text and is never inferred from it. Inferring
+# it would mean pattern-matching English negation, which is the same unreliable
+# operation the reframing exists to avoid.
+POLARITIES: frozenset[str] = frozenset({"prohibition", "instruction"})
+
+
+# A hard wall must never sort below this. Tier priorities are 100 / 50 / 10
+# (scripts/utils/seed_graph.py), and `rank` is folded INTO priority at seed time
+# rather than stored, so a supersession that passes `priority` can silently drop a
+# hard wall into the soft-wall band and out of the read limit. seed_graph asserts
+# against that for seeds; nothing asserted against it for supersessions.
+_HARD_WALL_PRIORITY_FLOOR = 90
+
+
+class HardWallImmutable(RuntimeError):
+    """Raised when something tries to change a hard wall through a writable path.
+
+    A distinct type rather than ValueError, so a caller can catch exactly this and
+    turn it into a refusal-to-propose instead of a 500. It is deliberately NOT a
+    subclass of ValueError: a vocabulary error means "you passed nonsense", this
+    means "you passed something valid that you are not allowed to do".
+    """
+
+
+#: The fail-closed default. An unclassified rule is a HARD WALL, never a movable
+#: one, because the costs are asymmetric: a soft wall wrongly held as hard is an
+#: annoyance the operator notices and corrects, while a hard wall wrongly treated
+#: as soft is an identity or consent boundary that became negotiable through an
+#: OMISSION, and nothing announces it. See docs/INVARIANTS.md.
+DEFAULT_RULE_TYPE = "hard_wall"
+
+# Named explicitly. An unnamed constraint gets a server-generated name, which makes
+# SHOW CONSTRAINTS output and any future DROP unpredictable.
+_SCHEMA: tuple[str, ...] = (
+    # Uniqueness is the ONLY constraint Community enforces — and it is load-bearing
+    # rather than hygiene: `ORDER BY priority DESC, rule_id DESC` is a TOTAL order
+    # only if rule_id is unique, so this constraint is half the determinism proof.
+    "CREATE CONSTRAINT rule_id_unique IF NOT EXISTS "
+    "FOR (r:Rule) REQUIRE r.rule_id IS UNIQUE",
+    "CREATE CONSTRAINT persona_id_unique IF NOT EXISTS "
+    "FOR (p:Persona) REQUIRE p.persona_id IS UNIQUE",
+    # THE read index. TWO columns, not three, and that is MEASURED rather than
+    # chosen — see the note below. Scoped to :CurrentRule so it behaves as a
+    # partial index over exactly the live rows.
+    "CREATE INDEX current_rule_read IF NOT EXISTS "
+    "FOR (r:CurrentRule) ON (r.persona_id, r.priority)",
+    # Time travel over the full history, which :CurrentRule deliberately excludes.
+    "CREATE INDEX rule_history_read IF NOT EXISTS "
+    "FOR (r:Rule) ON (r.persona_id, r.valid_from)",
+    # DELIBERATELY ABSENT: an index on expired_at or valid_to. See the module
+    # docstring — it cannot serve IS NULL and costs on every write.
+)
+
+# MEASURED 2026-09-26 on Neo4j 5.26.31, and it corrects an earlier claim in this
+# file and in ADR-014 that the read is "index-backed with no Sort operator".
+#
+# It is half true. EXPLAIN on the real read, with the real index ONLINE:
+#
+#   3-column composite (persona_id, priority, rule_id) -> NodeByLabelScan
+#   single-property    (persona_id)                    -> NodeIndexSeek
+#   2-column           (persona_id, priority)          -> NodeIndexSeek
+#
+# So a THREE-column composite is not usable for a predicate that constrains only
+# the leading property — it was dead weight, paying write cost on every insert and
+# never once serving a query. Two columns seek. That is the fix.
+#
+# AND `Top` IS PRESENT IN ALL THREE PLANS. The ordering is NEVER supplied by the
+# index on this version: `ORDER BY priority DESC, rule_id DESC` always becomes a
+# bounded sort. Neo4j's own documentation covers only single-property ASCENDING
+# index-backed ordering and says nothing about composite or descending, and the
+# existence of PartialSort/PartialTop for prefix ordering implies the general case
+# is partial at best.
+#
+# AND THE HONEST CONCLUSION, after chasing it further than it deserved: at this
+# data size the planner is RIGHT to scan. There are 9 :CurrentRule nodes. A label
+# scan over 9 rows beats an index seek, and it will keep beating it into the
+# hundreds. `USING INDEX` is refused outright for this query shape, because
+# `expired_at IS NULL` cannot be index-served at all — indexes do not store nulls,
+# which is the same fact that made :CurrentRule a label in the first place.
+#
+# THE REAL ERROR WAS CONFLATING TWO INDEPENDENT CLAIMS, and it is worth naming
+# because it survived several passes of review:
+#
+#   DETERMINISM comes from the ORDER BY being a TOTAL order — a priority plus a
+#   UNIQUE, fixed-width, lexicographically-sortable rule_id. It holds under a label
+#   scan, under a seek, under `Sort`, under `Top`, and after a restore that changes
+#   the planner's mind. It is a property of the query's semantics.
+#
+#   INDEX-BACKING is a performance property. It is planner-dependent, it changes
+#   with the statistics, and at 9 rows it is correctly absent.
+#
+# ADR-014 claimed "deterministic AND index-backed with no Sort operator" as though
+# they were one claim. They are not, and only the first is load-bearing. The tests
+# therefore assert DETERMINISM — the same answer across repeated calls, and a
+# stable order under tied priorities — and deliberately do NOT assert plan shape,
+# which would pin planner behaviour at a scale that does not represent production
+# and would fail for a reason unrelated to correctness.
+#
+# The 2-column index stays: it is measured to be seekable for this predicate shape
+# (unlike the 3-column form) and costs almost nothing to maintain at this size. It
+# is insurance for scale, not a load-bearing part of today's read.
+
+# REGISTERS THE BI-TEMPORAL PROPERTY KEYS. This looks like a hack and is the
+# opposite of one; the alternative is strictly worse.
+#
+# IN NEO4J, SETTING A PROPERTY TO NULL DELETES IT — there is no stored null. So
+# `SET r.valid_to = null` never creates the key, and the key never enters the
+# database's property-key registry. Every read then emits
+#   "warn: property key does not exist. The property `expired_at` does not exist.
+#    Verify that the spelling is correct."
+# ...which is CORRECT (IS NULL is true for an absent property, so the semantics
+# are right) and fires on every single read until the first supersession happens
+# to create the keys.
+#
+# The obvious fix — disabling the UNRECOGNIZED notification classification on the
+# driver — would also silence the case that notification exists for: a genuinely
+# misspelled property name, which in a store with no type constraints is a silent
+# always-null filter. MEASURED 2026-09-26: with the keys registered, the real read
+# emits 0 notifications while `WHERE r.expried_at IS NULL` still emits 1. So
+# registering the keys keeps the detection and loses only the noise.
+#
+# The registry is append-only, so this runs once and the node never survives the
+# transaction.
+_REGISTER_KEYS = (
+    "CREATE (x:_PropertyKeyRegistry {expired_at: '', valid_to: '', "
+    "updated_at: ''}) DELETE x"
+)
+
+# Emitted when two boots race an identical CREATE ... IF NOT EXISTS: both pass the
+# existence check, then one loses at commit. The post-state is correct either way.
+_BENIGN_SCHEMA_RACE = frozenset({
+    "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists",
+    "Neo.ClientError.Schema.ConstraintAlreadyExists",
+    "Neo.ClientError.Schema.IndexAlreadyExists",
+})
+
+
+class Neo4jRuleRepository:
+    """Read and write a persona's standing rules. Never raises on a graph outage."""
+
+    def __init__(self, driver: Any = None, database: str = "neo4j",
+                 ensure_schema: bool = True) -> None:
+        self._driver = driver
+        self._database = database
+        if driver is not None and ensure_schema:
+            self.ensure_schema()
+
+    # ---- schema ---------------------------------------------------------
+
+    def ensure_schema(self) -> bool:
+        """Create constraints and indexes if absent. Idempotent. Never raises.
+
+        Safe on every boot: with IF NOT EXISTS, no error is thrown and nothing
+        happens when a constraint with the same name OR the same schema and type
+        already exists.
+
+        ONE STATEMENT PER CALL, deliberately — Neo4j forbids mixing schema and data
+        changes in one transaction, and execute_query wraps each call in its own,
+        so one-per-call satisfies that for free.
+
+        `db.awaitIndexes()` IS NOT CALLED HERE. It blocks until EVERY index in the
+        database is ONLINE — not only ours — with a default timeout of 300 seconds,
+        and it throws if any index is FAILED. At startup that is up to five minutes
+        of blocked boot, and one poisoned index anywhere would turn every
+        subsequent boot into a hard failure. It belongs in a bulk-load path with an
+        explicit small timeout, where the question is "is this index usable for the
+        query I am about to run".
+        """
+        if self._driver is None:
+            return False
+        ok = True
+        try:
+            write(self._driver, _REGISTER_KEYS, self._database)
+        except Exception as e:  # noqa: BLE001
+            # Cosmetic only — failure means noisier logs, never wrong answers.
+            logger.debug("[Neo4jRules] property-key registration skipped: %s", e)
+        for stmt in _SCHEMA:
+            try:
+                write(self._driver, stmt, self._database)
+            except Exception as e:  # noqa: BLE001
+                code = getattr(e, "code", "")
+                if code in _BENIGN_SCHEMA_RACE:
+                    logger.debug("[Neo4jRules] schema already present (concurrent boot): %s", code)
+                    continue
+                # By CODE, not by exception class: driver 6.0 reshuffled which
+                # errors are DriverError versus Neo4jError, so class-based matching
+                # written against 5.x is no longer reliable.
+                logger.warning("[Neo4jRules] schema bootstrap failed (degraded): %s", e)
+                ok = False
+        logger.debug("[Neo4jRules] schema ensured (ok=%s)", ok)
+        return ok
+
+    # ---- the read -------------------------------------------------------
+
+    def standing_rules(self, persona_id: str, limit: int = 8,
+                       now: Optional[str] = None) -> list[dict[str, Any]]:
+        """The rules in force, highest priority first. THE deterministic read.
+
+        Same answer every turn for the same graph state. Never a similarity search
+        — a rule fetched because it looked relevant to the current message is a
+        rule that is SOMETIMES not fetched, and an instruction obeyed
+        intermittently is worse than one never given, because the operator can no
+        longer tell whether he was heard.
+
+        `now` is a parameter rather than `datetime()` inside the query on purpose:
+        computing it server-side lets two calls within one logical turn straddle a
+        boundary, and the read stops being reproducible for reasons nothing logs.
+
+        Returns [] on a graph outage rather than raising. The caller renders a
+        prompt either way; a graph that is down must cost rules, not the turn.
+        """
+        if self._driver is None:
+            return []
+        t = now or now_iso()
+        try:
+            return read(
+                self._driver,
+                """
+                MATCH (r:CurrentRule {persona_id: $persona_id})
+                WHERE r.expired_at IS NULL
+                  AND r.valid_from <= $now
+                  AND (r.valid_to IS NULL OR r.valid_to > $now)
+                RETURN r.rule_id                            AS rule_id,
+                       r.text                               AS text,
+                       r.source_field                       AS source_field,
+                       r.source_index                       AS source_index,
+                       coalesce(r.rule_type, $default_type) AS rule_type,
+                       coalesce(r.rule_type_source, 'default') AS rule_type_source,
+                       r.origin                             AS origin,
+                       coalesce(r.polarity, 'prohibition')  AS polarity,
+                       r.priority                           AS priority
+                ORDER BY r.priority DESC, r.rule_id DESC
+                LIMIT $limit
+                """,
+                self._database,
+                persona_id=persona_id, now=t, limit=limit,
+                default_type=DEFAULT_RULE_TYPE,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[Neo4jRules] standing_rules failed for %s (returning none): %s",
+                           persona_id, e)
+            return []
+
+    # ---- writes ---------------------------------------------------------
+
+    def seed_rules(self, persona_id: str, rules: list[dict[str, Any]],
+                   dry_run: bool = False) -> dict[str, Any]:
+        """Import a persona's rules from her card. Idempotent on (field, index).
+
+        THE MERGE KEY IS (persona_id, source_field, source_index), NOT the text.
+        Keying on text would make an edit to `dont[2]` create a second rule and
+        orphan the first, so the graph would hold both and the read would return
+        whichever won on priority. Keying on position means a re-seed UPDATES the
+        row that position refers to.
+
+        Mutable properties are in ON CREATE SET / ON MATCH SET and NEVER in the
+        MERGE pattern. A property inside the pattern is part of the match
+        criteria, so putting `text` there would silently create a duplicate on
+        every edit instead of updating — the single most common MERGE defect.
+
+        WHY A POSITIONAL KEY IS SAFE HERE, WHICH IS NOT OBVIOUS AND WAS CHALLENGED.
+        A positional key into a hand-edited list is normally unsound, and the worst
+        case is not an edit but a DELETION: remove `dont[1]` and every later index
+        shifts down, so slot 2 now holds what slot 3 held. A naive positional MERGE
+        would then record an EDIT where a rule was in fact retired and a different
+        one renumbered — and the genuinely deleted rule would survive as an orphaned
+        :CurrentRule, still enforced, with no card backing and no supersessor.
+
+        That cannot happen here, because the TIER OVERLAY PINS THE TEXT AT EACH
+        POSITION and the seed script compares them before writing anything. Any
+        shift, reorder or in-place edit desynchronises text from position and the
+        seed REFUSES with a diff. Verified 2026-09-26 by deleting dont[1] from the
+        card and running the seed: exit 1, "the card and the overlay disagree about
+        the rule text." So the safety property is not the key — it is the key plus
+        the pin, and neither is sufficient alone.
+
+        It fails LOUD rather than fails correct: the operator must re-run the
+        classification. That is the right trade for a hand-edited card, because a
+        changed rule needs a human tier decision anyway — a content-addressed key
+        would silently create a new node and supersede, which for a CARD edit is
+        wrong. The card is the origin; git holds its history, not the graph.
+        """
+        if self._driver is None:
+            return {"seeded": 0, "skipped": len(rules), "reason": "graph unavailable"}
+
+        rows = []
+        for r in rules:
+            rule_type = r.get("rule_type") or DEFAULT_RULE_TYPE
+            if rule_type not in RULE_TYPES:
+                raise ValueError(
+                    f"rule_type {rule_type!r} not in the controlled vocabulary "
+                    f"{sorted(RULE_TYPES)} — refusing to write a value the read "
+                    f"would coalesce into silence"
+                )
+            origin = r.get("origin", "card")
+            if origin not in ORIGINS:
+                raise ValueError(f"origin {origin!r} not in {sorted(ORIGINS)}")
+            polarity = r.get("polarity", "prohibition")
+            if polarity not in POLARITIES:
+                raise ValueError(
+                    f"polarity {polarity!r} not in {sorted(POLARITIES)} — refusing to "
+                    f"write a rule whose text could be rendered with the wrong stem"
+                )
+            rows.append({
+                "rule_id": r.get("rule_id") or new_id(),
+                "text": r["text"],
+                "source_field": r["source_field"],
+                "source_index": int(r["source_index"]),
+                "rule_type": rule_type,
+                # Derived HERE, in one place, so "hard because someone decided" stays
+                # distinguishable from "hard because nobody classified it". Both
+                # enforce identically; only one needs a decision, and collapsing them
+                # would mean never being able to list what is still unclassified.
+                "rule_type_source": "declared" if r.get("rule_type") else "default",
+                "origin": origin,
+                "polarity": polarity,
+                "priority": int(r["priority"]),
+                "valid_from": r.get("valid_from") or now_iso(),
+            })
+
+        if dry_run:
+            return {"seeded": 0, "would_seed": len(rows), "dry_run": True}
+
+        now = now_iso()
+        written = write(
+            self._driver,
+            """
+            MERGE (p:Persona {persona_id: $persona_id})
+              ON CREATE SET p.created_at = $now
+            WITH p
+            UNWIND $rows AS row
+            MERGE (r:Rule {persona_id: $persona_id,
+                           source_field: row.source_field,
+                           source_index: row.source_index})
+              ON CREATE SET r.rule_id    = row.rule_id,
+                            r.created_at = $now,
+                            r.valid_from = row.valid_from,
+                            r.valid_to   = null,
+                            r.expired_at = null
+              ON MATCH  SET r.updated_at = $now
+            SET r:CurrentRule,
+                r.text             = row.text,
+                r.rule_type        = row.rule_type,
+                r.rule_type_source = row.rule_type_source,
+                r.origin           = row.origin,
+                r.polarity         = row.polarity,
+                r.priority         = row.priority
+            MERGE (p)-[:HAS_RULE]->(r)
+            RETURN count(r) AS seeded
+            """,
+            self._database,
+            persona_id=persona_id, rows=rows, now=now,
+        )
+        n = written[0]["seeded"] if written else 0
+        logger.info("[Neo4jRules] seeded %s rule(s) for %s", n, persona_id)
+        return {"seeded": n}
+
+    def supersede_rule(self, old_rule_id: str, text: str, *,
+                       rule_type: Optional[str] = None,
+                       polarity: Optional[str] = None,
+                       priority: Optional[int] = None,
+                       origin: str = "conversation",
+                       valid_from: Optional[str] = None,
+                       allow_hard_wall: bool = False) -> dict[str, Any]:
+        """Replace a rule without destroying it. Sets BOTH clocks.
+
+        A supersession asserts two different things and they are easy to conflate:
+        `expired_at` says the system stopped BELIEVING this row, and `valid_to`
+        says the rule stopped APPLYING in the world. A pure correction — "I
+        recorded that wrong, it was never true" — would set only `expired_at` and
+        leave `valid_to` alone. THAT METHOD DOES NOT EXIST YET; an earlier version
+        of this docstring said it did.
+
+        The old row keeps every property and loses only the :CurrentRule label,
+        which drops it out of the read index while leaving it fully traversable.
+
+        HARD WALLS ARE REFUSED unless ``allow_hard_wall=True``, which no
+        conversation-sourced path may pass. Before 2026-09-28 this method could
+        change one three ways, all silent and all reproduced against the live
+        graph: rewrite its text while keeping the hard_wall label, demote it to
+        soft_wall, or push its priority below the read limit so it falls out of
+        the prompt entirely. The check is here in application code because it
+        CANNOT be in the database — this is Neo4j Community with no APOC
+        installed (verified: zero apoc procedures), so there are no triggers and
+        no property-existence constraints, only uniqueness. Anyone with direct
+        Cypher access still bypasses this; that is why ``check_integrity`` also
+        LOOKS for a superseded hard wall after the fact.
+
+        POLARITY IS NOW CARRIED. It used to be absent from the CREATE map, so a
+        superseded `instruction` read back as a `prohibition` (the read does
+        ``coalesce(r.polarity, 'prohibition')``) and rendered as "Never: <text>".
+        Reproduced live on 2026-09-28: "If he asks you to act innocent, refuse in
+        your own filthy words" came out as `1. Never: If he asks you to act
+        innocent, refuse in your own filthy words` — i.e. NEVER REFUSE. That is
+        the same inversion class that once flipped four of gwen's six hard walls,
+        and it was reachable through this method from the day it was written.
+        """
+        # VOCABULARY FIRST, driver second. A caller passing origin="banana" has a bug
+        # whether or not the graph happens to be up, and returning "graph unavailable"
+        # would mask it. It also matters for authority: a validation step that can be
+        # skipped by the database being down is not a validation step.
+        if rule_type is not None and rule_type not in RULE_TYPES:
+            raise ValueError(f"rule_type {rule_type!r} not in controlled vocabulary "
+                             f"{sorted(RULE_TYPES)}")
+        if polarity is not None and polarity not in POLARITIES:
+            raise ValueError(f"polarity {polarity!r} not in controlled vocabulary "
+                             f"{sorted(POLARITIES)}")
+        if origin not in ORIGINS:
+            raise ValueError(f"origin {origin!r} not in controlled vocabulary "
+                             f"{sorted(ORIGINS)}")
+
+        if self._driver is None:
+            return {"superseded": False, "reason": "graph unavailable"}
+
+        # Read the target BEFORE writing. The authority check needs the OLD row's
+        # type: the dangerous call is the one that leaves rule_type alone and only
+        # replaces the text of a hard wall.
+        existing = read(
+            self._driver,
+            "MATCH (r:Rule {rule_id: $rid}) WHERE r.expired_at IS NULL "
+            "RETURN r.rule_type AS rule_type, r.polarity AS polarity, "
+            "r.priority AS priority, r.persona_id AS persona_id",
+            self._database,
+            rid=old_rule_id,
+        )
+        if not existing:
+            return {"superseded": False, "reason": "no live rule with that id"}
+        old_type = existing[0]["rule_type"] or DEFAULT_RULE_TYPE
+
+        if old_type == "hard_wall" and not allow_hard_wall:
+            raise HardWallImmutable(
+                f"rule {old_rule_id} is a hard_wall and cannot be superseded through "
+                f"this path. Hard walls are identity, consent and dignity boundaries; "
+                f"they change by editing the persona card in git and re-seeding, which "
+                f"leaves a reviewable commit. Pass allow_hard_wall=True only from an "
+                f"operator-initiated path, never from anything model-generated."
+            )
+        if rule_type == "hard_wall" and old_type != "hard_wall" and not allow_hard_wall:
+            raise HardWallImmutable(
+                f"refusing to PROMOTE rule {old_rule_id} from {old_type!r} to "
+                f"'hard_wall' through this path. A promotion is as much an identity "
+                f"change as a demotion, and a model-proposed one would let a learned "
+                f"preference acquire the authority of a consent boundary."
+            )
+        now = now_iso()
+        vf = valid_from or now
+        rows = write(
+            self._driver,
+            """
+            MATCH (old:Rule {rule_id: $old_rule_id})
+            WHERE old.expired_at IS NULL
+            MATCH (p:Persona {persona_id: old.persona_id})
+            CREATE (new:Rule:CurrentRule {
+                rule_id:          $new_rule_id,
+                persona_id:       old.persona_id,
+                text:             $text,
+                source_field:     old.source_field,
+                source_index:     old.source_index,
+                rule_type:        coalesce($rule_type, old.rule_type, $default_type),
+                rule_type_source: CASE WHEN $rule_type IS NULL
+                                       THEN coalesce(old.rule_type_source, 'default')
+                                       ELSE 'declared' END,
+                polarity:         coalesce($polarity, old.polarity, 'prohibition'),
+                origin:           $origin,
+                priority:         coalesce($priority, old.priority),
+                valid_from:       $valid_from,
+                valid_to:         null,
+                created_at:       $now,
+                expired_at:       null
+            })
+            SET old.expired_at = $now,
+                old.valid_to   = coalesce(old.valid_to, $valid_from)
+            REMOVE old:CurrentRule
+            CREATE (p)-[:HAS_RULE]->(new)
+            CREATE (new)-[:SUPERSEDES]->(old)
+            RETURN new.rule_id AS new_rule_id, old.rule_id AS old_rule_id
+            """,
+            self._database,
+            old_rule_id=old_rule_id, new_rule_id=new_id(), text=text,
+            rule_type=rule_type, polarity=polarity, priority=priority, origin=origin,
+            valid_from=vf, now=now, default_type=DEFAULT_RULE_TYPE,
+        )
+        if not rows:
+            return {"superseded": False, "reason": "no live rule with that id"}
+        return {"superseded": True, **rows[0]}
+
+    def history(self, rule_id: str, max_depth: int = 10) -> list[dict[str, Any]]:
+        """Walk the supersession chain, newest first. One query, bounded depth.
+
+        This is the capability the node shape was chosen for. On the relationship
+        shape there is no edge to walk and this becomes a scan-and-reconstruct.
+        """
+        if self._driver is None:
+            return []
+        return read(
+            self._driver,
+            f"""
+            MATCH path = (r:Rule {{rule_id: $rule_id}})-[:SUPERSEDES*0..{int(max_depth)}]->(a:Rule)
+            RETURN length(path) AS generations_back,
+                   a.rule_id    AS rule_id,
+                   a.text       AS text,
+                   a.valid_from AS valid_from,
+                   a.valid_to   AS valid_to,
+                   a.created_at AS created_at,
+                   a.expired_at AS expired_at
+            ORDER BY generations_back
+            """,
+            self._database, rule_id=rule_id,
+        )
+
+    def rules_as_of(self, persona_id: str, *,
+                    system_time: Optional[str] = None,
+                    valid_time: Optional[str] = None,
+                    limit: int = 64) -> list[dict[str, Any]]:
+        """Rules on the two temporal axes independently. THE bi-temporal query.
+
+        The schema has carried both axes since ADR-014 and nothing could ask a question
+        that used them:
+
+          ``system_time``  — what the system BELIEVED at that moment.
+                             Bounded by created_at / expired_at.
+          ``valid_time``   — what was TRUE of the persona at that moment.
+                             Bounded by valid_from / valid_to.
+
+        WHY THESE ARE NOT THE SAME QUESTION, and why one timestamp cannot answer both.
+        The axes diverge whenever recording lags reality, which for a rule learned from
+        conversation is the normal case, not the edge case:
+
+          * A LATE-ARRIVING CORRECTION. She says on the 28th that she stopped wanting
+            something three weeks ago. `valid_to` is the 7th; `expired_at` is the 28th.
+            Asking "what applied on the 14th" must answer NO, while "what did we believe
+            on the 14th" must answer YES. A single timestamp collapses those into one
+            wrong answer, and which one you get depends on which meaning the author of
+            the query happened to have in mind.
+          * AUDIT versus BEHAVIOUR. "Why did she say that on Tuesday" is a system-time
+            question — it asks what she was reading. "Was that rule in force on Tuesday"
+            is a valid-time question. Conflating them makes a supersession
+            indistinguishable from a correction, which is exactly the distinction an
+            audit trail exists to preserve.
+
+        Both default to now, which reproduces ``standing_rules`` for the live case.
+        Passing neither is therefore not an error and not a special case.
+
+        A NULL on EITHER valid-time bound means UNBOUNDED, not "same as system time".
+        The first draft used ``coalesce(r.valid_from, r.created_at)``, which is a smell
+        and asymmetric with its own other half: NULL ``valid_to`` was already treated as
+        an open END, so treating NULL ``valid_from`` as ``created_at`` silently asserted
+        "this rule became valid exactly when we happened to write it down". For any row
+        that hit that fallback the table quietly degraded to transaction-time-only, with
+        nothing marking the degradation — and a valid-time query would EXCLUDE a legacy
+        rule that may genuinely have applied earlier, making "we know it started later"
+        indistinguishable from "we do not know when it started".
+
+        NOTE ON STRING COMPARISON: these are lexicographic comparisons on ISO-8601
+        timestamps, which is only valid because ``now_iso()`` is fixed-width and UTC
+        (see graph_ids). A naive-local or variable-width timestamp anywhere in this
+        store would silently turn every comparison here into nonsense.
+        """
+        if self._driver is None:
+            return []
+        st = system_time or now_iso()
+        vt = valid_time or now_iso()
+        return read(
+            self._driver,
+            """
+            MATCH (p:Persona {persona_id: $persona_id})-[:HAS_RULE]->(r:Rule)
+            WHERE r.created_at <= $st
+              AND (r.expired_at IS NULL OR r.expired_at > $st)
+              AND (r.valid_from IS NULL OR r.valid_from <= $vt)
+              AND (r.valid_to   IS NULL OR r.valid_to   >  $vt)
+            RETURN r.rule_id    AS rule_id,
+                   r.text       AS text,
+                   r.rule_type  AS rule_type,
+                   r.polarity   AS polarity,
+                   r.priority   AS priority,
+                   r.origin     AS origin,
+                   r.created_at AS created_at,
+                   r.expired_at AS expired_at,
+                   r.valid_from AS valid_from,
+                   r.valid_to   AS valid_to
+            ORDER BY r.priority DESC, r.rule_id ASC
+            LIMIT $limit
+            """,
+            self._database, persona_id=persona_id, st=st, vt=vt, limit=int(limit),
+        )
+
+    def correct_rule(self, old_rule_id: str, text: str, *,
+                     allow_hard_wall: bool = False) -> dict[str, Any]:
+        """Fix a MIS-RECORDING: "we wrote that down wrong, it was never true".
+
+        The method ADR-014's docstring promised and never had. The difference from
+        ``supersede_rule`` is the whole point and it is one line of Cypher:
+
+            supersede  -> the rule CHANGED.      Sets expired_at AND valid_to.
+            correct    -> the rule was MIS-TYPED. Sets expired_at ONLY.
+
+        SCOPE, AND THE FAILURE MODE TO WATCH. This is a CONTENT-ONLY correction. It
+        cannot express "the text was wrong AND the dates were wrong", and a caller who
+        needs that will reach for this method anyway because it is the only correction
+        primitive here — silently inheriting a wrong validity window as though it were
+        still correct. If that case arrives, it needs its own operation; do not widen
+        this one. A separate third case also exists and is not covered: "this rule was
+        recorded as applying but never applied at all", which is a zero-width
+        valid-time collapse, not a correction.
+
+        A correction leaves ``valid_to`` alone because the world did not change — only
+        our record of it did. The new row inherits the old ``valid_from``, so a
+        valid-time query still reports the rule as having applied continuously, while a
+        system-time query can still show exactly what we wrongly believed and for how
+        long. Using ``supersede_rule`` for a typo destroys that distinction: it asserts
+        the rule stopped applying at the moment someone noticed the typo.
+        """
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("a correction needs replacement text")
+        if self._driver is None:
+            return {"corrected": False, "reason": "graph unavailable"}
+        existing = read(
+            self._driver,
+            "MATCH (r:Rule {rule_id: $rid}) WHERE r.expired_at IS NULL "
+            "RETURN r.rule_type AS rule_type",
+            self._database, rid=old_rule_id,
+        )
+        if not existing:
+            return {"corrected": False, "reason": "no live rule with that id"}
+        if (existing[0]["rule_type"] or DEFAULT_RULE_TYPE) == "hard_wall" and not allow_hard_wall:
+            raise HardWallImmutable(
+                f"rule {old_rule_id} is a hard_wall. Even a correction to one goes "
+                f"through the card in git, so the change leaves a reviewable commit."
+            )
+        now = now_iso()
+        rows = write(
+            self._driver,
+            """
+            MATCH (old:Rule {rule_id: $old_rule_id})
+            WHERE old.expired_at IS NULL
+            MATCH (p:Persona {persona_id: old.persona_id})
+            CREATE (new:Rule:CurrentRule {
+                rule_id:          $new_rule_id,
+                persona_id:       old.persona_id,
+                text:             $text,
+                source_field:     old.source_field,
+                source_index:     old.source_index,
+                rule_type:        old.rule_type,
+                rule_type_source: old.rule_type_source,
+                polarity:         coalesce(old.polarity, 'prohibition'),
+                origin:           old.origin,
+                priority:         old.priority,
+                valid_from:       old.valid_from,
+                valid_to:         old.valid_to,
+                created_at:       $now,
+                expired_at:       null
+            })
+            SET old.expired_at = $now
+            REMOVE old:CurrentRule
+            CREATE (p)-[:HAS_RULE]->(new)
+            CREATE (new)-[:CORRECTS]->(old)
+            RETURN new.rule_id AS new_rule_id
+            """,
+            self._database, old_rule_id=old_rule_id, new_rule_id=new_id(),
+            text=text, now=now,
+        )
+        if not rows:
+            return {"corrected": False, "reason": "no live rule with that id"}
+        return {"corrected": True, "new_rule_id": rows[0]["new_rule_id"]}
+
+    # ---- integrity ------------------------------------------------------
+
+    def check_integrity(self) -> dict[str, Any]:
+        """The graph equivalent of the backup restore-check. Must return zeros.
+
+        Community enforces uniqueness and nothing else, so everything below would
+        otherwise be enforced only by hope. Asserted in the test suite.
+        """
+        if self._driver is None:
+            return {"checked": False, "reason": "graph unavailable"}
+        bad_vocab = read(
+            self._driver,
+            """
+            MATCH (r:Rule)
+            WHERE r.rule_type IS NULL OR NOT r.rule_type IN $rule_types
+               OR r.rule_type_source IS NULL OR NOT r.rule_type_source IN $sources
+               OR r.origin IS NULL OR NOT r.origin IN $origins
+               OR r.polarity IS NULL OR NOT r.polarity IN $polarities
+               OR r.priority IS NULL OR r.valid_from IS NULL
+               OR r.created_at IS NULL OR r.rule_id IS NULL
+            RETURN r.rule_id AS rule_id, r.source_field AS source_field,
+                   r.source_index AS source_index
+            LIMIT 50
+            """,
+            self._database,
+            rule_types=sorted(RULE_TYPES), sources=sorted(RULE_TYPE_SOURCES),
+            origins=sorted(ORIGINS), polarities=sorted(POLARITIES),
+        )
+        # The label/timestamp reconciliation — the one that will actually fire,
+        # because :CurrentRule is derived state and nothing in the database keeps
+        # it honest.
+        label_drift = read(
+            self._driver,
+            """
+            MATCH (r:Rule)
+            WITH r, (r.expired_at IS NULL) AS believed, (r:CurrentRule) AS labelled
+            WHERE believed <> labelled
+            RETURN r.rule_id AS rule_id, believed, labelled LIMIT 50
+            """,
+            self._database,
+        )
+        orphans = read(
+            self._driver,
+            """
+            MATCH (r:Rule) WHERE NOT (:Persona)-[:HAS_RULE]->(r)
+            RETURN r.rule_id AS rule_id LIMIT 50
+            """,
+            self._database,
+        )
+                # Query 4 — a hard wall that was CHANGED. The database cannot prevent this
+        # (Community, no APOC, no triggers, no property-existence constraints — only
+        # uniqueness), so the next best thing is to SEE it. Walks the SUPERSEDES chain
+        # for any live rule whose predecessor was a hard wall, plus any live hard wall
+        # whose priority has been pushed out of its tier's band.
+        changed_hard_walls = read(
+            self._driver,
+            """
+            MATCH (new:Rule)-[:SUPERSEDES]->(old:Rule {rule_type: 'hard_wall'})
+            RETURN new.rule_id AS rule_id, old.rule_id AS superseded_rule_id,
+                   old.rule_type AS was, new.rule_type AS now_is,
+                   new.origin AS origin
+            LIMIT 50
+            """,
+            self._database,
+        )
+        demoted_by_priority = read(
+            self._driver,
+            """
+            MATCH (r:CurrentRule {rule_type: 'hard_wall'})
+            WHERE r.priority < $floor
+            RETURN r.rule_id AS rule_id, r.priority AS priority
+            LIMIT 50
+            """,
+            self._database,
+            floor=_HARD_WALL_PRIORITY_FLOOR,
+        )
+        # Query 5 — two live rules for one card slot. Also unpreventable here: the
+        # only constraint Community gives is uniqueness on rule_id, and a slot is
+        # (persona_id, source_field, source_index).
+        duplicate_slots = read(
+            self._driver,
+            """
+            MATCH (r:CurrentRule)
+            WHERE r.source_field IS NOT NULL AND r.source_index IS NOT NULL
+            WITH r.persona_id AS persona_id, r.source_field AS f,
+                 r.source_index AS i, collect(r.rule_id) AS ids
+            WHERE size(ids) > 1
+            RETURN persona_id, f AS source_field, i AS source_index, ids
+            LIMIT 50
+            """,
+            self._database,
+        )
+
+        return {
+            "checked": True,
+            "bad_vocabulary": bad_vocab,
+            "changed_hard_walls": changed_hard_walls,
+            "demoted_hard_walls": demoted_by_priority,
+            "duplicate_slots": duplicate_slots,
+            "label_drift": label_drift,
+            "orphans": orphans,
+            # A hard-wall change is a BREACH only when it did not come from the card.
+            # An operator editing gwen.json and re-seeding is the sanctioned route and
+            # leaves a git commit; that must not make integrity permanently dirty — the
+            # polarity bug already taught this repo what a permanently-dirty checker is
+            # worth (nothing: it gets ignored). A conversation- or inferred-origin
+            # supersession of a hard wall is the thing that should never be true.
+            "hard_wall_breaches": [
+                r for r in changed_hard_walls if r.get("origin") != "card"
+            ],
+            "clean": not (
+                bad_vocab
+                or label_drift
+                or orphans
+                or duplicate_slots
+                or demoted_by_priority
+                or [r for r in changed_hard_walls if r.get("origin") != "card"]
+            ),
+        }

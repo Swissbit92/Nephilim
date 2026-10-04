@@ -16,7 +16,8 @@ from dataclasses import dataclass
 from telegram import Message, Update
 from telegram.ext import ContextTypes
 
-from . import messaging, relay
+from . import media as media_guard
+from . import media_cleanup, messaging, relay
 from .config import TelegramConfig
 from .nephilim_client import (
     NephilimBadRequestError,
@@ -35,11 +36,16 @@ MSG_UNAVAILABLE = "I'm having trouble connecting right now — give it a moment 
 MSG_ERROR = "Something went wrong on my end. Try again in a moment."
 MSG_EMPTY = "Hm — nothing came through. Try rephrasing?"
 MSG_FORWARD_REFUSED = "I only read messages you write to me directly — forwarded messages are ignored for safety."
+MSG_MEDIA_UNAVAILABLE = "I made something for you, but I couldn't attach it."
 MSG_TEXT_ONLY = "I can only handle text messages right now."
 MSG_START_ACK = (
     "We're already mid-conversation. Say anything to continue, or /reset to wipe our history and start fresh."
 )
-MSG_RESET_DONE = "Done — our conversation history is wiped. We're starting fresh."
+# "wiped" was unconditional and, once images exist, often false — the user
+# finds out by scrolling up, and a bot that overstates one privacy action
+# loses credibility on every later one. "cleared" is the specific verb for
+# the specific thing, and the image detail follows as counts.
+MSG_RESET_DONE = "Done — our conversation history is cleared. We're starting fresh."
 MSG_TOOLKIT_EMPTY = "I don't have any tools available right now — just conversation."
 
 # ── ADR-011 conversation-control command strings (fixed; never interpolate errors) ──
@@ -204,7 +210,9 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     limit = gateway.config.message_char_limit
     try:
         async with gateway.llm_lock:
-            await relay.reset_session(gateway.client, gateway.store, chat_id, persona)
+            quarantined = await relay.reset_session(
+                gateway.client, gateway.store, chat_id, persona
+            )
     except NephilimUnavailableError:
         await messaging.send_text(bot, chat_id, MSG_UNAVAILABLE, limit)
         return
@@ -216,7 +224,19 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         logger.exception("Unexpected error in /reset for chat_id=%s", chat_id)
         await messaging.send_text(bot, chat_id, MSG_ERROR, limit)
         return
-    await messaging.send_text(bot, chat_id, MSG_RESET_DONE, limit)
+    # The chat half is best-effort and must never fail the reset: the history
+    # is already gone server-side by this point, so raising here would report
+    # failure for an action that largely succeeded.
+    try:
+        records = gateway.store.media_for_chat(chat_id)
+        outcome = await media_cleanup.remove_sent_media(bot, chat_id, records)
+        gateway.store.forget_media(chat_id)
+    except Exception:
+        logger.exception("[Media] chat cleanup failed for chat_id=%s", chat_id)
+        outcome = media_cleanup.CleanupResult()
+
+    detail = media_cleanup.describe(outcome, quarantined)
+    await messaging.send_text(bot, chat_id, f"{MSG_RESET_DONE}\n\n{detail}", limit)
 
 
 # ── ADR-011 conversation-control commands ───────────────────────────────────
@@ -434,7 +454,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     try:
         # Single global lock: OLLAMA_NUM_PARALLEL=1 means one LLM call at a time.
         async with gateway.llm_lock, TypingIndicator(bot, chat_id, gateway.config.typing_interval_seconds):
-            messages = await relay.handle_user_message(gateway.client, gateway.store, chat_id, persona, message.text)
+            reply = await relay.handle_user_message(gateway.client, gateway.store, chat_id, persona, message.text)
     except NephilimUnavailableError:
         await messaging.send_text(bot, chat_id, MSG_UNAVAILABLE, limit)
         return
@@ -447,9 +467,144 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await messaging.send_text(bot, chat_id, MSG_ERROR, limit)
         return
 
-    if not messages:
-        messages = [MSG_EMPTY]
-    await messaging.send_messages(bot, chat_id, messages, limit)
+    messages = reply.messages or ([MSG_EMPTY] if not reply.media else [])
+    if messages:
+        await messaging.send_messages(bot, chat_id, messages, limit)
+    # Text first, then the attachment: the reply is what gives the image its
+    # context, and a persona reply can exceed the 1024-char caption limit
+    # anyway, so it structurally cannot ride along as one.
+    await _deliver_media(bot, chat_id, gateway, reply.media)
+
+
+async def _deliver_media(bot, chat_id: int, gateway, items) -> None:
+    """Send each media item, sequentially, reporting failures ONCE.
+
+    Sequential awaits, deliberately: ordering is guaranteed only by causality —
+    a send is not issued until the previous one's response has arrived, so a
+    slow upload cannot be overtaken by a later message. asyncio.gather would
+    race on PTB's 256-connection pool and reorder the turn.
+
+    One bad item must not swallow a good one, and N failures must not become N
+    messages — that is the confusion that makes partial delivery worse than
+    none. Note this deliberately differs from Telegram's own sendMediaGroup,
+    which is atomic: that is the right call for a single wire request and the
+    wrong one for an application-level batch of independent sends.
+    """
+    failures = 0
+    for item in items:
+        try:
+            path = media_guard.resolve_media_path(gateway.config, item.path)
+        except media_guard.MediaRejectedError as exc:
+            # Logged with the reason; the user sees a fixed string. Six distinct
+            # rejection reasons collapse to one message so a probing sender
+            # cannot map what exists on disk.
+            logger.warning("[Media] rejected for chat_id=%s: %s", chat_id, exc)
+            failures += 1
+            continue
+        try:
+            message_id = await messaging.send_document(
+                bot,
+                chat_id,
+                path,
+                filename=item.filename,
+                caption=item.caption,
+                protect_content=item.protect_content,
+            )
+            if message_id is not None:
+                # Remembered so /reset can try to remove it from the chat.
+                # Best-effort: failing to record must not fail a delivered image.
+                try:
+                    gateway.store.record_media(chat_id, message_id)
+                except Exception:  # noqa: BLE001
+                    logger.warning("[Media] could not record message_id %s", message_id)
+        except messaging.MediaSendFailedError as exc:
+            # Already retried and already logged with the cause by retry.py.
+            logger.warning("[Media] giving up on an item for chat_id=%s: %s", chat_id, exc)
+            failures += 1
+        except Exception:
+            logger.exception("[Media] unexpected send failure for chat_id=%s", chat_id)
+            failures += 1
+
+    if failures:
+        await messaging.send_text(
+            bot, chat_id, MSG_MEDIA_UNAVAILABLE, gateway.config.message_char_limit
+        )
+
+
+async def testimage_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Dev probe: ask the coordinator for a fixture image and deliver it.
+
+    Registered only when media is enabled (see bot.build_application), kept out
+    of the slash menu and out of /help. With the flag off the command is a
+    silent no-op, because both message handlers exclude commands.
+    """
+    gateway = get_gateway(context)
+    chat_id = _allowed_chat_id(update, gateway)
+    if chat_id is None:
+        return
+    bot, limit = context.bot, gateway.config.message_char_limit
+    persona = gateway.config.persona_for_chat(chat_id)
+    try:
+        reply = await relay.request_fixture_media(gateway.client, gateway.store, chat_id, persona)
+    except NephilimUnavailableError:
+        await messaging.send_text(bot, chat_id, MSG_UNAVAILABLE, limit)
+        return
+    except NephilimError:
+        logger.exception("fixture media failed for chat_id=%s", chat_id)
+        await messaging.send_text(bot, chat_id, MSG_ERROR, limit)
+        return
+
+    if reply.messages:
+        await messaging.send_messages(bot, chat_id, reply.messages, limit)
+    await _deliver_media(bot, chat_id, gateway, reply.media)
+
+
+async def testgen_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Dev probe: queue a REAL generation and acknowledge immediately.
+
+    Deliberately does not wait. The job takes ~331 s measured and the client's
+    read timeout is 180 s, so waiting here would guarantee a timeout on a
+    successful generation. The image arrives later through the notification
+    poller — which is precisely the path this command exists to exercise
+    end to end.
+
+    Registered only when media is enabled, and the coordinator 404s unless
+    IMAGE_GEN_DEV_ENDPOINT is on, so this is two switches away from a user.
+    """
+    gateway = get_gateway(context)
+    chat_id = _allowed_chat_id(update, gateway)
+    if chat_id is None:
+        return
+    bot, limit = context.bot, gateway.config.message_char_limit
+
+    prompt = " ".join(context.args or []).strip()
+    if not prompt:
+        await messaging.send_text(
+            bot, chat_id, "Give me something to draw: /testgen a red fox in snow", limit
+        )
+        return
+
+    persona = gateway.config.persona_for_chat(chat_id)
+    try:
+        session_id, _ = await relay.ensure_session(
+            gateway.client, gateway.store, chat_id, persona
+        )
+        result = await gateway.client.enqueue_generation(session_id, prompt, persona)
+    except NephilimUnavailableError:
+        await messaging.send_text(bot, chat_id, MSG_UNAVAILABLE, limit)
+        return
+    except NephilimError:
+        logger.exception("enqueue_generation failed for chat_id=%s", chat_id)
+        await messaging.send_text(bot, chat_id, MSG_ERROR, limit)
+        return
+
+    job_id = str(result.get("job_id", ""))[:8]
+    await messaging.send_text(
+        bot,
+        chat_id,
+        f"Started drawing — about five and a half minutes. ({job_id})",
+        limit,
+    )
 
 
 async def non_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

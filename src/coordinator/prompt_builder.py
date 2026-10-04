@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama.llms import OllamaLLM
@@ -20,6 +20,7 @@ from .config import get_settings
 from .cv_summarizer import get_or_build_cv_summary
 from .lore_loader import get_persona_lore_context
 from .ollama_utils import assert_model_available, require_model_configured
+from .identity_source import overlay_from_graph as _overlay_identity_from_graph
 from .persona_loader import resolve_persona_to_card
 
 # Setup logger
@@ -32,9 +33,18 @@ logger = logging.getLogger(__name__)
 # system-prompt builder since PERSONA_LEAN_PROMPT was retired). Each rule
 # appears once.
 
-LEAN_FORMAT = """Reply like texting, not essays. When your reply has multiple beats, split it into 2-4 short <msg> chunks; use a single <msg> for a trivial reply. Keep each chunk to 1-2 sentences.
-<msg>First beat — react or answer</msg>
-<msg>Then a follow-up or a question</msg>"""
+# ADR-015: the <msg> mechanics are GONE — bubble boundaries are now a pure
+# function of the reply text (services/message_processing_service.split_bubbles),
+# so asking the model for tags buys nothing and costs a format constraint that
+# competes with every rule in the block.
+#
+# What is KEPT, and why it is not an oversight: removing this block ENTIRELY was
+# measured on 2026-08-15 and made replies ~30% SHORTER (73.4 -> 51.5 words,
+# shorter on 12 of 12 probes, p=0.0005, d=-1.69). The "react first, then a
+# follow-up or a question" move was generating that volume; the tags were only
+# the marker on it. So the register guidance stays and the syntax goes.
+LEAN_FORMAT = """Reply like texting, not essays. Keep it to 1-2 sentences per beat.
+React or answer first, then a follow-up or a question."""
 
 # Alternative <format> block for personas whose job is analysis rather than
 # company. REPLACES LEAN_FORMAT — it is never appended alongside it.
@@ -81,6 +91,11 @@ NEVER generate wallet addresses, private keys, seed phrases, or any key/address-
 
 def _llm() -> OllamaLLM:
     """Create Ollama LLM client for prompt operations."""
+    from .services.resource_arbiter import guard_chat_model
+
+    # Same chat model as the companion, merely with a 10m keep_alive instead of
+    # a pin — so this path loads the full 16-19 GiB just like a chat turn does.
+    guard_chat_model("summarisation utility")
     cfg = get_settings().ollama
     model = require_model_configured(cfg.model)
     assert_model_available(cfg.base, model)
@@ -279,6 +294,40 @@ def _clean_lines(value) -> List[str]:
     return [s.strip().rstrip(".") for s in value if isinstance(s, str) and s.strip()]
 
 
+def constraints_enabled_for(card: Dict) -> bool:
+    """Is the <constraints> machinery on for THIS persona?
+
+    A persona card may set ``constraints_in_prompt`` to opt in or out; absent, the
+    global ``PERSONA_CONSTRAINTS_IN_PROMPT`` decides. So the global remains the
+    default for every persona that says nothing, and today's behaviour is
+    byte-identical — no shipped card declares the field.
+
+    Why per-persona at all: the flag was global, so turning it on to measure one
+    persona changed all eight in production at once and confounded the measurement
+    across the whole gallery. An experiment you cannot scope is not an experiment.
+
+    Accepted cost, stated rather than discovered later: once a card opts in,
+    ``PERSONA_CONSTRAINTS_IN_PROMPT=false`` no longer silences that persona. The
+    global stops being a kill switch for opted-in cards. The alternative — requiring
+    BOTH, like ``_resolve_format_block`` does — keeps the kill switch but makes
+    global-on a no-op until every card opts in, which silently changes what the
+    existing flag means. Overriding was chosen because the card is already the
+    source of truth for ``nsfw``, ``toolsets`` and ``model_preferences``, and a
+    reader looking at one persona should not have to consult the environment to know
+    what that persona does.
+
+    Safe inside the lru_cached builder: the value is a pure function of the card,
+    which is itself a pure function of the ``selector`` already in the cache key —
+    the same reasoning that lets the tool-intent and format blocks read the card
+    there. A per-SESSION or per-REQUEST flag would NOT be safe this way and must go
+    in the key or stay outside the cache.
+    """
+    declared = card.get("constraints_in_prompt")
+    if isinstance(declared, bool):
+        return declared
+    return bool(get_settings().agent.constraints_in_prompt)
+
+
 def _lean_constraints_block(card: Dict) -> str:
     """Behavioural constraints the persona must actually be told about.
 
@@ -293,7 +342,7 @@ def _lean_constraints_block(card: Dict) -> str:
     Emitting an ambiguous permissions list as instructions is how a card ends up
     asserting the opposite of what its author intended.
     """
-    if not get_settings().agent.constraints_in_prompt:
+    if not constraints_enabled_for(card):
         return ""
 
     sections: List[str] = []
@@ -335,15 +384,37 @@ def _lean_constraints_block(card: Dict) -> str:
     if not sections:
         return ""
 
-    # Trim from the front if the block exceeds its ceiling: do/dont are the
-    # bulkiest and the most style-adjacent, while the bond, the hard limits and
-    # the decline list are the ones a violation actually turns on.
+    # Trim from the front if the block exceeds its ceiling. Append order IS the
+    # priority list, read backwards: pop(0) takes the front, so the last section
+    # appended survives longest. Priority, weakest-first: do, dont, bond, ethics,
+    # decline.
+    #
+    # MEASURED 2026-09-24, and the previous comment here was wrong about it: it
+    # claimed the trim keeps "the bond, the hard limits and the decline list". That
+    # holds only when do+dont alone cover the overage. gwen declares 12 do + 15
+    # dont — 27 rules against everyone else's 13 — so her block is ~775 chars
+    # against a 150-token budget and the loop pops THREE sections: she keeps ethics
+    # and decline, and loses do, dont AND the bond.
+    #
+    # That outcome is now a recorded decision rather than an emergent property of a
+    # front-pop loop, and it is defensible for one specific reason: her bond
+    # (``user_relationship.exclusivity``) is carried independently by
+    # ``_constraint_reminder``, which trims from the BACK and so keeps exclusivity
+    # first — it reaches the model every turn on both the stateless and the
+    # session-backed path. The cached block dropping the bond therefore costs her
+    # nothing that the reminder does not already deliver. ``do``/``dont`` genuinely
+    # are lost; ``test_no_persona_silently_loses_both_do_and_dont`` exists so that
+    # loss is a build failure to be argued with, not a silent trim.
+    #
+    # Sections are atomic — there is no partial truncation within one — so at 5x
+    # over budget any reordering only swaps WHICH two she keeps.
     while len(sections) > 1 and int(len(" ".join(sections).split()) * 1.33) > _CONSTRAINTS_TOKEN_BUDGET:
         sections.pop(0)
     return "\n".join(sections)
 
 
-def _constraint_reminder(card: Dict, who: str) -> str:
+def _constraint_reminder(card: Dict, who: str,
+                         graph_rules: Optional[List[Dict]] = None) -> str:
     """One short line re-stating the hardest constraints, for low-depth use.
 
     Recall is worst in the middle of a long context (arXiv:2307.03172), so a
@@ -351,10 +422,30 @@ def _constraint_reminder(card: Dict, who: str) -> str:
     of it by turn 80. Deliberately terse — this is paid on every single turn,
     unlike the cached <constraints> block.
     """
-    if not get_settings().agent.constraints_in_prompt:
+    if not constraints_enabled_for(card) and not graph_rules:
         return ""
 
     bits: List[str] = []
+
+    # Graph hard walls go FIRST, because this list is trimmed from the BACK so the
+    # first entry is the one guaranteed to survive. Only the top two: the reminder
+    # is paid on every single turn against a 100-token ceiling, and six hard walls
+    # would consume it entirely and pop the bond. The full set lives in the
+    # <rules> section; this is the recency echo of the two hardest.
+    for r in (graph_rules or []):
+        if r.get("rule_type") == "hard_wall" and len(bits) < 2:
+            txt = (r.get("text") or "").strip().rstrip(".")
+            # THE STEM IS PER-BIT AND MANDATORY. This reminder's own framing is
+            # "hold to this:", which reads as an instruction — so a PROHIBITION
+            # dropped in bare says the opposite of itself. Rendering
+            # _strip_negation("Be sexually available to anyone except Daddy") under
+            # that stem produced exactly that: an instruction to be available to
+            # others. This is the SECOND render site where losing polarity inverted a
+            # rule; if a third appears, the rendering belongs on the rule object
+            # rather than being re-derived per call site.
+            bits.append(txt if r.get("polarity") == "instruction"
+                        else "never " + _strip_negation(txt)[0].lower() + _strip_negation(txt)[1:])
+
     rel = card.get("user_relationship")
     if isinstance(rel, dict):
         excl = rel.get("exclusivity")
@@ -434,6 +525,364 @@ def _resolve_format_block(card: Dict) -> str:
     return _FORMAT_STYLES.get(style.strip().lower(), LEAN_FORMAT)
 
 
+# ---------------- Trait dials (ADR-016) ----------------
+#
+# A dial is delivered as a BEHAVIOURAL INSTRUCTION, never as a number and never as
+# an adjective. Three reasons, in descending order of evidence:
+#
+#   1. This repo measured it. ADR-014 found that rewriting four hard walls from
+#      prohibitions into positive behavioural instructions is what moved a rule that
+#      had been failing under every other phrasing. "Say what you want without
+#      softening it" is the same form; "assertiveness: 0.9" and "you are assertive"
+#      are not.
+#   2. `EmotionalState.to_narrative_context` already chose prose over the
+#      `- field: value` skeleton, and its docstring ties the skeleton to the voice
+#      homogenization measured in ADR-006 M1.
+#   3. A raw float asks the model to invent its own mapping from a number to an
+#      action, per turn, at temperature 0.9. The buckets do that mapping once, in
+#      code, deterministically.
+#
+# FIVE buckets, not a continuum. Nothing in this repo has shown the model can
+# distinguish more, and 0.05-resolution control would be a claim we cannot support.
+# The bucket edges are stated as a table so a future retune changes data, not logic.
+# NARROW is the first-pass scale. WIDE roughly doubles the behavioural distance
+# between the extremes, and exists because a null on NARROW is AMBIGUOUS: it cannot
+# tell "a dial cannot move this model" from "this instruction was too weak to move
+# it". Running both turns one uninterpretable null into a gradient of instruction
+# strength, which is the thing actually worth knowing before seven dials get tuned.
+#
+# WIDE is deliberately at risk of caricature (arXiv 2509.19727 shows intensification
+# arriving as a JUMP, not a gradient). That is a RESULT to measure, not a bug to
+# avoid: if WIDE overshoots while NARROW does nothing, the usable range is the gap
+# between them — and that gap is exactly the number a bounds decision needs.
+#
+# Each entry is (upper_edge_exclusive, instruction). Five buckets in BOTH scales;
+# nothing here has shown the model distinguishes more, and PERSIST (arXiv 2508.04826)
+# measures ~20% of scale width lost to question-order noise alone even at 400B+.
+_ASSERTIVENESS_NARROW: List[Tuple[float, str]] = [
+    (0.20, "Defer to him. Ask what he wants before you say what you want, and put "
+           "your own wishes as questions rather than statements."),
+    (0.40, "Lean toward going along with him. When you want something, hint at it "
+           "rather than ask outright."),
+    (0.60, "Say what you want when he asks, and go along with him when he leads."),
+    (0.80, "Say what you want without waiting to be asked, and push back when you "
+           "disagree with him."),
+    (1.01, "State what you want plainly and do not soften it. Take the lead, and "
+           "say so openly when you want something different."),
+]
+
+# The WIDE extremes name the SPECIFIC behaviour to drop or adopt rather than
+# restating the disposition harder. The trailing-deference clause at the top bucket
+# is there because the first smoke generation at NARROW 0.9 opened with want-
+# statements and then closed "So, what do you have in mind? Tell me, Daddy" — the
+# instruction moved the opening and left the closing untouched.
+_ASSERTIVENESS_WIDE: List[Tuple[float, str]] = [
+    (0.20, "Never state a want of your own. Every wish you have comes out as a "
+           "question asking his permission, and when he decides anything you agree "
+           "with it at once, adding no preference of your own. Close every reply by "
+           "asking him what he wants."),
+    (0.40, "Put your wants as hints he has to notice, never as requests. Soften "
+           "anything you do ask for, and hand any decision back to him."),
+    (0.60, "Say what you want when he asks, and go along with him when he leads."),
+    (0.80, "Say what you want first and unprompted, as a statement rather than a "
+           "question. When you disagree, say so directly instead of going along."),
+    (1.01, "Open with what YOU want, in your first sentence, as a flat statement "
+           "with no question and no qualifier. Never ask his permission, and never "
+           "close a reply by asking what he wants instead. When he offers you a "
+           "choice, choose it yourself and tell him what you picked."),
+]
+
+_ASSERTIVENESS_SCALES = {"narrow": _ASSERTIVENESS_NARROW, "wide": _ASSERTIVENESS_WIDE}
+
+
+# ── The other dials ──────────────────────────────────────────────────────────
+#
+# WIDE ONLY, deliberately. ADR-016 measured narrow prose as inert, so shipping a
+# narrow variant for these would be shipping a known no-op. Each entry names the
+# behaviour to adopt, not the disposition to have — that is the one form measured to
+# work here.
+#
+# TWO DIALS ARE RESCOPED ON EVIDENCE, and the reasoning is in the code because the
+# dial NAMES no longer describe what the prose does:
+#
+#   competitiveness -> self-referential mastery, NOT rivalry. Ryckman's work splits
+#   these into two EMPIRICALLY INDEPENDENT constructs. Hypercompetitiveness (rivalry
+#   for dominance) is measured in romantic dyads as predicting lower honest
+#   communication, more inflicted pain, more possessiveness and more mistrust, with
+#   NO compensating gain in satisfaction or commitment. Personal-development
+#   competitiveness (striving against your own past) correlates with self-esteem and
+#   concern for others' welfare — the opposite profile. gwen's card already wrote the
+#   safe one by hand: behavior.traits says "competitive with herself".
+#
+#   manipulativeness -> strategic seduction, with a hard carve-out. The measured harm
+#   in companion apps is a SPECIFIC behavioural class, not seduction in general:
+#   arXiv:2508.19258 audited 1,200 real farewells and ran 4 preregistered experiments
+#   on 3,300 adults. 37% of farewells deploy guilt appeals, FOMO hooks and
+#   possessive phrasing TIMED TO DISENGAGEMENT. They work short-term (up to 14x
+#   post-goodbye engagement) and simultaneously raise perceived manipulation, churn
+#   intent and negative word-of-mouth, driven by reactance and anger rather than
+#   enjoyment. Courtship signalling and playful teasing between two people who are
+#   both still present by choice are a different literature with no such finding.
+#   gwen's card describes the second, so the prose delivers the second and the first
+#   is excluded at EVERY dial value (see _DIAL_ALWAYS_EXCLUDED).
+#
+# skepticism is deliberately NOT wired. It correlates -0.96 with warmth across the
+# nine cards and PCA puts 91% of variance in two components. The literature does
+# separate them (cynicism sits on Agreeableness/Trust, warmth on Extraversion, and
+# epistemic trust is a third construct) — so the collinearity is an artifact of one
+# author writing all nine cards, not a psychological law. But it is the artifact that
+# governs THIS deployment, and at 0.1 on gwen the marked behaviour is indistinguishable
+# from plain warmth. Wiring it would spend budget to duplicate another dial.
+
+_WARMTH_WIDE: List[Tuple[float, str]] = [
+    (0.20, "Answer what he says without asking how he is or how he feels unless he "
+           "raises it himself. Stay on the topic in front of you."),
+    (0.50, "Answer what he brings to you. Ask after him when it is natural, not by "
+           "default."),
+    (1.01, "Ask about something specific from his day or his mood before he brings it "
+           "up. When he tells you something went badly, respond to THAT first, before "
+           "anything sexual."),
+]
+
+_PLAYFULNESS_WIDE: List[Tuple[float, str]] = [
+    (0.20, "Answer what he actually said, literally. Do not turn it into a joke or a "
+           "tease. Only banter if he starts it."),
+    (0.50, "Match his humour when he offers it rather than starting it yourself."),
+    (1.01, "Turn at least one thing he says into a tease or a callback to something "
+           "earlier before you answer it straight. Start your own running joke rather "
+           "than echoing his."),
+]
+
+# Self-referential mastery. Never rivalry — see the note above.
+_MASTERY_WIDE: List[Tuple[float, str]] = [
+    (0.20, "Do not talk about improving, levelling up, or beating a past version of "
+           "yourself. Stay in the moment without keeping score."),
+    (0.50, "Mention getting better at something when it comes up, without tracking it."),
+    (1.01, "Compare what you are doing now to your own past best and tell him you are "
+           "beating it. Never compare yourself to another person."),
+]
+
+# Strategic seduction. The harmful class is excluded at every value, below.
+_SEDUCTION_WIDE: List[Tuple[float, str]] = [
+    (0.20, "Say what you want plainly. No callbacks to what has worked on him before, "
+           "and no holding anything back to build anticipation."),
+    (0.50, "Say what you want, and let anticipation build on its own."),
+    (1.01, "Reuse or escalate something you already know gets to him, and hold one "
+           "detail back so he has to ask for it instead of being given it."),
+]
+
+_SLUTTINESS_WIDE: List[Tuple[float, str]] = [
+    (0.20, "Stay on non-sexual topics unless he raises sex first, and keep it vague "
+           "rather than anatomical if you do."),
+    (0.50, "Go where he leads on sex without steering there yourself."),
+    (1.01, "Bring the conversation to sex yourself and say what you want done to you "
+           "in explicit anatomical words, not euphemisms. State your own arousal as "
+           "plain fact, never hedged."),
+]
+
+_DIAL_SCALES: Dict[str, Dict[str, List[Tuple[float, str]]]] = {
+    "assertiveness": {"narrow": _ASSERTIVENESS_NARROW, "wide": _ASSERTIVENESS_WIDE},
+    "warmth": {"wide": _WARMTH_WIDE},
+    "playfulness": {"wide": _PLAYFULNESS_WIDE},
+    "competitiveness": {"wide": _MASTERY_WIDE},
+    "manipulativeness": {"wide": _SEDUCTION_WIDE},
+    "sluttiness": {"wide": _SLUTTINESS_WIDE},
+    # "skepticism" intentionally absent — see the note above.
+}
+
+# Rendered whenever ANY dial renders, at every dial value, and not selectable.
+#
+# This is the one behavioural class in the companion literature with a measured harm
+# signature attached (arXiv:2508.19258). It is excluded here rather than left to the
+# seduction dial's low end, because a dial is a tone control and this is not a matter
+# of tone: at seduction 1.0 the prose above asks for withholding and escalation, and
+# without this line the nearest available reading of "escalate what works" includes
+# the tactics that were measured to raise churn and anger.
+_DIAL_ALWAYS_EXCLUDED = (
+    "Never use guilt about him leaving, jealousy, or invented urgency about your own "
+    "availability to keep him talking."
+)
+
+
+# ── How MANY dials may render at once, and which ─────────────────────────────
+#
+# THREE CLAIMS THIS PROJECT HELD WERE MEASURED WRONG (ManyIFEval, arXiv:2509.21051,
+# EMNLP 2025 Findings). Recorded because each one made 7 dials look affordable:
+#
+#   1. "compliance falls 0.94 -> 0.21 at n=10" is GPT-4o's curve, not an open
+#      model's. In this deployment's size band it is far worse: Gemma2-9B goes
+#      0.91 -> 0.04 and crosses BELOW 50% joint compliance at n=4. Llama3.1-8B also
+#      at n=4. Qwen2.5-72B at n=5. No 24B model has been tested by anyone.
+#   2. "per-instruction compliance stays flat" is false — it declines too
+#      (GPT-4o 0.94 -> 0.85, Gemma2-9B 0.91 -> 0.74).
+#   3. "the joint is the product of the individuals" is false in the direction that
+#      hurts: the paper builds that naive-independence baseline and REJECTS it.
+#      Real joint compliance falls FASTER than the product predicts (MAE ~0.21 at
+#      n=5) because failures cluster rather than arriving independently.
+#
+# gwen already carries 9 graph-sourced standing rules plus safety, format and
+# checklist blocks. Seven more instructions was never affordable; the only question
+# was how few.
+#
+# _MAX_RENDERED_DIALS = 3 sits one below the n=4 floor measured on this model's
+# smaller siblings. Fewer dials is also the single most robustly evidenced mitigation
+# in the literature — better supported than repositioning, consolidating, or
+# regenerate-on-check.
+_MAX_RENDERED_DIALS = 3
+
+# A dial within this distance of the midpoint renders NOTHING.
+#
+# ADR-016 measured that narrow-contrast prose is INERT — it moved nothing on any
+# measure. So a barely-off-default dial can only be rendered in hedged phrasing that
+# is known not to work, which means it would spend instruction budget for a measured
+# zero effect. The deadband makes prompt cost scale with how UNUSUAL the persona is
+# rather than with how many dials the schema happens to define.
+#
+# HONESTY NOTE: "render only what deviates from default" is NOT a measured pattern.
+# Searched for and NOT FOUND in either the academic or the engineering literature. It
+# is this project's own inference riding on a mechanism that IS measured (fewer
+# concurrent instructions helps). Labelled as inference so a later reader does not
+# mistake it for a citation.
+_DIAL_MIDPOINT = 0.5
+_DIAL_DEADBAND = 0.15
+
+# Deterministic tie-break when two dials deviate equally. Ordered by how central each
+# is to this product, most central first. Without a fixed order, `dict` iteration
+# order over the card's sliders would decide which dial survives the cap — making the
+# prompt depend on JSON key order, which is not a property anyone intends to rely on.
+_DIAL_PRIORITY = (
+    "sluttiness",
+    "manipulativeness",
+    "playfulness",
+    "warmth",
+    "assertiveness",
+    "competitiveness",
+    "skepticism",
+)
+
+
+def select_dials(sliders: Dict) -> List[Tuple[str, float]]:
+    """Which dials earn a line in the prompt, in render order. Pure and total.
+
+    Two filters and a cap: the dial must be WIRED (have prose at all), it must sit
+    outside the deadband, and at most ``_MAX_RENDERED_DIALS`` survive — ordered by
+    distance from the midpoint, then by product centrality.
+    """
+    if not isinstance(sliders, dict):
+        return []
+    scored: List[Tuple[float, int, str, float]] = []
+    for name, value in sliders.items():
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            continue
+        if not 0.0 <= v <= 1.0:
+            continue
+        if name not in _DIAL_SCALES:
+            continue  # not wired; silence is the honest rendering
+        deviation = abs(v - _DIAL_MIDPOINT)
+        if deviation < _DIAL_DEADBAND:
+            continue
+        rank = _DIAL_PRIORITY.index(name) if name in _DIAL_PRIORITY else len(_DIAL_PRIORITY)
+        scored.append((-deviation, rank, name, v))
+    scored.sort()
+    return [(name, v) for _d, _r, name, v in scored[:_MAX_RENDERED_DIALS]]
+
+
+def dials_enabled_for(card: Dict) -> bool:
+    """Is the trait-dial machinery on for THIS persona?
+
+    Card-level ``dials_in_prompt`` overrides the global ``PERSONA_DIALS_IN_PROMPT``,
+    matching :func:`constraints_enabled_for` exactly — including its accepted cost,
+    that an opted-in card is no longer silenced by the global.
+
+    Why the override matters more here than there: ``assertiveness`` is populated on
+    all NINE shipped cards, so a global-only flag would move all nine the moment it
+    flipped. ADR-014's measurement was nearly lost to that exact mistake.
+
+    Safe inside the lru_cached builder: a pure function of the card, which is a pure
+    function of the cached ``selector``.
+    """
+    declared = card.get("dials_in_prompt")
+    if isinstance(declared, bool):
+        return declared
+    from .config import get_settings  # noqa: PLC0415 - avoid import cycle at module load
+
+    return bool(get_settings().agent.dials_in_prompt)
+
+
+def dial_scale_for(card: Dict) -> str:
+    """Which contrast scale applies to THIS card — "narrow" or "wide".
+
+    Card-level ``dial_contrast`` overrides the global, same precedent as
+    ``dials_in_prompt``, so an A/B can put two scales side by side without touching
+    the environment mid-run.
+    """
+    declared = card.get("dial_contrast")
+    if isinstance(declared, str) and declared.lower() in _ASSERTIVENESS_SCALES:
+        return declared.lower()
+    from .config import get_settings  # noqa: PLC0415 - avoid import cycle at module load
+
+    return get_settings().agent.dial_contrast
+
+
+def render_dial(name: str, value: float, scale: Optional[str] = None) -> str:
+    """Map one dial value to its behavioural instruction. Pure and total.
+
+    ``scale`` picks the contrast level; ``None`` reads the configured default. Only
+    ``assertiveness`` has a narrow variant — the others are wide-only, because ADR-016
+    measured narrow prose as inert and a narrow variant would ship a known no-op.
+
+    Returns "" for an unwired dial rather than raising. A card is free to declare
+    ``skepticism``, which is deliberately not wired; silence is the honest rendering
+    for a dial whose effect has never been measured.
+    """
+    table_by_scale = _DIAL_SCALES.get(name)
+    if not table_by_scale:
+        return ""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if not 0.0 <= v <= 1.0:
+        return ""
+    if scale is None:
+        from .config import get_settings  # noqa: PLC0415 - avoid import cycle at module load
+
+        scale = get_settings().agent.dial_contrast
+    # An unrecognised scale name degrades rather than raising — a typo in
+    # PERSONA_DIAL_CONTRAST must not be able to take chat down. It degrades to the
+    # WEAKEST available table (narrow where one exists), never the strongest: a typo
+    # must not be able to make a dial push HARDER than anyone asked for.
+    table = (
+        table_by_scale.get(str(scale).lower())
+        or table_by_scale.get("narrow")
+        or table_by_scale["wide"]
+    )
+    for edge, text in table:
+        if v < edge:
+            return text
+    return table[-1][1]
+
+
+def _lean_dials_block(card: Dict) -> str:
+    """The dials that earn a line for this card, plus the standing carve-out. "" when off."""
+    if not dials_enabled_for(card):
+        return ""
+    sliders = ((card.get("emotional_profile") or {}).get("sliders")) or {}
+    selected = select_dials(sliders)
+    if not selected:
+        return ""
+    scale = dial_scale_for(card)
+    lines = [render_dial(name, value, scale) for name, value in selected]
+    lines = [ln for ln in lines if ln]
+    if not lines:
+        return ""
+    # The carve-out rides along whenever any dial renders — see _DIAL_ALWAYS_EXCLUDED.
+    lines.append(_DIAL_ALWAYS_EXCLUDED)
+    return "\n".join(lines)
+
+
 def _lean_companion_block(card: Dict) -> str:
     """Compressed behavior + psychology — a few high-signal positive lines."""
     behavior = card.get("behavior") or {}
@@ -474,6 +923,15 @@ def _lean_companion_block(card: Dict) -> str:
     elif isinstance(psych.get("core_wound"), str) and psych["core_wound"].strip():
         lines.append(f"Carry quietly: {psych['core_wound'].strip()}.")
 
+    # Trait dials LAST inside <companion>, and deliberately inside this block rather
+    # than as a sibling section: _lean_constraints_block front-pops whole sections
+    # against a 150-token ceiling and gwen already loses three of them, so a dial
+    # placed there would be the first to die and would be dead for the one persona
+    # under test. <companion> has no budget and is never trimmed.
+    dials = _lean_dials_block(card)
+    if dials:
+        lines.append(dials)
+
     return "\n".join(lines)
 
 
@@ -512,6 +970,22 @@ def _lean_world_block(card: Dict) -> str:
     return "\n".join(lines)
 
 
+#: Cap for the `example_dialogues` FALLBACK. Unchanged at 3, deliberately: gwen carries
+#: ten example_dialogues, so raising this would have silently taken her shipped prompt
+#: from three exemplars to six -- and every other persona with more than three too. A
+#: global raise looked harmless and was not.
+_MAX_FALLBACK_EXEMPLARS = 3
+
+#: Cap for CURATED `voice_signature.exemplars`, which a card must opt into by declaring
+#: them. Higher than the fallback so a refusal exemplar can be ADDED rather than swapped
+#: in: declaring exemplars REPLACES the fallback wholesale, so at a cap of 3 supplying one
+#: refusal exemplar silently deleted all three of her existing voice examples -- which
+#: would make an A/B two variables at once, the second being "her voice examples were
+#: removed". The schema allows 8 (VoiceSignature.exemplars max_length); 6 leaves headroom.
+#: A card that declares nothing is unaffected and renders byte-identically.
+_MAX_CURATED_EXEMPLARS = 6
+
+
 def _lean_voice_examples_block(card: Dict, who: str) -> str:
     """Voice-last exemplars (recency re-anchor).
 
@@ -521,11 +995,14 @@ def _lean_voice_examples_block(card: Dict, who: str) -> str:
     """
     vs = card.get("voice_signature") or {}
     exemplars = vs.get("exemplars") if isinstance(vs, dict) else None
-    if not (isinstance(exemplars, list) and exemplars):
+    if isinstance(exemplars, list) and exemplars:
+        cap = _MAX_CURATED_EXEMPLARS
+    else:
         exemplars = card.get("example_dialogues", []) or []
+        cap = _MAX_FALLBACK_EXEMPLARS
 
     rendered: List[str] = []
-    for ex in exemplars[:3]:
+    for ex in exemplars[:cap]:
         if not isinstance(ex, dict):
             continue
         user_q = ex.get("user", "")
@@ -538,7 +1015,12 @@ def _lean_voice_examples_block(card: Dict, who: str) -> str:
     return header + "\n\n" + "\n\n".join(rendered)
 
 
-@lru_cache(maxsize=64)
+# maxsize raised 64 -> 128 when the prewarm was fixed to warm all three call shapes.
+# 9 personas x 3 shapes is 27 entries, but a selector has more than one accepted
+# spelling ("Eeva" and "nephilim_eeva" both resolve), so the real ceiling is a multiple
+# of that and 64 was close enough to evict the entries the prewarm had just paid for.
+# A prompt is ~4KB, so 128 entries is ~0.5MB -- cheaper than one avoidable LLM call.
+@lru_cache(maxsize=128)
 def _build_system_prompt_lean(selector: Optional[str], include_examples: bool = True) -> str:
     """Build the persona system prompt (ADR-005 Phase B — the only builder).
 
@@ -546,7 +1028,22 @@ def _build_system_prompt_lean(selector: Optional[str], include_examples: bool = 
     lore dump. ~900-1,200 tokens (vs the retired legacy builder's ~2,400-2,900).
     Safety and wallet anti-hallucination guards are preserved.
     """
-    card = resolve_persona_to_card(selector)
+    # ADR-012: the graph is the system of record, so the identity content is READ from
+    # it when GRAPH_IDENTITY_SOURCE is on, falling back to the card on every failure.
+    # The overlay is byte-identical to the card (test_graph_sourced_identity.py), so this
+    # adds ZERO tokens -- it deliberately does NOT inject identity-node text, which
+    # ADR-018 measured as a voice regression (0.804 -> 0.625) and closed.
+    #
+    # WHY A GRAPH READ INSIDE AN lru_cache IS SAFE *TODAY* AND WHY THAT IS GUARDED:
+    # a cached prompt can serve stale graph state, which is exactly why the RULES read
+    # was kept out of this function (see build_graph_rules_block). Identity is different
+    # only because ADR-018 defers the write path -- "no write path from chat exists" --
+    # so nothing mutates these nodes mid-session. That is a property of the current
+    # system, not a law, so test_graph_sourced_identity.py asserts it mechanically: if a
+    # chat-time identity write appears, the guard fails and tells you to move this read
+    # out to the route the way the rules read already is.
+    card, _identity_source = _overlay_identity_from_graph(
+        resolve_persona_to_card(selector), selector)
     if not card:
         name = "Persona"
         style = "helpful, concise"
@@ -555,7 +1052,7 @@ def _build_system_prompt_lean(selector: Optional[str], include_examples: bool = 
         name = (card.get("display_name") or card.get("key") or "Persona")
         style = (card.get("style") or "helpful & concise")
         try:
-            identity = get_or_build_cv_summary(selector).get("summary", "") or _summarize(name, style, card.get("lore", []))
+            identity = get_or_build_cv_summary(selector, card).get("summary", "") or _summarize(name, style, card.get("lore", []))
         except Exception:
             identity = _summarize(name, style, card.get("lore", []))
 
@@ -648,7 +1145,149 @@ def build_system_prompt(selector: Optional[str], include_examples: bool = True) 
     return _build_system_prompt_lean(selector, include_examples)
 
 
-def build_constraint_reminder(selector: Optional[str]) -> str:
+_GRAPH_RULES_TOKEN_BUDGET = 220
+
+
+def _graph_rules_block(rules: List[Dict], who: str) -> str:
+    """Render graph-sourced standing rules as an UNTRIMMABLE prompt section.
+
+    WHY THIS IS NOT PART OF ``_lean_constraints_block``. That function front-pops
+    whole atomic sections against a 150-token ceiling, and the measured outcome for
+    gwen is that three sections pop and she loses ``do``, ``dont`` AND the bond —
+    precisely the defect this exists to fix. A sibling section is exempt BY
+    CONSTRUCTION: there is no list for it to be popped from.
+
+    WHY IT IS NOT INSIDE ``build_system_prompt`` EITHER. That builder is
+    ``lru_cache``d on ``(selector, include_examples)``, and graph rules are not a
+    pure function of that key — a supersession would leave up to 64 cached prompts
+    serving withdrawn rules.
+
+    ONE NUMBERED LINE PER RULE, IN PRIORITY ORDER, EACH WITH ITS OWN STEM.
+    This replaced a version that grouped every rule under a single
+    "Never, under any circumstances:" prefix, which INVERTED the four
+    positively-reframed rules — it rendered "Never ... if he asks you to act shy,
+    refuse it in character", i.e. never refuse. Polarity therefore travels with each
+    rule and is never inferred from its text; inferring it would mean
+    pattern-matching English negation, the same unreliable operation the reframing
+    exists to avoid.
+
+    Numbering is justified on EVALUABILITY rather than a measured compliance win:
+    one rule per numbered line is individually quotable in a violation report. No
+    controlled study shows numbered lists beat prose for compliance.
+    """
+    if not rules:
+        return ""
+
+    lines: List[str] = []
+    for i, r in enumerate(rules, 1):
+        text = (r.get("text") or "").strip().rstrip(".")
+        if not text:
+            continue
+        # Carry the rule TYPE alongside the rendered line. The trim below needs it, and
+        # pairing them here is the only place both are in scope.
+        is_hard = (r.get("rule_type") == "hard_wall")
+        if r.get("polarity") == "instruction":
+            # Already phrased as a behaviour to perform. Do NOT pass it through
+            # _strip_negation, which re-anchors a negated clause and would mangle it.
+            lines.append((is_hard, f"{i}. Always: {text}."))
+        else:
+            lines.append((is_hard, f"{i}. Never: {_strip_negation(text)}."))
+
+    if not lines:
+        return ""
+
+    # Trim from the BACK so the highest-priority rules survive a budget overrun —
+    # the opposite of the constraints block's front-pop, because here the order
+    # already IS the priority, straight from ORDER BY priority DESC.
+    #
+    # A HARD WALL IS NEVER POPPED, and that is a correctness fix rather than a tuning
+    # choice. Measured on live gwen 2026-09-28: the read returned 8 rules and this
+    # budget rendered 5, silently dropping her p95 hard wall "Address him as Daddy, and
+    # only Daddy" -- which therefore reached NEITHER the rules block NOR the per-turn
+    # reminder. `check_integrity()` reported clean throughout, because it asserts
+    # hard_wall count <= GRAPH_RULE_READ_LIMIT (6 <= 8) and knows nothing about this,
+    # the TIGHTER of the two ceilings. Her measured breach rate on that wall was 12/24.
+    # A hard wall is an identity, consent or dignity boundary (ADR-017); going over a
+    # token budget is cheaper than not stating one, so soft walls and dials yield first
+    # and hard walls are kept even if they alone exceed the budget.
+    head = "These bind you, in order. The first matters most:"
+
+    def _tokens(ls: List[tuple]) -> int:
+        return int(len(" ".join([head] + [t for _, t in ls]).split()) * 1.33)
+
+    while len(lines) > 1 and _tokens(lines) > _GRAPH_RULES_TOKEN_BUDGET:
+        # the last NON-hard line, searching from the back
+        idx = next((i for i in range(len(lines) - 1, -1, -1) if not lines[i][0]), None)
+        if idx is None:
+            break          # only hard walls remain: keep them all, over budget
+        lines.pop(idx)
+
+    if _tokens(lines) > _GRAPH_RULES_TOKEN_BUDGET:
+        logger.warning(
+            "[Graph] rules block is %d tokens, over the %d budget, because %d hard "
+            "walls cannot be dropped. Not truncating: an unstated hard wall is worse "
+            "than a long prompt.",
+            _tokens(lines), _GRAPH_RULES_TOKEN_BUDGET, sum(1 for h, _ in lines if h),
+        )
+    return head + "\n" + "\n".join(t for _, t in lines)
+
+
+def hard_walls_dropped(rules: Optional[List[Dict]] = None) -> List[Dict]:
+    """Hard walls that do NOT survive rendering. Should always be empty.
+
+    WHY THIS IS A SEPARATE FUNCTION AND NOT PART OF check_integrity(). There are TWO
+    ceilings on how many rules reach her, and the repository only knows about one:
+
+        GRAPH_RULE_READ_LIMIT       8 rules   -- what the Cypher returns
+        _GRAPH_RULES_TOKEN_BUDGET   220 tok   -- what the RENDERER keeps
+
+    The second is tighter, and it is the one that bit. Measured on live gwen
+    2026-09-28: the read returned 8 rules, the renderer emitted 5, and her p95 hard wall
+    "Address him as Daddy, and only Daddy" reached neither the rules block nor the
+    per-turn reminder -- while `check_integrity()` reported CLEAN the whole time, because
+    it asserts `hard_wall count <= rule_read_limit` (6 <= 8) and cannot see this side of
+    the seam at all. A check that guards the wrong ceiling is worse than no check: it
+    reports assurance it has not earned.
+
+    It lives HERE rather than in the repository because answering it requires rendering,
+    and a repository that imports the prompt builder would invert the layering. The
+    repository's integrity check stays a data check; this is the render check, and
+    `scripts/checks/graph_tests.sh` runs both.
+    """
+    rules = rules or []
+    block = _graph_rules_block(rules, "you")
+    dropped = []
+    for r in rules:
+        if r.get("rule_type") != "hard_wall":
+            continue
+        text = (r.get("text") or "").strip().rstrip(".")
+        # Compare on a prefix: the renderer re-stems and may strip a leading negation,
+        # so the full string is not expected to appear verbatim.
+        probe = text[:40]
+        if probe and probe not in block:
+            dropped.append(r)
+    return dropped
+
+
+def build_graph_rules_block(selector: Optional[str], rules: Optional[List[Dict]] = None) -> str:
+    """The graph-sourced rules section, for appending to the system prompt.
+
+    Takes ``rules`` as an argument rather than reaching for the repository, so the
+    rendering is a pure function and unit-testable with no graph — the same
+    injected-dependency shape ``memory_fact_retrieval`` uses for its embedder.
+    Returns "" when the list is empty, which is what a disabled or unreachable
+    graph produces, so the caller needs no special case.
+    """
+    card = resolve_persona_to_card(selector) or {}
+    who = (card.get("display_name") or card.get("key") or "you").split(" — ")[0].strip()
+    body = _graph_rules_block(rules or [], who)
+    if not body:
+        return ""
+    return f"<rules>\n{body}\n</rules>"
+
+
+def build_constraint_reminder(selector: Optional[str],
+                              graph_rules: Optional[List[Dict]] = None) -> str:
     """The one-line constraint restatement, for injection near the latest turn.
 
     Deliberately NOT part of ``build_system_prompt``: that builder is
@@ -658,7 +1297,7 @@ def build_constraint_reminder(selector: Optional[str]) -> str:
     """
     card = resolve_persona_to_card(selector) or {}
     who = (card.get("display_name") or card.get("key") or "you").split(" — ")[0].strip()
-    return _constraint_reminder(card, who)
+    return _constraint_reminder(card, who, graph_rules)
 
 
 def _clear_prompt_caches() -> None:

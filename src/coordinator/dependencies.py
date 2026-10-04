@@ -42,6 +42,14 @@ def require_session_repo():
     return _require(startup.get_session_repo, "SessionRepository")
 
 
+def require_media_repo():
+    return _require(startup.get_media_repo, "MediaRepository")
+
+
+def require_image_job_repo():
+    return _require(startup.get_image_job_repo, "ImageJobRepository")
+
+
 def require_message_repo():
     return _require(startup.get_message_repo, "MessageRepository")
 

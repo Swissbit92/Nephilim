@@ -58,8 +58,16 @@ class TestRestrictedPersona:
     def test_the_registry_agrees_she_was_never_granted_it(self):
         """Guards against 'fixing' this by changing what she is granted rather
         than by honouring the grant."""
+        # WEB toolset only: the point is that she was never granted a general
+        # lookup tool, and `generate_image` (toolset "image", added later) is
+        # not one. The guard against "fixing it by widening the grant" is the
+        # GENERAL_LOOKUP_TOOLS assertion below, which still binds over her
+        # whole surface.
         granted = {s.name for s in registry.specs_for_persona(GWEN)}
-        assert granted == {"image_search", "video_search"}
+        granted_web = {
+            s.name for s in registry.specs_for_persona(GWEN) if s.toolset == "web"
+        }
+        assert granted_web == {"image_search", "video_search"}
         assert not (granted & GENERAL_LOOKUP_TOOLS)
 
     def test_her_media_tools_are_NOT_offered_instead(self):
@@ -104,14 +112,23 @@ class TestUnrestrictedPersonasAreUnaffected:
         card = json.loads((PERSONAS / f"{name}.json").read_text())
         assert _offer(card, QueryIntent.NEEDS_WEB_SEARCH) == []
 
-    def test_only_one_shipped_persona_has_an_allowlist(self):
-        """Pins the blast radius. If a second persona gains a `tools` allowlist,
+    def test_only_two_shipped_personas_have_an_allowlist(self):
+        """Pins the blast radius. If a further persona gains a `tools` allowlist,
         this fails and whoever added it has to confirm the legacy consequences
-        rather than discover them in production."""
+        rather than discover them in production.
+
+        gwen_dev added 2026-09-26 (ADR-014), and the consequence WAS confirmed
+        rather than assumed: its offer surface was compared against gwen's across
+        every QueryIntent and is byte-identical, because it is a copy of her card
+        with four fields changed (key, display_name, coordinator_label, active).
+        So this adds no new tool exposure — it inherits gwen's existing surface,
+        including the still-open finding that the legacy `get_tools_for_persona`
+        path ignores persona allowlists. Same exposure, one more card.
+        """
         with_allowlist = sorted(
             p.stem for p in PERSONAS.glob("*.json")
             if json.loads(p.read_text()).get("tools") is not None)
-        assert with_allowlist == ["gwen"]
+        assert with_allowlist == ["gwen", "gwen_dev"]
 
 
 class TestDegradedModeFailsClosed:

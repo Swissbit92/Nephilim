@@ -203,6 +203,47 @@ class ImportChatBody(BaseModel):
 
 # ----------------- Response Metadata -----------------
 
+class MediaKind(StrEnum):
+    """What a :class:`MediaItem` is, for clients routing it to a renderer.
+    Its own vocabulary — do not conflate it with :class:`ProposalCategory`."""
+
+    IMAGE = "image"
+
+
+class MediaItem(BaseModel):
+    """One generated artifact, already on disk, offered to a client to deliver.
+
+    Transport-agnostic by design: the Telegram gateway is the first consumer and
+    the React UI is the second, so this shape must not encode either one's
+    mechanics.
+
+    ``path`` is an ABSOLUTE LOCAL path, which is only meaningful because every
+    consumer today runs on the same host under launchd. That is a deliberate
+    phase-1 narrowing, not an oversight — the alternative, bytes on the
+    response, would put multi-megabyte base64 through SQLite and the context
+    estimator, which is the documented failure in comparable self-hosted
+    systems. When the React UI arrives it will need a URL: ADD a ``url`` field
+    then rather than repurposing this one, because the gateway reads the file
+    directly and always will.
+
+    A consumer must still validate ``path`` against its OWN allowlist root
+    rather than trusting it. "The server names a path and the client opens it"
+    is an arbitrary-file-read primitive the moment the server is confused.
+    """
+
+    media_id: str
+    kind: str = MediaKind.IMAGE
+    mime: str = "image/png"
+    path: str
+    filename: str  #: user-visible name; the gateway sends it as the upload name
+    bytes: int
+    sha256: str  #: lets a consumer prove losslessness end to end
+    width: Optional[int] = None
+    height: Optional[int] = None
+    caption: Optional[str] = None  #: plain text only — never rendered with parse_mode
+    protect_content: bool = True  #: Telegram: blocks forwarding and saving
+
+
 class ResponseMetadata(BaseModel):
     """Metadata about the response source."""
     source_type: str = SourceType.LLM  # see SourceType (values: llm, brave_mcp, wallet_*, agentic*, …)
@@ -216,6 +257,41 @@ class ResponseMetadata(BaseModel):
     # WALLET: Proposal card injection
     proposal_type: Optional[str] = None  # "trade_proposal", "strategy_proposal", "wallet_deletion"
     proposal: Optional[Dict] = None
+    # RULE COMPLIANCE: post-generation checks that FIRED on this reply. Reported even
+    # when GRAPH_ENFORCE_RULES is off, because rule_compliance.py's own docstring argues
+    # "detection with a visible count is worth more than silent correction" -- and until
+    # now there was neither: check_reply was imported into routes/chat.py and never
+    # called, so every violation was invisible. Empty list is the healthy case.
+    rule_violations: List[str] = []
+    #: Walls that APPEAR broken, from detection-only checkers (wall_detectors.observe).
+    #: Deliberately separate from `rule_violations`, which is what check_reply returns and
+    #: what the regeneration path acts on. Production enforced ONE of six hard walls, so
+    #: rule_violations was reporting a single wall's verdict as though it were the reply's;
+    #: this widens visibility to four without widening what can trigger a retry. The
+    #: detectors miss ~30% of breaches, so an EMPTY list is weak evidence of compliance --
+    #: a populated one is strong evidence of a breach (0 false positives in 30 labelled).
+    wall_observations: List[dict] = []
+    #: MEDIA: generated artifacts for the client to deliver. Follows the
+    #: proposal/proposal_type precedent above — a declared field, not a key
+    #: injected into the dumped dict after the fact, so it flows out of
+    #: _finalize_response for every handler automatically and is typed for both
+    #: consumers. Empty on every path until a generation backend is wired.
+    tool_decided_by: str | None = None
+    #: WHO decided to run a tool on this turn: "model" when the model emitted
+    #: the call unprompted, or a component name when code narrowed or forced
+    #: it (e.g. "generation_intent"). None when no tool ran.
+    #:
+    #: Exists because A TOOL FIRING IS NOT EVIDENCE OF GROUNDING — gwen once
+    #: fired image_search for a weather question and answered "103F", shipped
+    #: with a Sources block because a tool had run. Deterministic triggers
+    #: make that question harder, not easier, so the answer is recorded.
+    #:
+    #: A FIELD AND NOT A GRAPH NODE, deliberately. This was nearly modelled in
+    #: Neo4j; it is a per-turn event with nothing to traverse, no competency
+    #: question asks it, and the sanctioned schema surface has no Tool or
+    #: Decision label. ADR-018 already settled the shape: provenance stays a
+    #: property beside the row it describes.
+    media: List[MediaItem] = []
 
 
 # ----------------- NEPHILIM Progression Schemas -----------------

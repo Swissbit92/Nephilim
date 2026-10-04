@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 
 def _llm() -> OllamaLLM:
     """Create Ollama LLM client for CV summary generation."""
+    from .services.resource_arbiter import guard_chat_model
+
+    # Same chat model as the companion, merely with a 10m keep_alive instead of
+    # a pin — so this path loads the full 16-19 GiB just like a chat turn does.
+    guard_chat_model("summarisation utility")
     cfg = get_settings().ollama
     model = require_model_configured(cfg.model)
     assert_model_available(cfg.base, model)
@@ -149,15 +154,70 @@ def _summary_dir() -> Path:
     return Path(get_settings().persona_dir) / "_summaries"
 
 
+# Card keys that do NOT affect the CV identity summary and must not invalidate it.
+#
+# `emoji` and `voice_signature` are lean-prompt-only (ADR-005 Phase B).
+#
+# The three *_in_prompt / dial keys are PROMPT-CONTROL FLAGS, not identity content —
+# they decide which BLOCKS render, never who she is. Leaving them in the fingerprint
+# cost a second identity drift on 2026-09-28: the ADR-016 A/B harness writes
+# `dials_in_prompt` and `dial_contrast` onto the card to build an arm's prompt, which
+# re-fingerprinted the card, regenerated <identity> through the LLM, and SAVED it under
+# a hash derived from the temporarily-modified card. The harness restored the card in
+# its `finally`; it could not restore the summary. Only tracking the summaries in git
+# made this visible at all — it showed up as a one-file diff.
+_FINGERPRINT_EXCLUDE = frozenset({
+    "emoji",
+    "voice_signature",
+    "dials_in_prompt",
+    "dial_contrast",
+    "constraints_in_prompt",
+})
+
+
 def _normalize_for_fingerprint(card: Dict) -> Dict:
     """Normalize card for fingerprinting (exclude fields that don't affect the summary).
 
     ``voice_signature`` (ADR-005 Phase B) is lean-prompt-only and never feeds the
     CV identity summary — excluding it keeps cached summaries valid so adding it
     does NOT drift the legacy <identity> text (preserves the frozen eval baseline).
+
+    ``emotional_profile.sliders`` is excluded for the same reason and a sharper one.
+    MEASURED 2026-09-27: the sliders were inside the fingerprint, so changing ANY
+    dial value invalidated the cached summary, an LLM regenerated <identity>, and
+    her self-description silently changed content — at assertiveness 0.0 she opened
+    "I'm Gwen, and I live for one thing", at 1.0 "I'm Gwen, a data analyst by day,
+    but my true passion lies in the art of devotion". Nothing read the dial; the
+    entire difference was regeneration noise.
+
+    Two consequences, both bad. In production, turning a dial rewrites who she says
+    she is. And in an experiment, every dial A/B is confounded by a randomly
+    rewritten identity paragraph — the arm difference would have been attributed to
+    the dial. Dials are a TONE control; they must not touch the identity text.
     """
+    exclude = _FINGERPRINT_EXCLUDE
+    out = {k: v for k, v in card.items() if k not in exclude}
+    profile = out.get("emotional_profile")
+    if isinstance(profile, dict) and "sliders" in profile:
+        out["emotional_profile"] = {k: v for k, v in profile.items() if k != "sliders"}
+    return out
+
+
+def _legacy_fingerprint(card: Dict) -> str:
+    """The pre-2026-09-27 fingerprint, WITH sliders included.
+
+    Kept so an existing cached summary can be adopted instead of regenerated. The
+    fix would otherwise cause exactly the drift it exists to prevent: excluding
+    sliders changes every persona's hash at once, so all nine identities would be
+    rebuilt by an LLM the first time each is asked for.
+    """
+    # Deliberately the ORIGINAL two-key exclude set, frozen. This function exists to
+    # recognise summaries cached under the pre-2026-09-27 scheme; widening it would
+    # stop it matching those and defeat adoption.
     exclude = {"emoji", "voice_signature"}
-    return {k: v for k, v in card.items() if k not in exclude}
+    legacy = {k: v for k, v in card.items() if k not in exclude}
+    blob = json.dumps(legacy, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()
 
 
 def _fingerprint(card: Dict) -> str:
@@ -373,7 +433,35 @@ def _release_lock():
 
 # ---------------- Public API ----------------
 
-def get_or_build_cv_summary(selector: Optional[str]) -> Dict:
+def reusable_cached_summary(key: str, card: Dict) -> Tuple[Optional[Dict], bool]:
+    """Can an existing cached summary be reused for this card? -> (payload, restamp).
+
+    THE ONLY PLACE THIS DECISION IS MADE. It used to be inlined in three separate
+    functions, and on 2026-09-27 that cost all nine personas their identity text:
+    ``sliders`` was removed from the fingerprint and the adoption path was added to
+    ``get_or_build_cv_summary`` only. ``ensure_all_summaries`` kept its own copy of
+    the check, runs at boot, and so regenerated every summary through the LLM —
+    turning a no-op migration into an irreversible content change, because
+    ``personas/_summaries/`` is gitignored and the text is non-deterministic.
+
+    Returns:
+        (None, False)      -> nothing reusable; build it.
+        (payload, False)   -> valid under the current fingerprint; use as-is.
+        (payload, True)    -> valid under the LEGACY fingerprint; reuse the TEXT and
+                              re-stamp the hash. No LLM call, no drift.
+    """
+    cached = _load_cached_summary(key)
+    if not cached or not isinstance(cached.get("summary"), str):
+        return None, False
+    if cached.get("hash") == _fingerprint(card):
+        return cached, False
+    if cached.get("hash") == _legacy_fingerprint(card):
+        return cached, True
+    return None, False
+
+
+def get_or_build_cv_summary(selector: Optional[str],
+                            card: Optional[Dict] = None) -> Dict:
     """
     Get or build CV summary for persona.
 
@@ -382,6 +470,21 @@ def get_or_build_cv_summary(selector: Optional[str]) -> Dict:
 
     Args:
         selector: Persona key/name
+        card: an ALREADY-RESOLVED card to summarise instead of re-reading from disk.
+            Exists so the graph can be the source of record (ADR-012). Without it this
+            function re-resolved the card itself, which meant a graph-sourced identity
+            reached every structured block of the prompt EXCEPT this paragraph — the
+            prompt would have described her from the card while the rest of it described
+            her from the graph, and nothing would have reported the disagreement.
+            Passing the card makes one source win for the whole prompt.
+
+            COST, stated rather than hidden: the fingerprint is computed from whatever
+            card arrives here, so once an operator edits a graph node the hash moves and
+            this regenerates the paragraph through the LLM at temperature 0.9 and saves
+            it to a TRACKED file that cannot be reproduced. That is acceptable only
+            because ADR-018 defers the chat-time write path — no model-driven edit can
+            trigger it today. If a chat-time identity write is ever added, this becomes a
+            non-reproducible write on a user turn and must be revisited.
 
     Returns:
         Summary dict with 'key', 'hash', 'updated', 'summary' fields
@@ -389,14 +492,18 @@ def get_or_build_cv_summary(selector: Optional[str]) -> Dict:
     Raises:
         RuntimeError: If no personas available or lock timeout
     """
-    card = resolve_persona_to_card(selector)
+    if card is None:
+        card = resolve_persona_to_card(selector)
     if not card:
         raise RuntimeError("No personas available.")
     key = (card.get("key") or "Persona").split()[0].capitalize()
     want_hash = _fingerprint(card)
-    cached = _load_cached_summary(key)
-    if cached and cached.get("hash") == want_hash and isinstance(cached.get("summary"), str):
+    cached, restamp = reusable_cached_summary(key, card)
+    if cached and not restamp:
         return cached
+    if cached and restamp:
+        logger.info("[CV] adopting summary for '%s' under the new fingerprint (no rebuild)", key)
+        return _save_summary(key, want_hash, cached["summary"])
 
     # Acquire lock briefly to build/update this one; avoid deadlock if we already own it
     me = os.getpid()
@@ -404,17 +511,17 @@ def get_or_build_cv_summary(selector: Optional[str]) -> Dict:
     if not _lock_owned_by_me(me):
         if not _acquire_lock(timeout_sec=60.0, poll_sec=0.2):
             # Best-effort: if we couldn't get the lock quickly, re-check cache and bail
-            cached = _load_cached_summary(key)
-            if cached and cached.get("hash") == want_hash:
+            cached, restamp = reusable_cached_summary(key, card)
+            if cached and not restamp:
                 return cached
             raise RuntimeError("Summary builder busy; please retry shortly.")
         need_release = True
 
     try:
         # Double-check cache after lock to avoid duplicate work
-        cached = _load_cached_summary(key)
-        if cached and cached.get("hash") == want_hash and isinstance(cached.get("summary"), str):
-            return cached
+        cached, restamp = reusable_cached_summary(key, card)
+        if cached:
+            return cached if not restamp else _save_summary(key, want_hash, cached["summary"])
         text = _make_cv_summary(card)
         return _save_summary(key, want_hash, text)
     finally:
@@ -481,8 +588,13 @@ def ensure_all_summaries() -> Tuple[int, int]:
         selector = card.get("key")
         key = (card.get("key") or "Persona").split()[0].capitalize()
         want_hash = _fingerprint(card)
-        cached = _load_cached_summary(key)
-        if cached and cached.get("hash") == want_hash and isinstance(cached.get("summary"), str):
+        cached, restamp = reusable_cached_summary(key, card)
+        if cached and not restamp:
+            skipped += 1
+            continue
+        if cached and restamp:
+            logger.info("[CV] adopting summary for '%s' under the new fingerprint (no rebuild)", key)
+            _save_summary(key, want_hash, cached["summary"])
             skipped += 1
             continue
         text = _make_cv_summary(card)

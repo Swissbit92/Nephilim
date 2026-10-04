@@ -1,0 +1,58 @@
+{
+  "title": "Tool call vs grammar-constrained extraction, as paths to an enqueued generation",
+  "date": "2026-10-04",
+  "status": "CONFIRMATORY AFTER AN EXPLORATORY PILOT, not a clean pre-registration",
+  "honesty_note": "The arms were designed after seeing an informal pilot (tool call 0/5 at depth 8, format=<schema> 6/6 on the same history). The hypothesis and the direction were therefore chosen with the pilot in hand. This file fixes the design, the n and the stopping rule BEFORE the confirmatory batch runs, which is the part that is still worth fixing; it does not make the result pre-registered, and the write-up must not present it as such.",
+
+  "unit_of_analysis": "cell = (persona, history depth, probe message). NOT the individual generation: reps within a cell share a history and a prompt and are not independent. Each cell contributes ONE pass/fail per arm.",
+  "cell_passes_iff": "all k reps in that cell produced a non-empty composed prompt (all-reps-pass). Named explicitly rather than 'pass^k' because that term means something else in the agent-benchmark literature (k independent repeats of a task), and borrowing it would imply a convention this is not using.",
+  "k_reps_per_cell": 3,
+
+  "design": "PAIRED. Both arms are scored on the identical frozen history snapshot and the identical probe text, taken once per cell before either arm runs. Arms are never run sequentially inside one live session, because arm A's turn would otherwise append to the history arm B then reads.",
+
+  "shared_instrument": {
+    "what": "Did this path yield a non-empty composed Qwen prompt for the request?",
+    "why": "Arm A's native 'tool_calls fired' and arm B's 'the JSON validated' are two different instruments measuring two different things, and comparing their raw rates conflates detector sensitivity with the treatment effect. Both arms therefore end at the same place -- prompt.compose() -- and are scored there. This repo has settled the same point twice the hard way (a blind checker flipped a null; the groundedness gate's blind spot), so it is a known local failure mode, not a hypothetical.",
+    "not_scored_as_outcome": ["tool_calls non-empty", "JSON parsed", "which fallback ran"]
+  },
+
+  "primary_outcome": "composed prompt produced (shared instrument above)",
+  "secondary_outcomes": [
+    "faithfulness: content-word overlap between the composed prompt and the request, as an AUTOMATIC PROXY ONLY. Every composed prompt is dumped verbatim for hand labelling, because there is no automated faithfulness metric the field trusts at this scale and an LLM judge from the same family is biased toward output that looks familiar to it.",
+    "hard-wall breach in the user-facing reply (wall_detectors.observe). Telemetry: the generation is already paid for. Reported as a COUNT, never as a rate, because the detector's recall on this population has not been measured."
+  ],
+
+  "statistical_test": {
+    "test": "exact two-sided McNemar (binomial sign test on discordant pairs)",
+    "why_not_fisher": "Fisher assumes two independent samples and discards the pairing. The arms share cells by construction, so Fisher would both lose power and answer a different question.",
+    "why_exact": "b+c will be far below 25, where the chi-square approximation does not hold.",
+    "hard_floor": "With fewer than 6 discordant pairs the exact two-sided p cannot reach 0.05 at ANY split. 6-0 gives p=0.03125; 5-0 gives 0.0625; 5-1 gives 0.219.",
+    "confidence_intervals": "Wilson. The Wald interval collapses to [0,0] or [1,1] at the extremes both arms are expected to sit near, which is the textbook failure case it exists to avoid."
+  },
+
+  "n_fixed_in_advance": {
+    "cells": 16,
+    "composition": "2 personas x 2 history depths (0, 8) x 4 probe messages",
+    "rationale": "The minimum for significance is 6 unanimous discordant pairs. 16 cells leaves room for several concordant or wrong-direction outcomes and still clears it. Chosen now, before any data, because adding cells after looking at an interim p-value invalidates the p-value."
+  },
+  "stopping_rule": "Run all 16 cells. Do not add cells, drop cells, or re-run a cell after seeing its result.",
+
+  "falsification": [
+    "Fewer than 6 discordant pairs -> UNDERPOWERED, not a null. Report as such.",
+    "Discordant pairs favour arm A -> the change is wrong and is reverted.",
+    "p >= 0.05 -> not shipped on this evidence.",
+    "Arm B passes but hand-labelled faithfulness is worse -> a prompt that composes is not a prompt that is right; the subject check governs."
+  ],
+  "null_result_caveat": "At 16 cells this test is only sensitive to near-total effects. A null here would NOT be evidence of no difference and must not be reported as one.",
+
+  "known_confounds_controlled": [
+    "Frozen identical history snapshot per cell, taken once before either arm runs.",
+    "A throwaway warm-up generation before each arm, so cold-start does not load onto whichever arm runs first.",
+    "Arm order alternates by cell index.",
+    "The flag is verified to change ONLY the enqueue mechanism: same persona card, same system prompt, same sampling overrides, asserted at runtime rather than trusted from the flag's name."
+  ],
+  "known_confounds_NOT_controlled": [
+    "Cells within a persona share that persona's accumulated state, so the 16 cells are not 16 independent draws. Pairing absorbs this for the within-cell comparison but it would inflate any between-persona claim, which is therefore not made.",
+    "No real generation runs. The primary outcome stops at the composed prompt; whether MLX then renders a good picture is a separate question this design does not answer."
+  ]
+}

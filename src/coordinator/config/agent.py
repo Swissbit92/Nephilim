@@ -121,6 +121,45 @@ class AgentSettings(BaseSettings):
         alias="PERSONA_UNPIN_DEPTH_TURNS",
     )
 
+    dials_in_prompt: bool = Field(
+        default=False,
+        description=(
+            "Render a persona's numeric trait dials as BEHAVIOURAL PROSE in the "
+            "<companion> block. Default OFF = byte-identical: no dial reaches any "
+            "prompt, which is the state on 2026-09-27. "
+            "WHY IT EXISTS: `emotional_profile.sliders` has never been read by "
+            "anything but a range validator. Five of the seven dial names appear "
+            "NOWHERE in src/. So a card declaring sluttiness 1.0 and one declaring "
+            "0.0 produce the same prompt, and nobody knows whether a dial CAN move "
+            "behaviour. This wires exactly one (assertiveness) to find out. "
+            "SCOPE IT WITH THE CARD, NOT THIS FLAG: assertiveness is populated on "
+            "all 9 cards, so global-on changes all 9 at once and confounds the "
+            "measurement — set `dials_in_prompt: true` on the one card under test "
+            "(same override precedent as constraints_in_prompt). "
+            "Set PERSONA_DIALS_IN_PROMPT=true to enable globally."
+        ),
+        alias="PERSONA_DIALS_IN_PROMPT",
+    )
+
+    dial_contrast: str = Field(
+        default="narrow",
+        pattern="^(narrow|wide)$",
+        description=(
+            "Contrast level of the trait-dial instructions. 'narrow' is the "
+            "first-pass scale; 'wide' roughly DOUBLES the behavioural distance "
+            "between the extreme buckets. "
+            "WHY BOTH EXIST: a null result on narrow is ambiguous — it cannot "
+            "separate 'a dial cannot move this model' from 'this instruction was "
+            "too weak'. Measuring both turns one uninterpretable null into a "
+            "gradient of instruction strength, and if wide overshoots into "
+            "caricature while narrow does nothing, the usable range is the gap "
+            "between them, which is what a bounds decision needs. "
+            "A card may override with `dial_contrast`. "
+            "Set PERSONA_DIAL_CONTRAST=wide to widen globally."
+        ),
+        alias="PERSONA_DIAL_CONTRAST",
+    )
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

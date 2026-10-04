@@ -186,7 +186,15 @@ class TestRegistryKnowsWhatItWithheld:
     def test_gwen_denied_set_is_the_complement_of_her_allowlist(self):
         denied = registry.denied_for_persona(GWEN)
         granted = {s.name for s in registry.specs_for_persona(GWEN)}
-        assert granted == GWEN_SURFACE
+        # Scoped to the WEB toolset. The invariant here is that gwen holds no
+        # general web lookup tool — that is what made the weather turn invent
+        # "103F". She was later granted `generate_image`, which is a different
+        # toolset and cannot answer a lookup, so counting it would make this
+        # assertion fail for a reason unrelated to what it protects.
+        granted_web = {
+            s.name for s in registry.specs_for_persona(GWEN) if s.toolset == "web"
+        }
+        assert granted_web == GWEN_SURFACE
         assert "web_search" in denied
         assert not (denied & granted)
 

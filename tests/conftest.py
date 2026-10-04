@@ -449,6 +449,86 @@ def _prod_backend_error(url: str) -> RuntimeError:
     )
 
 
+SCRATCH_PERSONA_PREFIX = "_"
+
+
+@pytest.fixture(autouse=True)
+def _block_graph_writes_to_real_personas(monkeypatch):
+    """Refuse any graph WRITE aimed at a persona that is not a scratch persona.
+
+    WHY THIS EXISTS. `_block_production_backend` guards `urlopen` and `httpx`. The
+    Neo4j driver speaks Bolt over raw sockets, so it was never covered — the suite had
+    an unguarded path to the live rule graph. That mattered little when the graph held
+    a projection that could be re-seeded from the card in seconds. It matters now: the
+    graph holds supersession HISTORY and pending PROPOSALS, neither of which exists
+    anywhere else, so a stray test write is no longer recoverable by re-seeding.
+
+    Deliberately narrower than "block Bolt". Blocking Bolt outright would break
+    `test_neo4j_rule_repository.py`, which legitimately needs a live graph and already
+    confines itself to `_test_rules_persona`. The convention this enforces is the one
+    that file already follows: a test persona starts with "_".
+
+    Set ALLOW_PROD_BACKEND=1 to bypass, same escape hatch as the HTTP guard.
+    """
+    if os.environ.get(_ALLOW_PROD_ENV) == "1":
+        return
+    try:
+        from src.coordinator import graph_driver
+    except Exception:
+        return
+
+    real_write = graph_driver.write
+    real_read = graph_driver.read
+
+    def _persona_of_node(driver, node_id, database):
+        """The persona owning a node, or None when it cannot be determined.
+
+        `reinforce()` addresses a node by ULID alone, and a ULID carries no persona, so
+        the parameter cannot be inspected the way `pid` can. Reading the node is the
+        only way to know what a write would touch.
+        """
+        try:
+            rows = real_read(driver, "MATCH (n {node_id: $nid}) RETURN n.persona_id AS p",
+                             database, nid=node_id)
+        except Exception:
+            return None
+        return rows[0].get("p") if rows else None
+
+    def guarded_write(driver, cypher, database, **params):
+        # `pid` is the identity repository's spelling -- apply_card, _capture_baseline
+        # and _set_current_dials all pass pid=, so a guard checking only persona_id/p
+        # had an unguarded path to the live identity graph. Watched failing before this
+        # line existed: tests/backend/coordinator/test_graph_write_guard.py.
+        pid = params.get("persona_id") or params.get("p") or params.get("pid")
+        if pid is None and "nid" in params:
+            # Fail CLOSED. An unresolvable target is refused rather than allowed: the
+            # node may not exist yet, the driver may be a stub, or the read may fail --
+            # and "we could not tell what this would touch" is not permission to touch
+            # it. A test that genuinely needs a live reinforce sets ALLOW_PROD_BACKEND=1.
+            owner = _persona_of_node(driver, params["nid"], database)
+            if owner is None or not str(owner).startswith(SCRATCH_PERSONA_PREFIX):
+                raise AssertionError(
+                    f"test tried to WRITE to the graph for node {params['nid']!r}, which "
+                    f"resolves to persona {owner!r}. Node-addressed writes (reinforce) "
+                    f"must target a node owned by a scratch persona (a name starting "
+                    f"with {SCRATCH_PERSONA_PREFIX!r}); an owner that cannot be resolved "
+                    f"is refused rather than allowed. Set ALLOW_PROD_BACKEND=1 only if "
+                    f"you genuinely mean to touch live identity."
+                )
+        if isinstance(pid, str) and pid and not pid.startswith(SCRATCH_PERSONA_PREFIX):
+            raise AssertionError(
+                f"test tried to WRITE to the graph for persona {pid!r}. Graph writes "
+                f"from tests must target a scratch persona (a name starting with "
+                f"{SCRATCH_PERSONA_PREFIX!r}) — the graph now holds supersession "
+                f"history and pending proposals that exist nowhere else and cannot be "
+                f"recovered by re-seeding from the card. Set ALLOW_PROD_BACKEND=1 only "
+                f"if you genuinely mean to touch live rules."
+            )
+        return real_write(driver, cypher, database, **params)
+
+    monkeypatch.setattr(graph_driver, "write", guarded_write)
+
+
 @pytest.fixture(autouse=True)
 def _block_production_backend(monkeypatch):
     """Fail any test that opens an HTTP connection to a production backend port."""

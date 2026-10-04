@@ -8,23 +8,64 @@ Two hard rules enforced here for every outbound message:
      parsing would both break on stray characters and open a markup-injection path.
 
 Messages over the char limit are split via splitter.split_for_telegram.
+
+Both rules extend to media CAPTIONS — a caption is the same surface as a
+message body, so ``send_document`` passes no ``parse_mode`` either.
 """
 
 from __future__ import annotations
 
-from telegram import Bot, LinkPreviewOptions
+import logging
+from pathlib import Path
 
+from telegram import Bot, LinkPreviewOptions
+from telegram.constants import MessageLimit
+
+from .retry import send_with_retry
 from .splitter import split_for_telegram
+
+logger = logging.getLogger(__name__)
+
+
+class MediaSendFailedError(Exception):
+    """Every attempt to upload a document was refused or failed.
+
+    send_text SKIPS a chunk it cannot deliver, because a partial reply beats
+    none. A document has no partial form, and the caller must know so it can
+    count the failure and report once — hence an exception here and a return
+    value there.
+    """
 
 _NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
 
 async def send_text(bot: Bot, chat_id: int, text: str, limit: int = 4000) -> int:
-    """Send one logical message, split into <=limit chunks. Returns chunk count."""
+    """Send one logical message, split into <=limit chunks. Returns chunks SENT.
+
+    Every chunk is retried (see retry.send_with_retry) — until 2026-10 each was
+    issued exactly once, so a single dropped connection silently lost a reply.
+
+    A chunk that cannot be delivered is logged and SKIPPED rather than aborting
+    the rest: losing one paragraph of a reply is better than losing the reply.
+    The return value is the number actually accepted, so a caller that cares can
+    compare it against the split length.
+    """
     chunks = split_for_telegram(text, limit)
-    for chunk in chunks:
-        await bot.send_message(chat_id=chat_id, text=chunk, link_preview_options=_NO_PREVIEW)
-    return len(chunks)
+    sent = 0
+    for index, chunk in enumerate(chunks):
+        ok = await send_with_retry(
+            lambda c=chunk: bot.send_message(
+                chat_id=chat_id, text=c, link_preview_options=_NO_PREVIEW
+            ),
+            what=f"sendMessage[{index + 1}/{len(chunks)}]",
+        )
+        if ok:
+            sent += 1
+        else:
+            logger.warning(
+                "[Send] dropped chunk %d/%d for chat_id=%s", index + 1, len(chunks), chat_id
+            )
+    return sent
 
 
 async def send_messages(bot: Bot, chat_id: int, messages: list[str], limit: int = 4000) -> int:
@@ -33,3 +74,77 @@ async def send_messages(bot: Bot, chat_id: int, messages: list[str], limit: int 
     for message in messages:
         total += await send_text(bot, chat_id, message, limit)
     return total
+
+
+async def send_document(
+    bot: Bot,
+    chat_id: int,
+    path: Path,
+    *,
+    filename: str,
+    caption: str | None = None,
+    protect_content: bool = True,
+) -> int | None:
+    """Upload a local file as a Telegram DOCUMENT, losslessly.
+
+    Document rather than photo, deliberately: ``sendPhoto`` re-encodes
+    server-side to JPEG and flattens alpha, with no way to opt out. Our PNGs
+    clear every sendPhoto size and dimension limit — the re-encode is the
+    problem, not the limits. sendDocument preserves the bytes and raises the
+    cap from 10 MB to 50 MB.
+
+    ``path`` is passed to PTB as a ``Path``, NOT as an open handle and NOT as
+    bytes. PTB re-opens it inside each call, which is what makes a retry safe:
+    an open handle would be at EOF on attempt 2 and would upload an empty body
+    that returns ``ok: true`` — a silent corruption, the worst outcome for a
+    retry.
+
+    ⚠️ The inverse holds for ``edit_message_media`` when phase 2 adds it:
+    ``InputMediaDocument`` calls ``parse_file_input(..., local_mode=True)`` and
+    turns an existing ``Path`` into the literal string ``file:///abs/path``,
+    uploading NOTHING and silently discarding ``filename``. That one must be
+    given ``bytes``. Measured on PTB 22.8; do not "unify" the two call sites.
+
+    No retry here — that is phase 2. When it lands, note that ``BadRequest``
+    SUBCLASSES ``NetworkError`` in PTB, so the non-retryable exceptions must be
+    caught first or a malformed request gets hammered three times.
+    """
+    # PTB derives the mimetype from the FILENAME's extension
+    # (InputFile.__init__ -> mimetypes.guess_type). Measured on 22.8:
+    # "Portrait" arrives as application/octet-stream with no thumbnail at all,
+    # "Portrait.png" arrives as image/png. An extensionless name from the
+    # coordinator would silently turn a picture into an opaque blob.
+    if not Path(filename).suffix:
+        filename = f"{filename}{path.suffix or '.png'}"
+        logger.warning("[Media] filename had no extension; using %s", filename)
+
+    if caption is not None and len(caption) > MessageLimit.CAPTION_LENGTH:
+        # Truncate loudly. Silent truncation is a recurring failure shape here.
+        logger.warning(
+            "[Media] caption truncated from %d to %d chars",
+            len(caption),
+            MessageLimit.CAPTION_LENGTH,
+        )
+        caption = caption[: MessageLimit.CAPTION_LENGTH]
+
+    sent: list[object] = []
+
+    async def _send():
+        message = await bot.send_document(
+            chat_id=chat_id,
+            document=path,
+            filename=filename,
+            caption=caption,
+            protect_content=protect_content,
+        )
+        sent.append(message)
+        return message
+
+    if not await send_with_retry(_send, what="sendDocument"):
+        raise MediaSendFailedError(f"could not deliver {filename}")
+
+    # The message_id is what /reset needs later. A fake bot in a test may return
+    # None, and a missing id must not break a successful send — it only costs
+    # the ability to delete that one message later.
+    message_id = getattr(sent[-1], "message_id", None) if sent else None
+    return int(message_id) if isinstance(message_id, int) else None

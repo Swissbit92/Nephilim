@@ -11,7 +11,26 @@ applies_to: nephilim
 
 ## Status
 
-Accepted
+Accepted — **still governs lore.** Amended 2026-09-26 by
+[ADR-014](014-the-rule-store-is-a-neo4j-projection-superseding-the-adr-001-and-adr-006-rejections.md)
+with two clarifications and one correction.
+
+**Scope clarifier.** *"Do NOT introduce Neo4j (or any graph DB) for this"* is
+scoped to hand-authored lore content, as this ADR's own Context says. It is not a
+repo-wide ban on graph stores. The lore wiki stays markdown, and the ecosystem
+architecture agrees by name: *"Do not migrate the lore wiki to YAML: it is
+content, it works (see nephilim ADR-001)."*
+
+**The one ground that transfers, and is honoured.** *"Another always-on service
+violates simplicity at solo scale"* is a real constraint on a box running live
+trading. ADR-014 answers it by making the graph a rebuildable projection rather
+than a system of record — a service whose loss costs capability, not data.
+
+**Correction: the escalation path below is void at the middle rung.** It reads
+*networkx in-memory → MongoDB `$graphLookup` → Neo4j read-only projection*, but
+[ADR-002](002-remove-mongodb-mcp.md) removed MongoDB entirely — deleted
+`MongoDBSettings`, dropped `pymongo`. A path through a store this repo no longer
+has is not a path. Read it as *networkx in-memory → Neo4j read-only projection*.
 
 ## Context
 

@@ -19,9 +19,13 @@ from pydantic_settings import BaseSettings
 
 from .agent import AgentSettings, ToolBrainSettings
 from .auth import AuthSettings
+from .chunking import ChunkingSettings
+from .graph import GraphSettings
 from .groundedness import GroundednessSettings
+from .image_gen import ImageGenSettings
 from .llm import OllamaSettings
 from .lore import LoreSettings
+from .media import MediaSettings
 from .memory import MemorySettings
 from .routing import RoutingSettings
 from .search import BraveSettings, SearchSettings, WebSearchSettings
@@ -64,6 +68,8 @@ class CoordinatorSettings(BaseSettings):
     # Subsystem settings (nested)
     ollama: OllamaSettings = Field(default_factory=OllamaSettings)
     brave: BraveSettings = Field(default_factory=BraveSettings)
+    image_gen: ImageGenSettings = Field(default_factory=ImageGenSettings)
+    media: MediaSettings = Field(default_factory=MediaSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
     jupiter: JupiterSettings = Field(default_factory=JupiterSettings)
     email: EmailSettings = Field(default_factory=EmailSettings)
@@ -75,6 +81,8 @@ class CoordinatorSettings(BaseSettings):
     search: SearchSettings = Field(default_factory=SearchSettings)
     web_search: WebSearchSettings = Field(default_factory=WebSearchSettings)
     groundedness: GroundednessSettings = Field(default_factory=GroundednessSettings)
+    graph: GraphSettings = Field(default_factory=GraphSettings)
+    chunking: ChunkingSettings = Field(default_factory=ChunkingSettings)
 
     model_config = {
         "env_file": ".env",
@@ -223,6 +231,8 @@ __all__ = [
     "GroundednessSettings",
     "JupiterSettings",
     "LoreSettings",
+    "ImageGenSettings",
+    "MediaSettings",
     "MemorySettings",
     "OllamaSettings",
     "RoutingSettings",

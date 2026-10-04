@@ -1,5 +1,20 @@
 # services/telegram-gateway — Agent Context
 
+> **The gateway now does ONE thing on its own initiative: it polls for finished image jobs.**
+> Everything else here is still request/response — a Telegram update comes in, the coordinator
+> answers, the gateway relays. The notification poller (`eeva_telegram/notifications.py`,
+> started in `post_init`, cancelled in `post_shutdown` BEFORE the HTTP client closes) breaks
+> that symmetry because a generation takes ~331 s and cannot answer on the request that asked
+> for it. It still holds no logic: it claims a chat-shaped payload and hands it to the same
+> `relay.extract_media` + `_deliver_media` the chat path uses. It runs only when
+> `TG_MEDIA_ENABLED` is on.
+>
+> ⚠️ A claimed notification that is dropped is gone — the coordinator will not offer it again.
+> Every delivery failure must `nack` it. ⚠️ `asyncio.CancelledError` must never be swallowed in
+> that loop or shutdown hangs. ⚠️ Use `Application.create_task`, not `asyncio.create_task`: PTB
+> keeps a strong reference (a bare task can be garbage-collected mid-flight) and routes
+> exceptions to the error handler.
+
 Thin Telegram gateway to the NEPHILIM personas: relays Telegram messages to the coordinator's own session API (`../../src/coordinator/`, `http://127.0.0.1:8000`) and relays persona replies back. Single/dual user (allowlisted), text-only, no agent framework. Own venv, own tests, own launchd daemon — a separate **process**, not a separate repo (see [../../docs/LESSONS_LEARNED.md](../../docs/LESSONS_LEARNED.md#2026-07-04--telegram-gateway-built-standalone-folded-in-same-session) for why).
 
 **Ecosystem/repo context: don't re-read the coordinator's own CLAUDE.md on every turn — fetch it on demand.**
@@ -7,7 +22,7 @@ Repo root: [../../CLAUDE.md](../../CLAUDE.md) · Ecosystem: [../../../CLAUDE.md]
 
 ## Critical invariants (read first, every session)
 
-- **Thin gateway, HTTP-only client of the session API.** The gateway adds ZERO business logic — all coupling is HTTP calls to the coordinator session API. The API surface may be *extended by the coordinator* for features consumed by ALL clients (the React UI + this gateway), e.g. the ADR-011 conversation-control endpoints — that is a coordinator feature, not gateway logic. Existing calls: `POST /sessions`, `/sessions/{id}/greet`, `/sessions/{id}/chat`, `DELETE /sessions/{id}/messages`, read-only `GET /personas/{key}/toolkit` (for `/tools`). ADR-011 adds (thin calls, no logic): `GET /sessions/{id}` (whoami), `POST .../regenerate` `.../continue` `.../undo` `.../narrate` `.../impersonate`, `PUT/GET/DELETE .../note`. Do not add tool-use, exec, file, or trading access — a compromised chat must have nothing to reach. Bot commands: `/start`, `/reset`, `/tools`, plus ADR-011: `/help`, `/whoami`, `/regen`, `/continue`, `/undo`, `/sys`, `/note`, `/impersonate`. Forwarded content is still refused before any of these (injection guard).
+- **Thin gateway, HTTP-only client of the session API.** The gateway adds ZERO business logic — all coupling is HTTP calls to the coordinator session API. The API surface may be *extended by the coordinator* for features consumed by ALL clients (the React UI + this gateway), e.g. the ADR-011 conversation-control endpoints — that is a coordinator feature, not gateway logic. Existing calls: `POST /sessions`, `/sessions/{id}/greet`, `/sessions/{id}/chat`, `DELETE /sessions/{id}/messages`, read-only `GET /personas/{key}/toolkit` (for `/tools`). ADR-011 adds (thin calls, no logic): `GET /sessions/{id}` (whoami), `POST .../regenerate` `.../continue` `.../undo` `.../narrate` `.../impersonate`, `PUT/GET/DELETE .../note`. Do not add tool-use, exec, or trading access — a compromised chat must have nothing to reach. **File access is a scoped exception as of 2026-10-01 (phase-1 image transport):** the gateway may READ one path the coordinator names, inside one gateway-configured allowlist root (`TG_MEDIA_ROOT`), and upload it to an allowlisted chat. It gains no path construction, no directory traversal, no write access and no new inbound surface. `media.resolve_media_path` enforces the root **independently of the coordinator** — "the server names a path and the client opens it" is an arbitrary-file-read primitive the moment the server is confused, so the gateway does not trust it. Disabled by default (`TG_MEDIA_ENABLED=false`); enabling it without `TG_MEDIA_ROOT` fails at config load, not at the first send. Adds `POST /sessions/{id}/media/fixture` (dev only) to the consumed API surface and `/testimage`, which is registered ONLY when the flag is on and is deliberately absent from the slash menu and `/help`. Bot commands: `/start`, `/reset`, `/tools`, plus ADR-011: `/help`, `/whoami`, `/regen`, `/continue`, `/undo`, `/sys`, `/note`, `/impersonate`. Forwarded content is still refused before any of these (injection guard).
 - **The security boundary is the Telegram allowlist + localhost-only backend.** The coordinator's chat routes have no auth (`AUTH_REQUIRED=false` is a deliberate, separate posture — see root [docs/THREAT_LEVEL.md](../../docs/THREAT_LEVEL.md)). Never expose `:8000`; never point `NEPHILIM_BASE_URL` at a non-loopback address.
 - **Secrets only from this subfolder's own `.env` (chmod 600).** The launchd plist carries NO secrets (world-readable). This process must never load KuCoin/MongoDB/trading credentials — its `.env` holds only Telegram vars + the nephilim base URL. The bot token is intentionally shared with `eeva-dca`/`eeva-exec`'s notification bot (send-only there — no long-poll conflict); rotating it touches three `.env` files.
 - **Never leak internals into a reply.** Exception text, URLs, session ids, and the bot token must NEVER be interpolated into an outbound Telegram message — only the fixed `MSG_*` strings in `eeva_telegram/handlers.py`. Full detail is logged locally (token-redacted).
@@ -34,7 +49,7 @@ Repo root: [../../CLAUDE.md](../../CLAUDE.md) · Ecosystem: [../../../CLAUDE.md]
 python3.12 -m venv venv && ./venv/bin/pip install -e ".[dev]"
 
 # Dev loop (run from this directory)
-./venv/bin/pytest tests/ -q
+./venv/bin/python -m pytest tests/ -q
 ./venv/bin/ruff check . && ./venv/bin/ruff format --check .
 
 # Live smoke test (foreground run + manual checklist; no money at risk)

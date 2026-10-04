@@ -27,7 +27,7 @@ from ..schemas import ChatBody, ChatTurn, AppendMessageBody, MAX_HISTORY_TURNS, 
 from ..config import get_settings
 # Lazy imports to break circular dependency: llm_client -> services -> chat_session_service -> llm_client
 # estimate_tokens and LC_OllamaClient are imported inside functions where needed
-from ..persona_memory import build_system_prompt, get_persona_card
+from ..persona_memory import build_system_prompt, get_persona_card, progression_key
 from ..context_framing import frame_injected_context
 from ..memory_fact_retrieval import select_facts_for_injection, render_facts_narrative
 
@@ -130,15 +130,21 @@ def _build_unlocked_lore_context(
     Joins fragment_ids from the DB with actual fragment text from the persona JSON.
     Caps at 5 fragments, truncates each to ~240 chars.
 
-    Returns empty string if not a nephilim_ persona, repo is None, or no fragments unlocked.
+    Returns empty string if the persona does not take part in progression, the
+    repo is None, or no fragments are unlocked.
+
+    Reads back under the CANONICAL key, because that is what the write side
+    records — looking up rows under the caller's spelling would miss every row
+    written under a different one.
     """
-    if not persona_key or not persona_key.startswith("nephilim_"):
+    canonical = progression_key(persona_key)
+    if canonical is None:
         return ""
     if not seeker_progression_repo:
         return ""
 
     try:
-        unlocked_rows = seeker_progression_repo.get_unlocked_lore(user_id, persona_key)
+        unlocked_rows = seeker_progression_repo.get_unlocked_lore(user_id, canonical)
         if not unlocked_rows:
             return ""
 
@@ -569,8 +575,12 @@ def _build_turn_prompt(state: ChatTurnState, deps: ChatDeps) -> None:
         system_prompt = f"{system_prompt}\n\n{ondemand_lore_context}"
         logger.debug(f"[LoreInjection] Injected on-demand lore ({len(ondemand_lore_context)} chars)")
 
+    # One resolution for both progression blocks below; None means this persona
+    # does not take part in progression, whatever the caller spelled.
+    _prog_key = progression_key(state.persona_key)
+
     # PHASE 2 (HERMES): seeker-rank narrative context (flag-gated; NEPHILIM personas)
-    if (get_settings().lore.rank_context_enabled and state.persona_key.startswith("nephilim_")
+    if (get_settings().lore.rank_context_enabled and _prog_key
             and deps.seeker_progression_repo):
         try:
             _profile = _fetch_seeker_profile_cached(state, deps.seeker_progression_repo)
@@ -581,13 +591,13 @@ def _build_turn_prompt(state: ChatTurnState, deps: ChatDeps) -> None:
             logger.warning(f"[RankContext] skipped (non-fatal): {e}")
 
     # PHASE 2 (HERMES): internal capability context (NEPHILIM personas)
-    if state.persona_key.startswith("nephilim_") and deps.seeker_progression_repo:
+    if _prog_key and deps.seeker_progression_repo:
         try:
             from ..lore_retrieval import build_capability_context  # noqa: PLC0415
             _prof = _fetch_seeker_profile_cached(state, deps.seeker_progression_repo) or {}
-            _aff = deps.seeker_progression_repo.get_or_create_affinity(state.effective_user_id, state.persona_key)
+            _aff = deps.seeker_progression_repo.get_or_create_affinity(state.effective_user_id, _prog_key)
             cap_ctx = build_capability_context(
-                state.persona_key, _prof.get("rank_name", "Initiate"),
+                _prog_key, _prof.get("rank_name", "Initiate"),
                 _aff.get("affinity_level", 0),
             )
             if cap_ctx:
@@ -974,12 +984,16 @@ def _track_nephilim_progression(
 
     Args:
         session_id: Session identifier
-        persona_key: Persona key (checked for nephilim_ prefix)
+        persona_key: Persona SELECTOR as the session recorded it — any accepted
+            spelling. It is resolved to a canonical key here, and every row this
+            function writes uses that canonical key, so a persona has one
+            progression identity rather than one per name the client used.
         user_id: User ID (if known from profile system)
         seeker_progression_repo: Repository for seeker progression
     """
-    # Only track for NEPHILIM personas
-    if not persona_key or not persona_key.startswith("nephilim_"):
+    # Only track for personas that take part in progression
+    canonical_key = progression_key(persona_key)
+    if canonical_key is None:
         return None
 
     if not seeker_progression_repo:
@@ -996,7 +1010,7 @@ def _track_nephilim_progression(
         # Increment message count for persona affinity
         seeker_progression_repo.increment_messages(
             user_id=effective_user_id,
-            persona_key=persona_key,
+            persona_key=canonical_key,
             count=2  # User message + assistant response
         )
 
@@ -1004,7 +1018,7 @@ def _track_nephilim_progression(
         # so affinity-gated lore can actually unlock. Returns milestone if crossed.
         affinity_result = seeker_progression_repo.increment_affinity(
             user_id=effective_user_id,
-            persona_key=persona_key,
+            persona_key=canonical_key,
             amount=1,
         )
 
@@ -1014,7 +1028,7 @@ def _track_nephilim_progression(
             user_id=effective_user_id,
             amount=5,
             reason="Conversation exchange",
-            persona_key=persona_key,
+            persona_key=canonical_key,
             session_id=session_id
         )
 
@@ -1031,7 +1045,7 @@ def _track_nephilim_progression(
             ceremony_key = f"{previous_rank}_to_{new_rank}"
             template = RANK_CEREMONIES.get(ceremony_key)
             if template:
-                patron = PERSONA_DISPLAY_NAMES.get(persona_key, "the Nephilim")
+                patron = PERSONA_DISPLAY_NAMES.get(canonical_key, "the Nephilim")
                 ceremony_data = {
                     "title": template["title"],
                     "speaker": template["speaker"],
@@ -1050,12 +1064,12 @@ def _track_nephilim_progression(
             )
 
         # Check for lore unlocks
-        card = get_persona_card(persona_key)
+        card = get_persona_card(canonical_key)
         if card:
             fragments = card.get("unlockable_lore", [])
             if fragments:
                 newly_unlocked = seeker_progression_repo.check_and_unlock_lore(
-                    effective_user_id, persona_key, fragments
+                    effective_user_id, canonical_key, fragments
                 )
                 if newly_unlocked:
                     for frag in newly_unlocked:
@@ -1070,9 +1084,9 @@ def _track_nephilim_progression(
             if seeker_progression_repo:
                 from ..lore_retrieval import detect_new_capability_unlocks
                 _prof = seeker_progression_repo.get_seeker_profile(effective_user_id) or {}
-                _aff = seeker_progression_repo.get_or_create_affinity(effective_user_id, persona_key)
+                _aff = seeker_progression_repo.get_or_create_affinity(effective_user_id, canonical_key)
                 capability_unlocks = detect_new_capability_unlocks(
-                    seeker_progression_repo, effective_user_id, persona_key,
+                    seeker_progression_repo, effective_user_id, canonical_key,
                     _prof.get("rank_name", "Initiate"), _aff.get("affinity_level", 0),
                 )
                 for cap in capability_unlocks:

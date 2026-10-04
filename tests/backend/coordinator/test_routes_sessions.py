@@ -183,7 +183,10 @@ class TestDeleteSession:
         with patch("src.coordinator.routes.sessions._get_repos", return_value=repos):
             resp = client.delete("/sessions/sess-1")
         assert resp.status_code == 200
-        assert resp.json() == {"ok": True}
+        # DELETE /sessions/{id} now reports media too. It does NOT share
+        # /reset's derived-state clearing, so it was the obvious place for
+        # images to leak out of; the count makes that visible.
+        assert resp.json() == {"ok": True, "images": 0}
 
     def test_not_found_returns_404(self):
         repos = _make_repos(session_exists=False)
@@ -274,10 +277,14 @@ class TestClearSessionMessages:
         summary_repo.delete_summaries_by_session.assert_called_once_with("sess-1")
         note_repo.clear_note.assert_called_once_with("sess-1")
         rag.clear_session.assert_called_once_with("sess-1")
+        # Exact equality on purpose: this assert is the tripwire that fires when
+        # a new store starts being cleared without anyone deciding it should be
+        # reported. "images" was added deliberately in phase 3.
         assert resp.json()["cleared"] == {
             "summaries": True,
             "note": True,
             "vector_index": True,
+            "images": 0,
         }
 
     def test_missing_rag_does_not_fail_the_reset(self):

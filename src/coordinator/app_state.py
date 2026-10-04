@@ -32,6 +32,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from .memory_rag import EpisodicMemoryRAG
     from .fact_extractor import FactExtractor
     from .repositories.session_repository import SessionRepository
+    from .repositories.media_repository import MediaRepository
     from .repositories.message_repository import MessageRepository
     from .repositories.summary_repository import SummaryRepository
     from .repositories.emotional_state_repository import EmotionalStateRepository
@@ -56,6 +57,7 @@ class AppState:
     user_profile_repo: Optional["UserProfileRepository"] = None
     seeker_progression_repo: Optional["SeekerProgressionRepository"] = None
     user_repo: Optional["UserRepository"] = None
+    media_repo: Optional["MediaRepository"] = None
 
     # Memory management (Phase 2)
     memory_manager: Optional["MemoryManager"] = None

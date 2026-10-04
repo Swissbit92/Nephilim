@@ -9,6 +9,7 @@ import uuid
 from fastapi import APIRouter, HTTPException
 
 from .. import startup  # module ref for call-time getter resolution; cycle-free.
+from ..config import get_settings
 from ..persona_memory import get_persona_card
 from ..repositories.base_repository import utc_now_iso
 from ..schemas import (
@@ -16,10 +17,15 @@ from ..schemas import (
     CreateSessionBody,
     GreetBody,
     ImportBody,
+    MediaItem,
     NoteBody,
+    ResponseMetadata,
     SourceType,
     UpdateSessionBody,
 )
+from ..services import media_storage, persona_lines
+from ..services.media_fixture import build_probe_png
+from ..services.media_storage import MediaStorageError
 
 router = APIRouter(tags=["sessions"])
 logger = logging.getLogger(__name__)
@@ -37,6 +43,34 @@ def _get_repos():
         startup.get_message_repo(),
         startup.get_emotional_state_repo(),
     )
+
+
+def _quarantine_session_media(session_id: str) -> int:
+    """Move a session's images out of the live tree. Returns the file count.
+
+    Order matters and is the opposite of the obvious one: read the directory
+    name, move the files, THEN forget the mapping. Deleting the row first
+    orphans a directory nothing can name, which no later sweep can attribute.
+
+    Never raises. A reset that fails because of an image is a worse outcome
+    than a reset that leaves an image behind — and the count it returns is what
+    the caller reports, so a failure shows up as a number, not as silence.
+    """
+    try:
+        repo = startup.get_media_repo()
+        media_dir = repo.get_media_dir(session_id)
+        if media_dir is None:
+            return 0
+        count = media_storage.quarantine_session(media_dir)
+        repo.delete(session_id)
+        return count
+    except Exception as exc:  # noqa: BLE001 - a reset must not fail on media
+        logger.warning(
+            "[Reset] could not quarantine media for %s (non-fatal): %s",
+            session_id[:8],
+            exc,
+        )
+        return 0
 
 
 @router.get("/sessions")
@@ -108,9 +142,14 @@ def delete_session(session_id: str):
     if not session_repo.session_exists(session_id):
         raise HTTPException(status_code=404, detail="Session not found.")
 
+    # Media first: the FK cascade removes the session_media_dirs ROW but cannot
+    # touch the filesystem, so deleting the session first would orphan the
+    # directory with nothing left able to name it.
+    images = _quarantine_session_media(session_id)
+
     # Delete session (messages will be cascade deleted)
     session_repo.delete_session(session_id)
-    return {"ok": True}
+    return {"ok": True, "images": images}
 
 
 @router.post("/sessions/{session_id}/messages")
@@ -164,6 +203,16 @@ def _clear_derived_session_state(session_id: str) -> dict[str, bool]:
         except RuntimeError as exc:  # subsystem not initialized
             cleared[label] = False
             logger.warning(f"[Reset] Could not clear {label} for session {session_id[:8]}: {exc}")
+
+    # Images are session-derived state too, and the plan's decision is that a
+    # companion /reset means wipe our history — DELIBERATELY against the grain
+    # of every comparable system (Open WebUI, LibreChat, SillyTavern and
+    # ChatGPT all PRESERVE generated media when a conversation is cleared).
+    # They are general-purpose assistants where "new chat" is a workflow action;
+    # here the images may be intimate and preserving them after an explicit wipe
+    # is the wrong default. Quarantined, not deleted, so the call is reversible
+    # for 30 days.
+    cleared["images"] = _quarantine_session_media(session_id)
 
     rag = startup.get_episodic_memory_rag()
     if rag is None:
@@ -250,6 +299,69 @@ def clear_session_note(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found.")
     cleared = startup.get_session_note_repo().clear_note(session_id)
     return {"ok": True, "cleared": cleared}
+
+
+def _persona_of(session_id: str) -> str:
+    """The persona a session belongs to, for an in-voice line. '' if unknown."""
+    try:
+        row = startup.get_session_repo().get_session(session_id)
+        return (row or {}).get("persona_key", "") or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+@router.post("/sessions/{session_id}/media/fixture")
+def create_fixture_media(session_id: str):
+    """Store a generated probe PNG and return it in a CHAT-SHAPED response.
+
+    Development surface, gated by ``MEDIA_FIXTURE_ENABLED`` (404 when off, not
+    403 — a dev endpoint should not advertise itself). It exists to prove the
+    media transport end to end before any generation backend exists.
+
+    The response body is deliberately the same shape ``/chat`` returns, right
+    down to ``answer``/``message_flow``/``metadata``. That identity is the whole
+    point: the gateway must parse this with the SAME extractor it will use on
+    the real chat path, or the transport proof is a proof about a different
+    code path.
+
+    Note this does NOT persist a message. It is a transport probe, not a turn.
+    """
+    settings = get_settings().media
+    if not settings.fixture_enabled:
+        raise HTTPException(status_code=404, detail="Not found.")
+
+    session_repo, _, _ = _get_repos()
+    if not session_repo.session_exists(session_id):
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    media_dir = startup.get_media_repo().get_or_create_media_dir(session_id)
+    try:
+        stored = media_storage.store_png(media_dir, build_probe_png())
+    except MediaStorageError as exc:
+        # Surface the refusal rather than returning an empty media list — an
+        # ambiguous success is the failure mode this whole feature guards.
+        logger.warning("[Media] fixture store refused for %s: %s", session_id[:8], exc)
+        raise HTTPException(status_code=409, detail=f"Media rejected: {exc}") from exc
+
+    item = MediaItem(
+        media_id=stored.media_id,
+        path=str(stored.path),
+        filename=f"nephilim_{stored.media_id[:12]}.png",
+        bytes=stored.bytes,
+        sha256=stored.sha256,
+        width=stored.width,
+        height=stored.height,
+        caption=persona_lines.line(_persona_of(session_id), "image_ready"),
+    )
+    metadata = ResponseMetadata(source_type=SourceType.LLM, media=[item])
+    return {
+        "answer": item.caption,
+        "message_flow": "single",
+        "message_count": 1,
+        "used_search": False,
+        "metadata": metadata.model_dump(),
+        "rewritten": False,
+    }
 
 
 @router.get("/sessions/{session_id}/export")
