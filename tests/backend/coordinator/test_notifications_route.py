@@ -26,6 +26,27 @@ from src.coordinator.repositories.image_job_repository import (
 from src.coordinator.server import app
 
 
+@pytest.fixture(autouse=True)
+def _deterministic_lines(monkeypatch):
+    """Stub the in-voice line to a sentinel naming the SITUATION.
+
+    ⚠️ These tests used to assert on the canned fallback text ("stopped",
+    "didn't work out", "can't find it"). Those strings live in
+    `persona_lines._FALLBACK` and are used ONLY when the model is
+    unreachable — so the tests passed headless, failed the moment a model
+    was available, and, worse, asserted the exact behaviour `persona_lines`
+    exists to AVOID. They would have stayed green with in-voice generation
+    completely broken.
+
+    Asserting the situation instead tests the wiring that actually matters:
+    a cancelled job must produce the CANCELLED line and not the failed one,
+    which the old substring check could not tell apart.
+    """
+    from src.coordinator.services import persona_lines
+    monkeypatch.setattr(persona_lines, "line",
+                        lambda persona_key, situation: f"<<{situation}>>")
+
+
 @pytest.fixture
 def repo(tmp_path, monkeypatch):
     r = ImageJobRepository(str(tmp_path / "jobs.db"))
@@ -109,7 +130,7 @@ def test_a_failed_job_is_offered_with_an_honest_message(repo, client, tmp_path):
     note = client.post("/notifications/claim").json()["notifications"][0]
     assert note["status"] == "failed"
     assert note["metadata"]["media"] == []
-    assert "didn't work out" in note["answer"]
+    assert note["answer"] == "<<image_failed>>"
 
 
 def test_the_error_reason_is_not_in_the_user_facing_text(repo, client, tmp_path):
@@ -135,13 +156,16 @@ def test_a_succeeded_job_whose_file_vanished_does_not_claim_success(
 
     note = client.post("/notifications/claim").json()["notifications"][0]
     assert note["metadata"]["media"] == [], "offered a path that no longer exists"
-    assert "can't find it" in note["answer"]
+    assert note["answer"] == "<<image_missing>>", (
+        "a vanished file must say MISSING, not failed — the old substring "
+        "check could not tell those two situations apart"
+    )
 
 
 def test_a_cancelled_job_says_so(repo, client, tmp_path):
     _finished(repo, tmp_path, status=JobStatus.CANCELLED, png=False)
     note = client.post("/notifications/claim").json()["notifications"][0]
-    assert "stopped" in note["answer"]
+    assert note["answer"] == "<<image_cancelled>>"
 
 
 # ---------- handing one back ----------

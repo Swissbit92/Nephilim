@@ -87,15 +87,62 @@ def test_no_field_name_shadows_a_variable_in_THIS_environment(cls_name, cls):
     after a variable your shell happens to export IS broken for you and fine for
     someone else. The failure message says which variable, so the diagnosis is
     immediate rather than a three-hour hunt through driver internals.
+
+    ⚠️ A FIELD WHOSE NAME IS ITS OWN ALIAS IS NOT SHADOWED. `coord_port` is
+    aliased `COORD_PORT`, so "the field name wins over the alias" names the
+    same variable twice and nothing is overridden. Flagging those made this
+    test fail for every operator who exports the app's own configuration —
+    which is everyone, since that is what configuring it means. The first
+    draft of the curated list above was trimmed for exactly this reason
+    ("a guard that cries wolf on reasonable names is one people delete"), and
+    this half had the same defect one layer down.
+
+    The hazard is a MISMATCH: field `user` aliased `NEO4J_USER`, where $USER
+    and $NEO4J_USER are different variables and the wrong one wins.
     """
     if not cls.model_config.get("populate_by_name"):
         pytest.skip(f"{cls_name} does not populate_by_name, so field names are not env keys")
     live = {k.lower() for k in os.environ}
-    shadowed = sorted(f for f in cls.model_fields if f.lower() in live)
+    shadowed = sorted(
+        f for f, info in cls.model_fields.items()
+        if f.lower() in live
+        # ...unless the variable doing the "shadowing" IS the field's own
+        # alias, in which case both paths resolve to the same value.
+        and (info.alias or "").lower() != f.lower()
+    )
     assert not shadowed, (
         f"{cls_name} field(s) {shadowed} are shadowed by a variable exported in THIS "
         f"environment: "
         + ", ".join(f"${f.upper()}={os.environ.get(f.upper(), '<case-differs>')!r}"
                     for f in shadowed)
         + ". The field takes that value, not the alias's. Rename the field."
+    )
+
+
+def test_the_mismatch_guard_still_catches_the_real_bug():
+    """Guard the guard, against the exemption just added.
+
+    The exemption above could be written too broadly and silently disarm the
+    whole test — which is how the original GraphSettings.user bug would come
+    back. So the real shape is reconstructed here and must still be caught:
+    a field named `user`, aliased to something else, with $USER exported.
+    """
+    from pydantic import Field
+    from pydantic_settings import BaseSettings, SettingsConfigDict
+
+    class _Mismatched(BaseSettings):
+        model_config = SettingsConfigDict(populate_by_name=True)
+        user: str = Field(default="neo4j", alias="NEO4J_USER")
+
+    assert "USER" in os.environ, "this machine does not export $USER; cannot assert"
+    live = {k.lower() for k in os.environ}
+    caught = sorted(
+        f for f, info in _Mismatched.model_fields.items()
+        if f.lower() in live and (info.alias or "").lower() != f.lower()
+    )
+    assert caught == ["user"], (
+        "the field-name-is-its-own-alias exemption has been widened until it "
+        "swallows the real bug: a field named `user` aliased NEO4J_USER takes "
+        "its value from $USER, which is how the Neo4j driver once authenticated "
+        "as the macOS account."
     )
