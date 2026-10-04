@@ -144,8 +144,30 @@ def _enforce_on_response(
     Lane-specific keys (`used_search`, and anything else a caller set) are carried over,
     because they are telemetry about what the lane did and the retry does not change it.
     """
-    answer = response.get("answer")
-    if not isinstance(answer, str) or not answer:
+    # `answer` IS A LIST WHEN THE REPLY SPLIT INTO BUBBLES -- `_build_llm_response` returns
+    # `messages if flow_type == "multi" else messages[0]`, and the model emits <msg> tags
+    # on most turns. The first version of this guard read `if not isinstance(answer, str):
+    # return response`, which silently skipped enforcement on every multi-bubble reply:
+    # 24 of 37 in the one real session measured. Detection still logged the violation, so
+    # the telemetry said the wall broke while nothing acted on it.
+    #
+    # The A/B could not catch this. It posts to Ollama directly and never builds a
+    # response dict, so the -96% was measured on a path that does not contain this
+    # function. That is the same shape as the defect this whole change set exists to fix
+    # -- a guard that is correct in isolation and never reached -- and I wrote it, with a
+    # comment explaining why it was safe.
+    raw = response.get("answer")
+    if isinstance(raw, list):
+        # Joined for the CHECK and as attempt 1's text. Lossy on the <msg> tags, which is
+        # fine: the detector is sentence-based and the retry regenerates from scratch, so
+        # the tags are noise rather than content. If the retry changes the text,
+        # `_build_llm_response` re-parses whatever the model emitted, tags included.
+        answer = "\n\n".join(a for a in raw if isinstance(a, str))
+    elif isinstance(raw, str):
+        answer = raw
+    else:
+        return response
+    if not answer:
         return response
     new_answer, _still = _regenerate_once_on_violation(
         card, system, user_compiled, user_message, answer, metadata,
