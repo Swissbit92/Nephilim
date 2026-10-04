@@ -22,9 +22,26 @@ dusk" out of a sentence.
 
 **Grammar guarantees SHAPE, never correctness.** The first probe returned
 `mood: "dusk"` for "a fox in deep snow at dusk" — valid JSON, wrong field.
-The field descriptions below, and the explicit sentence that time of day is
-setting rather than mood, are what fixed that; they are load-bearing and were
-written against observed output, not guessed.
+The field descriptions below, and the sentence saying time of day is setting
+rather than mood, were written against that observed output.
+
+⚠️ **They are NOT what prevents it, and the earlier claim here that they were
+"load-bearing" was wrong.** Tested 2026-10-04 by deleting them: with the
+instruction line removed, the live suite passes 8/8; with the line AND the
+mood/setting schema descriptions removed, still 8/8. At temperature 0 on
+`mistral-small-abliterated:24b` the model separates the fields unprompted, so
+nothing here is currently holding that behaviour up.
+
+Why the scaffolding stays anyway: it costs nothing, it is plainly correct,
+and the one thing the deletion test cannot tell us is how a DIFFERENT model
+behaves without it — a model swap is the likely way this regresses. The
+original `mood: "dusk"` was really observed and is unexplained; it does not
+reproduce today under any of the three configurations tried.
+
+What this means for the test: `tests/integration/test_image_extract_live.py`
+is a behaviour PIN, not a guard on a fix. It will catch a model or sampling
+change that reintroduces the defect. It was never watched failing on this
+tree, and that is recorded rather than glossed.
 
 **It never raises and never returns nothing.** A failed extraction falls back
 to the user's own words as the subject. Qwen takes prose, so the degraded

@@ -70,6 +70,34 @@ The check reads the field DEFAULTS, not the environment: the environment is the 
 business, the defaults are the repo's. It also fails if a field disappears, because a
 deleted switch reads as "nothing to check" to anything looking for a `True`.
 
+## The image-prompt extractor is never given conversation history
+
+Status: active
+Statement: `extract()` in `src/coordinator/services/image_gen/extract.py` takes only (message, client, model, system_prompt), and forwards nothing history-shaped into the chat call.
+Falsifiable: WHEN `extract()` declares any other parameter, or any name containing history/messages/context/transcript/turns, THE CHECK SHALL exit 1 and name it.
+Check: scripts/checks/extractor_takes_no_history.py
+
+A safety boundary, not a style rule, and it was measured rather than reasoned.
+
+In the paired A/B of 2026-10-04, the native tool-call path was asked to paint "a quiet
+harbour at sunrise" with 8 messages of real history, and composed a subject lifted
+**verbatim from a different image request eight messages earlier** in that session. It
+would have generated that picture instead. Confirmed against `data/chats.db`. So real
+history does not merely suppress a tool call — when the call does fire under history, the
+arguments can come from the conversation rather than from the request, and the user gets a
+confidently wrong picture rather than a visible failure.
+
+`extract()` is immune only because it passes no history at all. That immunity is one line
+of *absence*, which is precisely the kind of property a refactor removes while the suite
+stays green: adding `history=` would look like an improvement ("give it context so it
+resolves pronouns"), the unit test that pins the message list would be updated to match,
+and nothing would fail until someone received a picture of something they asked for last
+week.
+
+Hence the guard is on the SIGNATURE rather than on behaviour. A new parameter is then a
+decision that has to be argued against this file instead of arrived at. The check was
+watched failing on a tree with `history=None` added, and passing on the real one.
+
 ## Success is never inferred from an exit code
 
 Status: active

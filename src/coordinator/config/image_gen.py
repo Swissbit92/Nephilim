@@ -48,16 +48,24 @@ class ImageGenSettings(BaseSettings):
         alias="IMAGE_GEN_MODEL_ALIAS",
     )
     direct_enqueue: bool = Field(
-        default=False,
+        default=True,
         description=(
-            "ARM B. When on, a matched drawing request skips the native tool "
-            "call entirely: generation_intent decides, a grammar-constrained "
-            "extraction fills the arguments, and the job is queued directly. "
-            "Exists because arm A does not work in a real conversation — "
-            "measured, gwen fires 0/5 at history depth >= 2 because Ollama's "
-            "grammar engine is wired to `format` and NOT to `tools=`, so any "
-            "leading prose silently discards the call. OFF until the A/B says "
-            "otherwise."
+            "A matched drawing request skips the native tool call entirely: "
+            "generation_intent decides, a grammar-constrained extraction "
+            "fills the arguments, and the job is queued directly. Ollama's "
+            "grammar engine is wired to `format` and NOT to `tools=`, so a "
+            "tool call is free generation plus a post-hoc tag scan, and any "
+            "leading prose discards it silently. "
+            "ON since 2026-10-04, from a paired A/B over 16 cells scored by "
+            "ONE shared instrument (did this path yield a composed prompt): "
+            "16/16 vs 5/16, 11 discordant pairs all one way, exact McNemar "
+            "p=0.00098. The deciding evidence was not the rate: under real "
+            "history the tool-call path composed a subject lifted verbatim "
+            "from a DIFFERENT image request earlier in the session, so it "
+            "does not only fail, it occasionally draws the wrong thing "
+            "confidently. "
+            "Set false to fall back to the tool-call path. That path is kept "
+            "for rollback only; it is not better under any measured condition."
         ),
         alias="IMAGE_GEN_DIRECT_ENQUEUE",
     )

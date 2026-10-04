@@ -74,14 +74,50 @@ def test_the_schema_constrains_style_to_the_enum():
 
 
 def test_no_history_is_sent():
-    """History is what suppresses the tool-call path, the request is
-    self-contained, and anything history added here would be detail the user
-    did not ask for."""
+    """⚠️ A CONTAINMENT BOUNDARY, not a quality preference.
+
+    This was originally justified as "the request is self-contained, and
+    anything history added would be detail the user did not ask for". The
+    paired A/B found the stronger reason, and it is a safety one.
+
+    Measured 2026-10-04: asked to paint "a quiet harbour at sunrise" with 8
+    messages of real history, the tool-call path composed a subject lifted
+    VERBATIM from a different image request eight messages earlier in that
+    session, and would have drawn that instead. Confirmed against the source
+    conversation. So history does not merely suppress the call -- when the
+    call fires under history, the arguments can come from the conversation
+    rather than from the request, and the user gets a confidently wrong
+    picture rather than a visible failure.
+
+    Passing no history is what makes that impossible here. Anyone adding a
+    `history=` argument to `extract()` for context is removing this property;
+    the contamination test below is the one that will catch them.
+    """
     c = _client({"subject": "a fox", "setting": "", "mood": "", "style": "anime"})
     extract("draw a fox", client=c, model="m", system_prompt="SYS")
     msgs = c.chat.call_args.kwargs["messages"]
     assert [m["role"] for m in msgs] == ["system", "user"]
     assert msgs[0]["content"] == "SYS"
+
+
+def test_nothing_but_the_request_reaches_the_model():
+    """The contamination guard, stated as a property rather than a shape.
+
+    `test_no_history_is_sent` pins the message LIST; this pins what may
+    appear in the only user turn. A future edit that threads prior turns in
+    as a "context" string would satisfy the role check and still reintroduce
+    exactly the failure the A/B measured.
+    """
+    earlier = "a latina skinny beauty teen in a green bikini"  # the real one
+    c = _client({"subject": "a harbour", "setting": "sunrise",
+                 "mood": "quiet", "style": "photographic"})
+    extract("could you paint a quiet harbour at sunrise?",
+            client=c, model="m", system_prompt="SYS")
+    sent = " ".join(m["content"] for m in c.chat.call_args.kwargs["messages"])
+    assert earlier not in sent
+    assert "harbour" in sent, "the actual request must of course still be sent"
+    # Nothing resembling a prior turn may ride along.
+    assert sent.count("could you paint a quiet harbour at sunrise?") == 1
 
 
 def test_extraction_runs_cold():

@@ -1,11 +1,11 @@
 ---
-title: Tool calling collapses under roleplay history — measured
+title: Tool calling collapses under roleplay history — measured, and replaced
 status: active
 created: 2026-10-02
-last_reviewed_on: 2026-10-02
+last_reviewed_on: 2026-10-04
 review_in: 6 months
 applies_to: nephilim
-ai_summary: "Measured: native tool calling degrades to near zero in an ongoing roleplay conversation, and the cause is the CONTENT of the history rather than its length. Read before changing the tool-brain path, before trusting any tool-firing number measured without history, and before making gwen the persona template."
+ai_summary: "Measured: native tool calling degrades to near zero in an ongoing roleplay conversation, the cause is the CONTENT of the history rather than its length, and a call that DOES fire under history can carry arguments copied verbatim from an earlier turn — a wrong picture rather than no picture. Closes with a paired A/B (16/16 vs 5/16, exact McNemar p=0.00098) that replaced the tool call with grammar-constrained extraction, now shipped. Read before changing the tool-brain path, before trusting any tool-firing number measured without history, before passing history to an extractor, and before making gwen the persona template."
 ---
 
 # Tool calling collapses under roleplay history — measured
@@ -225,3 +225,110 @@ produces a confident in-character sentence, Ollama discards the unparsed
 call, and nothing anywhere reports that a tool was meant to run. The image
 path now catches this specific case (a matched drawing request with no job
 replaces the reply), but web search has no equivalent.
+
+---
+
+# Resolution — the paired A/B, 2026-10-04
+
+The fix measured against the path it replaces. Design and stopping rule were
+fixed in `scripts/research/enqueue_path_prereg.json` and committed before the
+run; harness `scripts/research/enqueue_path_ab.py`.
+
+## The design decision that mattered most
+
+Scoring arm A by "did `tool_calls` fire" and arm B by "did the JSON parse"
+would have compared **two different instruments** and reported the gap as a
+treatment effect. Both arms therefore run to the same endpoint —
+`prompt.compose()` — and are scored there: *did this path yield a prompt we
+could actually draw.* This repo has paid for the other way twice (a blind
+checker flipped a null; the groundedness gate's blind spot).
+
+The arms are paired by construction, so the test is **exact McNemar**, not
+Fisher. Below 6 discordant pairs no split can reach p<0.05, so n=16 was fixed
+in advance for headroom — not chosen after seeing a p-value.
+
+## Result
+
+16 cells × 3 reps × 2 arms, graph up.
+
+| | count |
+|---|---|
+| both arms pass | 5 |
+| only arm A (tool call) | **0** |
+| only arm B (extraction) | **11** |
+| neither | 0 |
+
+Arm A 5/16, Wilson 95% [0.14, 0.56]. Arm B 16/16, Wilson 95% [0.81, 1.00].
+11 discordant pairs, all one direction, **exact two-sided McNemar p=0.00098**.
+
+gwen fails arm A at **zero** history too (2/3, 0/3, 1/3, 0/3), so depth is not
+the only factor; eeva passes 5 of her 8 cells. The persona being made the
+template is the one the tool-call path serves worst.
+
+## The finding the aggregate hid
+
+Hand labelling was mandatory in the prereg, not optional, and this is why.
+Arm A's single faithfulness miss was not a dropped adjective. Asked to paint
+*"a quiet harbour at sunrise"* at history depth 8, it composed a subject
+**lifted verbatim from a different image request eight messages earlier** in
+that session, and would have drawn that instead. Verified against
+`data/chats.db`.
+
+So real history does not only *suppress* the tool call. When the call does
+fire under history, the arguments can come from the conversation rather than
+from the request. **That is worse than silence** — silence is visible, a
+confidently wrong picture is not.
+
+Arm B is structurally immune: it passes no history at all. That property was
+originally justified on quality grounds ("the request is self-contained"). It
+is actually a containment boundary, and `test_no_history_is_sent` now says so.
+
+## Two claims of mine that the measurement refuted
+
+**1. The prompt scaffolding is not load-bearing.** `extract.py` claimed the
+field descriptions and the sentence *"Time of day and lighting are SETTING,
+never mood"* were what fixed the observed `mood: "dusk"` defect. Tested by
+deleting them: instruction line removed → live suite still 8/8; line **and**
+the mood/setting schema descriptions removed → still 8/8. At temperature 0 on
+`mistral-small-abliterated:24b` the model separates the fields unprompted. The
+original defect was real and is **unexplained**; it does not reproduce under
+any of the three configurations tried. The scaffolding stays (free, correct,
+and the deletion test says nothing about other models), but the docstring no
+longer claims it holds anything up, and
+`tests/integration/test_image_extract_live.py` is labelled a behaviour **pin**
+rather than a guard — it has never been watched failing on this tree.
+
+**2. `style` is not inert.** 48/48 `photographic` in the A/B is
+indistinguishable from a field nothing reads, and this codebase has shipped
+exactly that (persona sliders). Checked: 4/4 when a style IS stated. The
+uniform value was the correct default for four requests that named no style.
+
+No repair function was written for either. A control that never fires is
+unreached code, which is worse than none.
+
+## Independent corroboration of the premise
+
+Verified first-hand, not taken from a research summary:
+
+- [ollama#17274](https://github.com/ollama/ollama/issues/17274) — **open**,
+  filed 2026-07-20 by a third party on a different model. Same failure class:
+  a well-formed tool call, 40 completion tokens, discarded silently by the
+  post-hoc parser; the caller sees an empty message.
+- [ollama#17284](https://github.com/ollama/ollama/pulls/17284), the fix in
+  flight — **open, not merged**, and it only *surfaces* the discarded buffer
+  as content. It does not constrain generation.
+
+Installed here: Ollama **0.34.2**. Nothing in the release notes claims `tools=`
+moved onto the grammar path, and `tool_choice` remains unsupported. The gap is
+real, current, and upstream has not closed it.
+
+One risk checked rather than assumed: llama.cpp#29457 reports superlinear
+grammar-build time on large enums, synchronous on the serving thread. The
+`style` enum here is **4 values**; the issue's smallest datapoint is 100 values
+at 0.12s. Not applicable — but the ceiling exists if anyone widens it.
+
+## Shipped
+
+`IMAGE_GEN_DIRECT_ENQUEUE` defaults **on** as of 2026-10-04. The tool-call path
+is retained behind the flag for rollback only; it is not better under any
+measured condition.
