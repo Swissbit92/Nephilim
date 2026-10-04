@@ -71,6 +71,11 @@ SITUATIONS: dict[str, str] = {
         "not get it started. You are asking them to try again. This is a "
         "technical hiccup, NOT a refusal — you are willing."
     ),
+    "image_queued": (
+        "You have just started making a picture for the person you are "
+        "talking to. It takes a few minutes and you are telling them it is "
+        "on the way."
+    ),
     "image_missing": (
         "You made a picture for the person you are talking to but can no "
         "longer find it, so you cannot send it."
@@ -107,6 +112,7 @@ _FALLBACK: dict[str, str] = {
         "I couldn't get that started just now — ask me again and I'll try "
         "once more."
     ),
+    "image_queued": "Starting that now — it takes me a few minutes.",
     "image_missing": "I made that picture but I can't find it any more.",
 }
 

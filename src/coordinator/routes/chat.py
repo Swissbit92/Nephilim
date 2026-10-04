@@ -496,6 +496,29 @@ def _try_tool_brain(
                 web_specs = gen_specs
                 wants_generation = True
 
+        # ARM B — bypass the tool call entirely. generation_intent has
+        # already decided; the only thing left for the model is filling the
+        # arguments, and a grammar does that where a tool call does not.
+        # Measured: arm A fires 0/5 for gwen at history depth >= 2 because
+        # Ollama's grammar engine is wired to `format` and NOT to `tools=`.
+        if wants_generation and get_settings().image_gen.direct_enqueue:
+            from ..services.image_gen import direct
+
+            outcome, text, decided_by = direct.queue_generation(
+                session_id=getattr(body, "session_id", "") or "",
+                persona_key=card.get("key", ""),
+                message=body.message,
+                system_prompt=system,
+            )
+            metadata.source_type = SourceType.LLM
+            metadata.tools_used = ["generate_image"] if outcome == direct.QUEUED else []
+            metadata.tool_decided_by = decided_by
+            logger.info("[ToolBrain] direct enqueue -> %s (%s)", outcome, decided_by)
+            return _build_llm_response(
+                text, body.message, persona_name, metadata,
+                word_substitutions=card.get("word_substitutions"),
+            )
+
         forced = None if wants_generation else media_search_type(body.message)
         if forced:
             want = f"{forced}_search"

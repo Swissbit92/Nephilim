@@ -47,6 +47,20 @@ class ImageGenSettings(BaseSettings):
         ),
         alias="IMAGE_GEN_MODEL_ALIAS",
     )
+    direct_enqueue: bool = Field(
+        default=False,
+        description=(
+            "ARM B. When on, a matched drawing request skips the native tool "
+            "call entirely: generation_intent decides, a grammar-constrained "
+            "extraction fills the arguments, and the job is queued directly. "
+            "Exists because arm A does not work in a real conversation — "
+            "measured, gwen fires 0/5 at history depth >= 2 because Ollama's "
+            "grammar engine is wired to `format` and NOT to `tools=`, so any "
+            "leading prose silently discards the call. OFF until the A/B says "
+            "otherwise."
+        ),
+        alias="IMAGE_GEN_DIRECT_ENQUEUE",
+    )
     poll_seconds: float = Field(
         default=2.0, ge=0.1, le=60.0,
         description=(

@@ -134,6 +134,23 @@ def _clean(value: Any) -> str:
     return text[:MAX_FIELD_CHARS].strip()
 
 
+def default_client() -> tuple[object | None, str | None]:
+    """The Ollama client this module talks to, built here rather than by the
+    caller — so the chat-model transport stays in ONE file and the arbiter
+    guard below is the only place it has to be enforced. INV-1 flagged the
+    caller when it built its own, which is the check working."""
+    try:
+        import ollama
+
+        from ...config import get_settings
+
+        st = get_settings()
+        return ollama.Client(host=st.ollama.base), st.ollama.model
+    except Exception:  # noqa: BLE001 — extraction degrades without a client
+        logger.warning("[ImageExtract] no ollama client; will fall back")
+        return None, None
+
+
 def extract(message: str, *, client=None, model: str | None = None,
             system_prompt: str = "") -> tuple[GenerationIntent, str]:
     """Pull the request out of `message`. Returns (intent, how).
