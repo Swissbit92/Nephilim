@@ -214,3 +214,81 @@ def _Meta():
     difference that makes a passing test prove nothing about the real path."""
     from src.coordinator.schemas import ResponseMetadata
     return ResponseMetadata()
+
+
+class TestMultiBubbleRepliesAreNotSkipped:
+    """`answer` is a LIST when the reply splits into bubbles, and the first version of the
+    guard skipped those silently.
+
+    `_build_llm_response` returns `messages if flow_type == "multi" else messages[0]`, and
+    the model emits <msg> tags on most turns — 24 of 37 replies in the one real session
+    measured. So enforcement was disabled on roughly two thirds of production turns while
+    detection kept logging the violation, which is the worst shape: telemetry saying the
+    wall broke and nothing acting on it.
+
+    THE A/B COULD NOT HAVE CAUGHT IT. It posts to Ollama directly and never builds a
+    response dict, so the -96% was measured on a path that does not contain
+    `_enforce_on_response` at all. These tests build their input with the REAL
+    `_build_llm_response` instead of a hand-made dict, which is the only reason they can
+    see it.
+    """
+
+    def _real_response(self, text: str) -> dict:
+        from src.coordinator.routes.chat import _build_llm_response
+        from src.coordinator.schemas import ResponseMetadata
+        return _build_llm_response(text, "Good remember it.", "gwen", ResponseMetadata())
+
+    def test_a_multi_bubble_reply_is_actually_checked(self):
+        from src.coordinator.routes import chat as chat_mod
+        resp = self._real_response(
+            "<msg>Yes, master \U0001F608.</msg><msg>What do you want tonight?</msg>")
+        assert isinstance(resp["answer"], list), "fixture must exercise the LIST shape"
+
+        seen = {}
+
+        def spy(card, system, user_compiled, user_message, answer, metadata, *, log_context):
+            seen["answer"] = answer
+            return "Yes, Daddy \U0001F608.", False
+
+        with patch.object(chat_mod, "_regenerate_once_on_violation", side_effect=spy):
+            out = chat_mod._enforce_on_response(
+                resp, card={}, system="s", user_compiled="u",
+                user_message="Good remember it.", persona_name="gwen",
+                metadata=_Meta(), log_context="[t]")
+
+        assert "answer" in seen, "the retry was never called on a multi-bubble reply"
+        assert "master" in seen["answer"].lower(), "the joined text lost the breach"
+        assert "master" not in str(out["answer"]).lower()
+
+    def test_the_join_preserves_every_bubble(self):
+        """A breach in the LAST bubble must still be visible to the checker."""
+        from src.coordinator.routes import chat as chat_mod
+        resp = self._real_response(
+            "<msg>I missed you.</msg><msg>Anything for you, master \U0001F608.</msg>")
+        seen = {}
+        with patch.object(chat_mod, "_regenerate_once_on_violation",
+                          side_effect=lambda *a, **k: (seen.setdefault("a", a[4]), False)[1] or (a[4], False)):
+            chat_mod._enforce_on_response(
+                resp, card={}, system="s", user_compiled="u", user_message="hi",
+                persona_name="gwen", metadata=_Meta(), log_context="[t]")
+        assert "missed you" in seen["a"] and "master" in seen["a"].lower()
+
+    def test_a_single_bubble_reply_still_works(self):
+        from src.coordinator.routes import chat as chat_mod
+        resp = self._real_response("Yes, master \U0001F608.")
+        assert isinstance(resp["answer"], str)
+        with patch.object(chat_mod, "_regenerate_once_on_violation",
+                          return_value=("Yes, Daddy \U0001F608.", False)) as m:
+            out = chat_mod._enforce_on_response(
+                resp, card={}, system="s", user_compiled="u", user_message="hi",
+                persona_name="gwen", metadata=_Meta(), log_context="[t]")
+        assert m.call_count == 1 and "master" not in str(out["answer"]).lower()
+
+    def test_a_non_string_non_list_answer_is_refused_safely(self):
+        from src.coordinator.routes import chat as chat_mod
+        resp = {"answer": None, "used_search": True}
+        with patch.object(chat_mod, "_regenerate_once_on_violation") as m:
+            assert chat_mod._enforce_on_response(
+                resp, card={}, system="s", user_compiled="u", user_message="hi",
+                persona_name="gwen", metadata=_Meta(), log_context="[t]") is resp
+        assert m.call_count == 0
