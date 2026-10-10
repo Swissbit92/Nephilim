@@ -2,7 +2,7 @@
 title: Lessons Learned
 status: active
 created: 2026-04-19
-last_reviewed_on: 2026-09-22
+last_reviewed_on: 2026-10-10
 review_in: 12 months
 applies_to: nephilim
 ---
@@ -10,6 +10,85 @@ applies_to: nephilim
 # Lessons Learned
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
+
+## 2026-10-10 — The repetition defect was a cache with no expiry, and the ruler was broken too
+
+**What happened.** The task was "fix cross-turn repetition for gwen", on the evidence that
+a phrase recurred in 6 of 37 replies and that nothing in production controls repetition
+across turns. Both halves of that framing were wrong in an instructive way.
+
+Re-measured over her whole live corpus — 148 assistant turns, 127 comparable — **9 trip an
+8-token whole-history span gate, and 9 of 9 are byte-identical replays. 0 are paraphrased.**
+All 9 sit in the two sessions that ran image jobs. **Genuine model cross-turn repetition is
+0/127.** The entire measured defect was one `persona_lines` status line generated once and
+replayed for the process lifetime; `"I know this will make your cock twitch…"` appeared six
+times from a single call. No sampler, prompt or `repeat_last_n` change was made or warranted.
+
+`source_type` does not separate the two causes — a cached replay is recorded as `llm`,
+because it *was* LLM-generated, just once. The signature is byte-identity plus proximity to
+an image job, and `scripts/research/canned_line_attribute.py` is the split that found it.
+
+**The instrument was also wrong, in both directions.** `repetition_metrics.longest_shared_span`
+had no production or eval-gate consumer, so nothing had ever noticed that it ignored the
+persona-card n-gram exemption and therefore penalised her for obeying her card. Adding a
+per-token exemption then *fragmented* genuine repeats: an 11-token byte-identical repeat
+containing one coincidental card four-gram scored **4** — a false negative on the exact
+defect class being hunted. It now exempts a block only when the block is *predominantly*
+prescribed.
+
+**A whole-history shared-span gate is arithmetically unsatisfiable for canned lines.** With
+V variants over N occurrences, exactly N−V are reuses, because only a variant's first use
+is novel. It cannot reach zero without an LLM call per occurrence, which is the cost the
+cache exists to avoid. The first fix — a variant floor plus a shuffled permutation queue —
+was therefore a weak win dressed as a fix: with V fixed at 3, a 12-event session still
+tripped the gate 9 of 12 times in **both** arms of the A/B.
+
+What actually binds is V, and V could not grow because the cache never expired. `image_ready`
+never needed a lifetime cache: it renders in `routes/notifications.py` *after* `worker.py`'s
+`finally: repin(...)` has restored the chat model. Verified at the call sites, not inferred
+from a docstring. Only `image_busy` genuinely needs one, and that is now
+[an invariant](INVARIANTS.md) with a check in both directions.
+
+**What we learned.**
+
+- **Attribute every flagged case to a cause before fixing a rate.** A repetition rate is
+  not actionable until each flagged turn is assigned to replay or to the model; the two
+  have different fixes and only one was in scope. Nine of nine landing in one bucket
+  changed the entire shape of the work.
+- **Report the metric the user experiences, not the one you set out to move.** Consecutive
+  repeats — "she just said that" — go **15.00 → 1.71 (−89%)** on the real 17-event sequence,
+  while the span gate moves only −54%. The span gate was the number in the task; it was the
+  worse number.
+- **Three of four self-inflicted defects were composition failures between my own fixes**,
+  each correct in isolation: `warm()` honoured the variant floor but not the retry budget;
+  the selection queue could serve content from a generation that had been explicitly
+  rejected; and the first recycle implementation reused the shared accept helper and paid
+  one LLM call per occurrence, reproducing the unbounded cost of the first defect. Fixing
+  by shape caught none of these, because each fix was individually shaped correctly. What
+  catches them is asking what two fixes now *share*.
+- **A cap whose only reset is the operation it gates is a latch.** The recycle budget
+  stopped after two consecutive failures and could only be cleared by a successful recycle.
+  Two transient draws reverted a situation to the lifetime cache for the rest of the
+  process's uptime, at INFO level. Bound the *rate* (exponential backoff) rather than the
+  total whenever the failure may be transient — and log the moment a transient failure
+  becomes a standing one.
+- **A green coverage gate is not evidence a test will ship.** `coverage_delta` reported +31
+  added / 0 removed / exit 0 while the 532-line file holding all 31 tests was **untracked**,
+  because it collects from the working tree. Confirm with `git ls-files`. This repo already
+  had that lesson from a `.gitignore` case collision; it recurred by a different route.
+- **`git stash pop` does not restore the index.** A stash round-trip taken to answer "were
+  these doc errors pre-existing?" silently unstaged six verified files. Verify the index
+  *from* the index (`git write-tree`, `git show :path`), and compare `rev-parse HEAD^{tree}`
+  against the tree you actually tested — that hash equality is the only cheap proof that
+  the thing which passed and the thing which committed are the same object.
+
+**How to apply going forward.** Before reaching for a sampler on any repetition complaint,
+run `scripts/research/canned_line_attribute.py` and check whether the repeats are
+byte-identical. Judge a fix on consecutive repeats, not on the span gate. Harness:
+`scripts/research/canned_line_ab.py`, which exits non-zero unless recycling beats the
+queue-only arm, and reports `FAIL (fix absent)` rather than dying on an `AttributeError`
+when run against a tree without the fix — a check whose pre-fix failure is an import error
+cannot tell a missing fix from a broken harness.
 
 ## 2026-09-29 — "Is this rule mis-classified?" was answered by the card, not by the taxonomy
 
