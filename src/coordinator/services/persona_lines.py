@@ -36,6 +36,7 @@ import logging
 import random
 import re
 import threading
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,54 @@ logger = logging.getLogger(__name__)
 #: that stops a repeat feeling scripted across a handful of images in a
 #: session; more would cost LLM time for diminishing returns.
 _VARIANTS = 3
+
+#: Below this, the result is NOT cached — it is retried on the next call instead.
+#:
+#: MEASURED 2026-10-10, and this is the whole bug. `_generate` returned `out[:_VARIANTS]`
+#: with no floor, so a situation the model answered with ONE sentence cached one variant,
+#: `random.choice` on a one-element list became a constant, and every later occurrence in
+#: that process replayed it byte-for-byte. On one real 56-reply session that produced NINE
+#: identical-reply failures of an 8-word shared-span gate — the same 17-word sentence five
+#: times, and a 28-word span — which was 69% of the whole measured repetition defect.
+#:
+#: Live at the time of writing: `image_queued` yields 3, `image_ready` yields 1,
+#: `image_not_started` yields 1. So this is not a hypothetical degradation.
+#:
+#: Two is the floor rather than three because the cache is an optimisation on a hot path
+#: and refusing to serve until the model cooperates fully would trade a repetition defect
+#: for a latency one. Two distinct phrasings plus the no-consecutive-repeat rule below is
+#: enough that the user cannot see a loop.
+_MIN_VARIANTS = 2
+
+#: Consecutive sub-floor generations tolerated per key before the result is cached anyway.
+#:
+#: QA caught the hole this closes. Refusing to cache a sub-floor result means every
+#: occurrence retries, and `image_not_started` is called INLINE in the /persona/chat
+#: handler (routes/chat.py) plus three paths in image_gen/direct.py, while `image_ready`
+#: is called from the notifications poller. The module caches precisely because, as its
+#: own docstring says, "generating on every notification would add an LLM call to a path
+#: whose whole purpose is to be out of band" -- so an unbounded retry reintroduces the
+#: cost it exists to avoid, on a synchronous request path, for exactly the two situations
+#: measured as sub-floor today. A persistently one-clause situation is plausible, not a
+#: fluke, so the retry has to terminate: after this many tries, accept the degraded set
+#: and stop paying.
+_MAX_SUBFLOOR_RETRIES = 3
+#: Longest backoff between recycle attempts, in SPENT CYCLES skipped. Recycle failures
+#: back off exponentially (1, 2, 4, ... cycles) and stop there — they never stop entirely.
+#:
+#: This replaced a hard cap of 2 consecutive failures, which QA reproduced as a one-way
+#: latch: recycling was the only path that could clear the counter, so reaching the cap
+#: blocked every future attempt for the life of the process. Two transient draws — an
+#: Ollama hiccup, GPU contention from an overlapping image job, exactly what `_generate`
+#: swallows by design — silently reverted a reachable situation to the lifetime cache
+#: this whole change exists to remove. Same shape as the unbounded-retry finding one
+#: level up: that one never stopped, this one stopped and never restarted.
+#:
+#: Backoff bounds the RATE rather than the total, which is what was actually needed: a
+#: permanently broken generator costs one call per 2^n occurrences (approaching one per
+#: _MAX_RECYCLE_BACKOFF), and a generator that recovers is picked up within that many
+#: events instead of never.
+_MAX_RECYCLE_BACKOFF = 16
 
 #: What to ask for. Describes the SITUATION only — never the wording — so the
 #: persona supplies the voice and this file supplies none of it.
@@ -117,6 +166,31 @@ _FALLBACK: dict[str, str] = {
 }
 
 _cache: dict[tuple[str, str], list[str]] = {}
+#: Last variant served per (persona, situation), so `_pick` can exclude it. Separate
+#: from `_cache` because it is per-SELECTION state, not per-generation.
+_last: dict[tuple[str, str], str] = {}
+
+#: Remaining unserved variants per key, so every variant is used before any repeats.
+#: Excluding only the immediate predecessor was measured insufficient: over 9 image
+#: events with 3 variants it still reused at lag 2 and tripped an 8-token span gate 6
+#: times. A permutation makes the minimum reuse lag equal to the variant count.
+_queue: dict[tuple[str, str], list[str]] = {}
+
+#: Consecutive sub-floor generation count per key. See _MAX_SUBFLOOR_RETRIES.
+_subfloor: dict[tuple[str, str], int] = {}
+#: Consecutive failed recycle attempts per key — the backoff EXPONENT, not a cap.
+_recycle_fail: dict[tuple[str, str], int] = {}
+#: Spent cycles still to be skipped before the next recycle attempt for this key. This is
+#: what makes the backoff recover on its own: it counts DOWN on every spent cycle, so the
+#: next attempt arrives whether or not anything succeeds in the meantime.
+_recycle_skip: dict[tuple[str, str], int] = {}
+#: Keys with a recycle generation in flight. Two images finishing together BOTH hit
+#: `image_ready` (the same same-key concurrency `_pick` holds one lock for), and
+#: `_generate` is a seconds-long network call that cannot be held under the lock. Without
+#: this both threads decide the cycle is spent and both generate: one wasted call and one
+#: discarded set. Not corruption, but it is paid at exactly the moment the machine is
+#: busiest.
+_recycling: set[tuple[str, str]] = set()
 _lock = threading.Lock()
 
 #: A reply is one line to a person, not a paragraph and not a stage direction.
@@ -139,6 +213,23 @@ def _clean(text: str) -> str:
         if candidate:
             return candidate[:_MAX_CHARS].strip()
     return ""
+
+
+#: Token overlap above which two variants count as the same phrasing. Deliberately a
+#: plain shared-run test rather than an embedding: these are one-sentence status lines,
+#: and the failure measured was a literal shared run, not a paraphrase.
+_SIMILAR_RUN = 6
+
+
+def _too_similar(a: str, b: str) -> bool:
+    """True when two variants share a run long enough to read as one phrasing."""
+    from difflib import SequenceMatcher
+    ta, tb = a.lower().split(), b.lower().split()
+    if not ta or not tb:
+        return False
+    match = SequenceMatcher(None, ta, tb, autojunk=False).find_longest_match(
+        0, len(ta), 0, len(tb))
+    return match.size >= min(_SIMILAR_RUN, len(ta), len(tb))
 
 
 def _generate(persona_key: str, situation: str) -> list[str]:
@@ -171,36 +262,242 @@ def _generate(persona_key: str, situation: str) -> list[str]:
         logger.info("[Lines] %s/%s not generated: %s", persona_key, situation, exc)
         return []
 
-    out = []
+    out: list[str] = []
     for raw_line in (raw or "").splitlines():
         cleaned = _clean(raw_line)
-        if cleaned and cleaned not in out:
-            out.append(cleaned)
+        if not cleaned or cleaned in out:
+            continue
+        # NEAR-duplicates are dropped too, not just exact ones. Measured: three variants
+        # sharing a 10-token run flagged 8 of 9 occurrences against the N-V floor of 6,
+        # because a variant's FIRST use already matches a different variant. Distinctness
+        # is a property independent of count, and three phrasings that converge are
+        # barely three phrasings. Dropping here rather than at selection time means the
+        # floor is measured against what survives, which is the honest count.
+        if any(_too_similar(cleaned, kept) for kept in out):
+            logger.info("[Lines] dropped a near-duplicate variant for %s/%s",
+                        persona_key, situation)
+            continue
+        out.append(cleaned)
     return out[:_VARIANTS]
+
+
+#: Situations said while the companion model is GONE, so a cache is the only way they can
+#: be phrased in voice at all. VERIFIED against the call sites rather than assumed:
+#: `image_busy` is returned by routes/chat.py while a generation holds the GPU, and
+#: image_gen/worker.py `warm()`s it immediately before `unload()` for exactly this reason.
+#:
+#: Everything else is reachable. `image_ready` is the one that matters — it renders in
+#: routes/notifications.py AFTER worker.py's `finally: repin(...)` has restored the model,
+#: so it was paying a lifetime cache for a constraint it does not have. That cache is what
+#: pinned it to ONE phrasing across 6 occurrences in the live corpus.
+_MODEL_UNREACHABLE = frozenset({"image_busy"})
 
 
 def line(persona_key: str, situation: str) -> str:
     """One in-voice line for `situation`. Falls back rather than failing.
 
-    Cached per (persona, situation) for the process lifetime — these describe
-    recurring situations, not this particular image, so there is nothing to
-    invalidate.
+    Cached per (persona, situation), but for a LIFETIME only where it has to be
+    (`_MODEL_UNREACHABLE`). Elsewhere the cache lives one permutation cycle: when the
+    queue drains, a fresh set is generated, so the number of distinct phrasings a user
+    sees grows with the number of events instead of being capped at `_VARIANTS` forever.
+
+    MEASURED, and it is the whole reason this exists: with V fixed at 3, a 12-event
+    session tripped the 8-token whole-history gate on 9 of 12 turns in BOTH arms of the
+    A/B — N-V is unavoidable when V cannot grow. Recycling per cycle is what makes V
+    grow. The selection policy was already right; V was the binding constraint.
     """
     key = (persona_key, situation)
     with _lock:
         cached = _cache.get(key)
-    if cached:
-        return random.choice(cached)
+        # Drained queue + a reachable model = this cycle is spent, so re-generate rather
+        # than replay. The stale set is KEPT until a replacement is in hand: a second
+        # image job can be holding the GPU right now, and serving the hardcoded fallback
+        # when three good in-voice lines are sitting in the cache would be a regression.
+        spent = (
+            cached is not None
+            and situation not in _MODEL_UNREACHABLE
+            and not _queue.get(key)
+            # A SUB-FLOOR cached set is terminal, never recycled. `_accept` only stores
+            # one after `_MAX_SUBFLOOR_RETRIES` failures, as the explicit "stop paying
+            # for this" state; recycling it would drain the queue on every single call
+            # and pay an LLM call per occurrence — the unbounded cost finding A was
+            # about. My own bounded-retry test caught this, which is the argument for
+            # having written it.
+            and len(cached) >= _MIN_VARIANTS
+            # And a generator that keeps failing stops being asked. Without this the
+            # cost is bounded per cycle but not in total.
+            # Someone else is already generating for this key. Serve from the set in
+            # hand rather than queue behind them -- `_pick` refills and reshuffles, so
+            # the loser of this race still gets a non-consecutive line.
+            and key not in _recycling
+        )
+        if spent:
+            # Backing off from earlier failures? Burn one cycle of the budget and serve
+            # from the cached set. The countdown happens HERE, on spent cycles only, so
+            # backoff is measured in occasions a recycle would have been attempted
+            # rather than in wall-clock time, which nothing in this path observes.
+            skip = _recycle_skip.get(key, 0)
+            if skip > 0:
+                _recycle_skip[key] = skip - 1
+                spent = False
+            else:
+                _recycling.add(key)
+    if spent:
+        # No try/except: `_generate` already swallows everything and returns [] (its
+        # own "a phrasing helper never raises"), so a guard here could never fire.
+        #
+        # TIMED because this is the one cost I did not measure end to end. It lands in
+        # the notification render path, where the user has already waited minutes for an
+        # image, so ~3.4s measured in isolation looked acceptable — but "looked
+        # acceptable" is not a measurement, and the log is what makes it one.
+        started_at = time.monotonic()
+        fresh = _generate(persona_key, situation)
+        took = time.monotonic() - started_at
+        # NOT `_accept` here: that carries a "cache it anyway" escape for the cold path,
+        # where something is better than nothing. Here a healthy set is already in hand,
+        # so a worse replacement is never an improvement — the floor is absolute.
+        if fresh and len(fresh) >= _MIN_VARIANTS:
+            with _lock:
+                _cache[key] = fresh
+                _queue.pop(key, None)
+                _recycle_fail.pop(key, None)
+                _recycle_skip.pop(key, None)
+                _recycling.discard(key)
+            logger.info("[Lines] recycled %d fresh variant(s) for %s/%s in %.2fs",
+                        len(fresh), key[0], key[1], took)
+            cached = fresh
+        else:
+            with _lock:
+                fails = _recycle_fail.get(key, 0) + 1
+                _recycle_fail[key] = fails
+                _recycle_skip[key] = min(2 ** (fails - 1), _MAX_RECYCLE_BACKOFF)
+                _recycling.discard(key)
+                backoff = _recycle_skip[key]
+            # WARNING, not INFO. The old code logged this at INFO with nothing marking
+            # the call that turned a transient failure into a permanent one, so an
+            # operator watching at WARNING saw a situation silently stop refreshing.
+            logger.warning(
+                "[Lines] could not recycle %s/%s after %.2fs (failure %d) — replaying "
+                "the cached set and skipping the next %d spent cycle(s) before trying "
+                "again. The phrasing pool stops growing until a recycle succeeds.",
+                key[0], key[1], took, fails, backoff)
+            # Could not regenerate (model busy, or sub-floor). Reshuffle what we have --
+            # `_pick` refills from `cached` and its seam-swap still prevents a
+            # consecutive repeat, so this degrades to the previous behaviour, not worse.
 
-    generated = _generate(persona_key, situation)
-    if generated:
+    if cached is None:
+        generated = _generate(persona_key, situation)
+        if not generated:
+            return _FALLBACK.get(situation, "")
+        if _accept(key, generated):
+            with _lock:
+                _cache[key] = generated
+            logger.info("[Lines] cached %d variant(s) for %s/%s",
+                        len(generated), key[0], key[1])
+        else:
+            # Finding B: drop any queue built from a generation we are NOT keeping.
+            # `_pick` refills only when its queue is empty, so a rejected list could
+            # otherwise be served on a LATER call — discarding the fresh text that call
+            # just paid an LLM for. Safe today only because sub-floor implies length 1,
+            # which drains in one pop; that is incidental, and it arms the moment
+            # _MIN_VARIANTS rises past 2, which this module's own warning recommends.
+            with _lock:
+                _queue.pop(key, None)
+                _last.pop(key, None)
+        cached = generated
+
+    # Re-read under the lock before selecting. `cached` was snapshotted BEFORE the
+    # recycle decision, and a concurrent winner may have installed a fresh set and
+    # cleared the queue since. `_pick` refills from whatever it is handed, so a stale
+    # snapshot would overwrite the winner's cleared queue with leftovers from the old
+    # set — valid, in-voice text, but it ignores newer content that has already been
+    # paid for. QA found this as the residual after the in-flight guard.
+    with _lock:
+        current = _cache.get(key)
+    return _pick(key, current or cached)
+
+
+#: WHAT THIS MODULE CAN AND CANNOT FIX, because I chased the wrong number first.
+#:
+#: A whole-history shared-span gate (repetition_metrics.longest_shared_span against every
+#: earlier reply) is UNSATISFIABLE for canned lines, and the arithmetic is exact: with V
+#: variants over N occurrences, N - V of them are reuses, because only a variant's first
+#: use is novel. Measured against the simulation: V=3, N=9, gate flags 6 — exactly 9-3.
+#: Adding variants moves the number; it cannot reach zero without an LLM call per
+#: occurrence, which is the cost the cache exists to avoid.
+#:
+#: So the gate is the wrong instrument for status lines and the right target is the
+#: user-visible property: never the same phrasing twice running, and enough phrasings
+#: that it does not read as scripted. That is what _pick guarantees. The original defect
+#: was not "a line recurred" -- it was ONE line, byte-identical, six times, because the
+#: cache held a single variant.
+#:
+#: Prose repetition is a different construct and the span gate is right for it.
+
+def _accept(key: tuple[str, str], generated: list[str]) -> bool:
+    """Decide whether `generated` may be cached, and keep the retry budget.
+
+    ONE decision point, called by BOTH `line()` and `warm()`. QA found the first version
+    of this fix had them diverge: `line()` enforced the floor and counted retries while
+    `warm()` checked truthiness only, so a persistently one-variant `image_busy` paid an
+    LLM call on EVERY image job forever — unbounded, on the path the module's own
+    docstring calls hardest, and worse than the chat-path case because `warm()` runs on
+    every job rather than on one branch. Two writers to one cache with two different
+    rules is the shape of that bug, so there is now one rule.
+
+    Returns True when the caller should cache. Mutates `_subfloor` under the lock.
+    """
+    if len(generated) >= _MIN_VARIANTS:
         with _lock:
-            _cache[key] = generated
-        logger.info("[Lines] cached %d variant(s) for %s/%s",
-                    len(generated), persona_key, situation)
-        return random.choice(generated)
+            _subfloor.pop(key, None)
+        return True
+    with _lock:
+        tries = _subfloor.get(key, 0) + 1
+        _subfloor[key] = tries
+    if tries >= _MAX_SUBFLOOR_RETRIES:
+        logger.warning(
+            "[Lines] %s/%s produced only %d variant(s) (floor %d) on %d consecutive "
+            "tries — CACHING IT ANYWAY to stop retrying. This situation will now repeat "
+            "its phrasing; raising _VARIANTS or rewording SITUATIONS[%r] is the fix, not "
+            "more retries.", key[0], key[1], len(generated), _MIN_VARIANTS, tries, key[1])
+        return True
+    logger.warning(
+        "[Lines] %s/%s produced only %d variant(s) (floor %d), try %d of %d — not "
+        "cached, so the next call retries.",
+        key[0], key[1], len(generated), _MIN_VARIANTS, tries, _MAX_SUBFLOOR_RETRIES)
+    return False
 
-    return _FALLBACK.get(situation, "")
+
+def _pick(key: tuple[str, str], variants: list[str]) -> str:
+    """A variant, cycling through all of them before any repeats.
+
+    MEASURED, and it is why this is a permutation rather than a filtered random choice:
+    excluding only the immediate predecessor still reused at lag 2, and over 9 image
+    events with 3 variants that tripped an 8-token span gate 6 times. A shuffled queue
+    makes the minimum reuse lag equal to the variant count, which is the most a fixed set
+    of phrasings can offer.
+
+    Reshuffles never start with the line that just played, so refilling cannot produce a
+    consecutive repeat at the seam -- the one case a naive queue gets wrong.
+
+    HELD UNDER ONE LOCK ACQUISITION, read-decide-write. Two acquisitions let two threads
+    for the same key both read the same predecessor and legally choose the same variant,
+    reproducing the consecutive repeat this exists to prevent. Same-key concurrency is
+    real here: two images finishing together both hit `image_ready`.
+    """
+    with _lock:
+        queue = _queue.get(key)
+        if not queue:
+            queue = list(variants)
+            random.shuffle(queue)
+            last = _last.get(key)
+            if len(queue) > 1 and queue[-1] == last:
+                # pop() takes from the end; swap so the seam cannot repeat.
+                queue[-1], queue[0] = queue[0], queue[-1]
+        chosen = queue.pop()
+        _queue[key] = queue
+        _last[key] = chosen
+    return chosen
 
 
 def warm(persona_key: str, situations: tuple[str, ...] = ("image_busy",)) -> None:
@@ -217,11 +514,15 @@ def warm(persona_key: str, situations: tuple[str, ...] = ("image_busy",)) -> Non
             if _cache.get((persona_key, situation)):
                 continue
         generated = _generate(persona_key, situation)
-        if generated:
+        if generated and _accept((persona_key, situation), generated):
             with _lock:
                 _cache[(persona_key, situation)] = generated
             logger.info("[Lines] warmed %s/%s (%d variants)",
                         persona_key, situation, len(generated))
+        elif generated:
+            with _lock:
+                _queue.pop((persona_key, situation), None)
+                _last.pop((persona_key, situation), None)
         else:
             logger.info("[Lines] could not warm %s/%s — the fallback will be "
                         "used if it is needed", persona_key, situation)
@@ -231,3 +532,9 @@ def reset_cache() -> None:
     """Drop every cached line. For tests, and for a persona-card edit."""
     with _lock:
         _cache.clear()
+        _last.clear()
+        _queue.clear()
+        _subfloor.clear()
+        _recycle_fail.clear()
+        _recycle_skip.clear()
+        _recycling.clear()

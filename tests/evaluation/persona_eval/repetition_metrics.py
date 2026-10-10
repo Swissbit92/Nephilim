@@ -125,24 +125,86 @@ def cross_rep_n(
     return CrossRep(hits / len(reply_grams), hits, len(reply_grams))
 
 
-def longest_shared_span(reply: str, history: Iterable[str]) -> int:
-    """Longest exact token run shared with any earlier reply.
+def longest_shared_span(
+    reply: str,
+    history: Iterable[str],
+    exclude: frozenset[tuple[str, ...]] = frozenset(),
+) -> int:
+    """Longest NON-PRESCRIBED exact token run shared with any earlier reply.
 
     The offline twin of DRY's suffix match, and the only metric here with no
     denominator — which is why it, not a ratio, is the binary gate.
+
+    ``exclude`` WAS NOT HONOURED HERE, AND THAT OVERCOUNTED THE DEFECT. The module's
+    first stated principle is that reusing the persona's prescribed phrasing is voice
+    rather than degeneration, and ``cross_rep_n`` implemented it — but this function and
+    ``repetition_report``'s ``failed`` flag ignored it, so the *binary gate* counted
+    exactly what the exemption exists to forgive.
+
+    MEASURED, 2026-10-10, on a real 56-reply session: the gate flagged 13 replies. Three
+    of them were matching a span that is 67-100% four-grams drawn from the persona's own
+    card — in one case the matched run was 12 of 12 prescribed, i.e. she reproduced her
+    own mandated phrasing and was scored as degenerate for it. Applying the exemption
+    here, the same session reads 12 (and 3 once a separate canned-line bug is fixed).
+
+    The exemption is applied PER TOKEN rather than per span, so a mixed run gets partial
+    credit: given "i can feel" + a fully-prescribed tail, the novel run is three tokens,
+    which is the honest length. Skipping only wholly-prescribed spans was tried first and
+    cleared just one of the three, because real repeats splice a connective onto a
+    mandated phrase.
     """
     a = tokenize(reply)
     if not a:
         return 0
+    n = DEFAULT_N
     best = 0
     for past in history:
         b = tokenize(past)
         if not b:
             continue
-        match = SequenceMatcher(None, a, b, autojunk=False).find_longest_match(
-            0, len(a), 0, len(b)
-        )
-        best = max(best, match.size)
+        for block in SequenceMatcher(None, a, b, autojunk=False).get_matching_blocks():
+            if block.size == 0:
+                continue
+            seg = a[block.a:block.a + block.size]
+            if not exclude:
+                best = max(best, block.size)
+                continue
+            grams = list(ngrams(seg, n))
+            if not grams:
+                best = max(best, block.size)
+                continue
+            prescribed = sum(1 for gram in grams if gram in exclude)
+
+            # IS THIS BLOCK A REPEAT OF HER VOICE, OR A REPEAT THAT MERELY CONTAINS SOME?
+            #
+            # Per-token credit alone produces a FALSE NEGATIVE on the exact defect this
+            # gate exists to catch, and QA built the case: an 11-token byte-identical
+            # repeat containing ONE coincidental card four-gram in the middle scored 4
+            # instead of 11, because a single covered window RESETS the run and
+            # fragments the block into pieces that each sit under the threshold. Status
+            # lines and persona cards both lean on the same warm common phrasing, so
+            # that collision is ordinary rather than contrived.
+            #
+            # So the exemption applies only when the match is DRIVEN by prescribed
+            # content — more than half the block's n-grams. A block that is mostly novel
+            # with some prescribed glue is a genuine repeat and counts whole.
+            #
+            # Checked against both cases: the real session's 12-of-12 prescribed span is
+            # credited down (correct, it is her mandated phrasing), and QA's 1-of-8
+            # adversarial block counts its full 11 (correct, the gate fires).
+            if prescribed * 2 <= len(grams):
+                best = max(best, block.size)
+                continue
+
+            covered = [False] * len(seg)
+            for i, gram in enumerate(grams):
+                if gram in exclude:
+                    for j in range(i, i + n):
+                        covered[j] = True
+            run = 0
+            for flag in covered:
+                run = 0 if flag else run + 1
+                best = max(best, run)
     return best
 
 
@@ -186,7 +248,7 @@ def repetition_report(
     for i, reply in enumerate(replies):
         history = replies[:i]
         cr = cross_rep_n(reply, history, n=n, exclude=exclude)
-        span = longest_shared_span(reply, history)
+        span = longest_shared_span(reply, replies[:i], exclude)
         rows.append(
             {
                 "index": i,
