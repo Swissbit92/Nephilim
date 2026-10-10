@@ -159,6 +159,7 @@ def test_watchdog_is_quiet_above_the_floor():
     assert wd.sample(free_bytes=40 * GIB) is False
 
 
+@pytest.mark.darwin_only
 def test_free_memory_reads_the_real_machine():
     """Not a mock: the instrument has to work here, since the whole design
     rests on it being the one thing that sees both workloads."""

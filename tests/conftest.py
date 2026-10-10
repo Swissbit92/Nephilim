@@ -564,3 +564,49 @@ def _block_production_backend(monkeypatch):
             return guarded
 
         monkeypatch.setattr(cls, name, make_guard(real))
+
+
+def pytest_runtest_setup(item):
+    """Skip `darwin_only` tests off macOS.
+
+    This product runs on exactly one platform: the always-on Mac Mini. mflux needs
+    Metal, and the resource arbiter reads `vm_stat` to guard 48 GB of UNIFIED memory,
+    which is a macOS concept. CI, however, runs `ubuntu-latest`.
+
+    That gap is harmless for the ~3,400 tests that neither know nor care. It stops being
+    harmless for the handful asserting a guarantee the KERNEL provides, because Linux and
+    Darwin genuinely differ and the test then measures the runner rather than the code.
+
+    MEASURED 2026-10-10, reproduced in `python:3.12-slim` against the same script run on
+    this Mac — not assumed from the failure message:
+
+        after SIGKILL, not reaped       Darwin: killpg(pgid, 0) -> ESRCH
+                                        Linux : killpg(pgid, 0) -> OK
+        after reaping the direct child  Darwin: ESRCH
+                                        Linux : OK   (grandchild still Z, still in pgid)
+
+    On Linux a killed process stays a **zombie inside its process group**, so
+    `killpg(pgid, 0)` keeps succeeding; reaping `/bin/sh` still leaves the grandchild a
+    zombie, reparented to init but carrying the original pgid. So
+    `supervisor._group_signalable` reads a corpse as a live process, and `cancel()` waits
+    out its full grace plus 10 s and returns False on a job it successfully killed. On
+    Darwin the same code is correct.
+
+    That is a real defect, UNREACHABLE in production and reachable only on a platform we
+    do not ship to. Hardening `_group_signalable` with `/proc` parsing would be
+    Linux-only code in a Metal-only product — cost with no production benefit — so the
+    honest answer is to skip and say why.
+
+    ⚠️ CONSEQUENCE, stated plainly: these guarantees are verified ONLY when the suite
+    runs on the Mac. A green CI does not cover them. If this ever ships to Linux,
+    `_group_signalable` must learn about zombies FIRST.
+
+    These three tests had been failing on every CI run since 2026-10-02 — byte-identical
+    on 10-02, 10-04 and 10-10, so deterministic rather than flaky. The red predated the
+    work that surfaced it.
+    """
+    if item.get_closest_marker("darwin_only") and sys.platform != "darwin":
+        pytest.skip(
+            "asserts Darwin kernel behaviour (vm_stat, or killpg on a zombie process "
+            "group); this product is macOS-only and CI runs Linux"
+        )
