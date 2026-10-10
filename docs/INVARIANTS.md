@@ -2,7 +2,7 @@
 title: Invariants
 status: active
 created: 2026-10-02
-last_reviewed_on: 2026-10-02
+last_reviewed_on: 2026-10-10
 review_in: 12 months
 applies_to: nephilim
 ---
@@ -97,6 +97,41 @@ week.
 Hence the guard is on the SIGNATURE rather than on behaviour. A new parameter is then a
 decision that has to be argued against this file instead of arrived at. The check was
 watched failing on a tree with `history=None` added, and passing on the real one.
+
+## A lifetime cache is only for a line said while the model is gone
+
+Status: active
+Statement: `persona_lines._MODEL_UNREACHABLE` — the situations whose first generation is kept for the process lifetime — must contain exactly the situations the image worker warms immediately before `unload()`. Every other situation regenerates when its permutation cycle drains.
+Falsifiable: WHEN the two sets differ in either direction THE CHECK SHALL exit 1 and name the direction.
+Check: scripts/checks/lifetime_cache_only_when_model_is_gone.py
+
+Measured 2026-10-10 over gwen's live corpus: 9 of 127 comparable turns tripped an 8-token
+whole-history repetition gate, and **9 of 9 were byte-identical replays of a cached status
+line**, not model repetition — which was **0/127**. A single cached generation accounted
+for 6 of them. So the defect everyone would have reached for a sampler to fix was a cache
+with no expiry.
+
+**The edit that undoes this looks like an optimisation.** Recycling costs one LLM call per
+cycle, so adding a situation to `_MODEL_UNREACHABLE` makes a latency graph better and
+restores the defect exactly. Nothing fails. The lines stay in voice, in character and
+grammatical — they are simply the same lines forever, which is invisible to every test
+that asks whether *a* line was produced rather than whether it differed from last time.
+
+The rule is therefore tied to the one fact that licenses an exception, rather than to a
+judgement about which situations "feel" cacheable: `image_gen/worker.py` warms a line
+immediately before evicting the chat model, because that line is said exactly when the
+model is gone. If a situation is cached for the lifetime it must be warmed there; if it is
+warmed there it must be cached. The two lists are one claim written twice, and the check is
+what keeps them one claim. `image_ready` is the case that matters — it renders in
+`routes/notifications.py` *after* `worker.py`'s `finally: repin(...)` has restored the
+model, so it was paying for a constraint it does not have.
+
+Related and deliberately not a check, because no grep decides it: **a cap whose only reset
+is the operation it gates is a latch, not a cap.** The first version of the recycle budget
+stopped after two consecutive failures and could only be cleared by a successful recycle —
+which is the thing it was blocking. Two transient draws reverted a situation to the
+lifetime cache for the rest of the process's uptime, logged at INFO. Bound the *rate*
+(exponential backoff) rather than the total whenever the failure may be transient.
 
 ## Success is never inferred from an exit code
 
