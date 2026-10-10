@@ -17,6 +17,11 @@ The load-bearing tests, and what each one would otherwise let through:
   path, so a reader can see a perfect header and a missing tail.
 - `test_cancel_reaches_a_grandchild` — `Popen.kill()` would signal `/bin/sh`
   and leave the generator running.
+
+⚠️ The two cancellation tests are `darwin_only`. They assert what `killpg` reports
+after a kill, and Linux keeps zombies in the process group while Darwin does not, so
+on Linux they measure the runner rather than this code. The measurement and the
+consequence are in `tests/conftest.py` — read it before assuming a green CI covers these.
 """
 
 from __future__ import annotations
@@ -179,6 +184,7 @@ def test_a_second_spawn_in_the_same_dir_is_refused(tmp_path):
 # ---------- cancellation ----------
 
 
+@pytest.mark.darwin_only
 def test_cancel_reaches_a_grandchild(tmp_path):
     """Popen.kill() signals /bin/sh and leaves the generator alive. killpg is
     the whole job."""
@@ -207,6 +213,7 @@ def test_cancel_reaches_a_grandchild(tmp_path):
     assert _wait_until(gone, timeout=8), "grandchild survived — killpg did not reach it"
 
 
+@pytest.mark.darwin_only
 def test_cancel_escalates_past_a_term_ignorer(tmp_path):
     s = sv.spawn(
         tmp_path,

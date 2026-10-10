@@ -180,7 +180,7 @@ Optional (see `.env.docker` for full list):
 - **`dev`** integrates. Feature work goes on its own branch/worktree → PR → `dev`.
 - **`main`** releases. Promoted from `dev` locally with a `Release: promote dev to main — …` merge commit (not via PR).
 
-The live backend runs from the **`dev` checkout** under launchd, so `dev` is what is actually serving. There is no separate deploy branch.
+⚠️ **CORRECTED 2026-10-10 — the live backend runs from the checkout on `main`, not `dev`.** There is ONE working tree, `~/nephilim-ecosystem/nephilim`, and `com.nephilim.backend`'s plist pins it as `WorkingDirectory` (verified against the plist and against the running process's `cwd`). That tree is checked out on `main`. So **the merge to `main` is the deployment**, and `git switch` in this tree is a deployment too — the checked-out branch is what serves at the next restart. A merge changes the files; the running process keeps serving the old code until `launchctl kickstart -k gui/$(id -u)/com.nephilim.backend`. There is no separate deploy branch and no second checkout.
 
 ## Code Style
 
