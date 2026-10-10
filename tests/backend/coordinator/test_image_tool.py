@@ -581,15 +581,41 @@ def test_a_generated_line_is_cleaned_of_quotes_and_speaker_tags():
 
 
 def test_variants_are_cached_and_rotated():
-    """One cached line would be in voice and still read as canned."""
+    """One cached line would be in voice and still read as canned.
+
+    The cache assertion CHANGED deliberately, and the reason is measured. This used to
+    require exactly one generation across 40 calls — a process-lifetime cache. With
+    `_VARIANTS` at 3 that pins a long session to 3 phrasings, and the arithmetic is
+    exact: over N occurrences with V variants, N-V are reuses. A 12-event session in
+    the live corpus tripped the 8-token whole-history gate 9 times with the permutation
+    queue alone, because V could not grow.
+
+    `image_ready` renders in routes/notifications.py AFTER worker.py's
+    `finally: repin(...)` has restored the chat model, so it never needed a lifetime
+    cache at all — only `image_busy` does, and `_MODEL_UNREACHABLE` now says which.
+    Four live cycles produced 8 byte-distinct lines with a worst cross-cycle shared span
+    of 3 tokens against a gate of 8, so recycling buys real novelty rather than
+    re-paying for the same three lines.
+
+    What must still hold is the half this test was really protecting: a cache that works
+    (one call per CYCLE, never per occurrence) and output that is not one scripted line.
+    Both are asserted harder than before.
+    """
     from src.coordinator.services import persona_lines
 
     persona_lines.reset_cache()
-    with patch.object(persona_lines, "_generate",
-                      return_value=["one", "two", "three"]) as gen:
-        seen = {persona_lines.line("gwen", "image_ready") for _ in range(40)}
-        assert gen.call_count == 1, "regenerated instead of using the cache"
-    assert len(seen) > 1, "cached a single variant — it will sound scripted"
+    sets = [[f"g{g}-one", f"g{g}-two", f"g{g}-three"] for g in range(40)]
+    with patch.object(persona_lines, "_generate", side_effect=sets) as gen:
+        seen = [persona_lines.line("gwen", "image_ready") for _ in range(40)]
+
+    assert gen.call_count == 40 // 3 + 1, (
+        f"{gen.call_count} generations for 40 calls over 3-variant cycles — the cache is "
+        f"not holding for a full cycle")
+    assert len(set(seen)) > 3, (
+        f"only {len(set(seen))} distinct lines in 40 calls — the phrasing pool is not "
+        f"growing, which is the whole point of recycling")
+    assert not any(seen[i] == seen[i - 1] for i in range(1, len(seen))), (
+        "the same line twice running — the user-visible defect")
 
 
 # ---------- provenance: who decided to run the tool ----------

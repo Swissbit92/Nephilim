@@ -2,7 +2,7 @@
 title: Architecture
 status: active
 created: 2026-04-19
-last_reviewed_on: 2026-07-17
+last_reviewed_on: 2026-10-10
 review_in: 6 months
 applies_to: nephilim
 published_url: https://claude.ai/code/artifact/335a787e-3444-4eb1-8b1b-b217319da38f
@@ -469,6 +469,7 @@ Layered: **routes → services → repositories → models**, mirrored on the fr
 | Companion memory — framing (ADR-006 M1) | Wrap injected memory in a per-persona non-echoable `<remembered>` frame over prose narratives (anti-homogenization, the Gate-0/0.1 fix) | `context_framing.py` |
 | Companion memory — fact store (ADR-006 M2–M4) | Two-table temporal ontology-lite store + async triplet extraction (abstention + quote-span guard, off the interactive path) + recency-wins write + inject-all/top-k retrieval through the M1 frame | `repositories/memory_fact_repository.py`, `triplet_extractor.py`, `fact_write_policy.py`, `fact_extraction_worker.py`, `memory_fact_retrieval.py` |
 | Lore | On-demand hybrid lore retrieval over the typed wiki; rank/affinity-gated capabilities | `lore_loader.py`, `lore_retrieval.py` |
+| In-voice status lines | Every user-facing image line is GENERATED in the persona's voice, never a status string. Variant floor + shuffled permutation queue + near-duplicate rejection; a lifetime cache only where the model is evicted (`_MODEL_UNREACHABLE`), recycle-on-drain elsewhere with exponential backoff on failure | `services/persona_lines.py` |
 | Tool-call safety middleware | Deterministic pre-execution gating on every tool-brain call: `mcp_access` + argument allowlist + HITL; plus RAG memory-write sanitization | `services/tool_interceptor.py`, `services/injection_guard.py` |
 | Persistence | SQLite repositories — ALL extend `BaseRepository` via `db_adapter` (connection pooling, thread-safe) | `repositories/` |
 | Configuration | Per-subsystem settings package (llm/search/memory/wallet/auth/routing/lore/agent) + `get_settings()` | `config/` |
@@ -500,6 +501,7 @@ Layered: **routes → services → repositories → models**, mirrored on the fr
 | **Facts are invalidated, never deleted** | History stays reconstructable; a correction does not erase what was believed before | `valid_to` on `memory_facts` |
 | **Search results pass one choke point** | Junk filtering and the relevance floor apply to synthesis and citations alike, so the two can never disagree | `tools/executor_bindings.py` |
 | **Citations are never stapled to a refusal** | A refused answer stays a refusal instead of looking sourced | `routes/chat.py`, on `ToolBrainResult.refused` |
+| **A lifetime cache is only for a line said while the model is gone** | A status line cannot silently become the same line forever. Measured: 9 of 9 flagged repetition turns were byte-identical replays of one cached generation; genuine model cross-turn repetition was 0/127 | `scripts/checks/lifetime_cache_only_when_model_is_gone.py` ([INV](INVARIANTS.md)) |
 
 ## Cross-repo contracts
 
