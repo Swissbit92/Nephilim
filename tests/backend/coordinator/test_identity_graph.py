@@ -3,8 +3,11 @@
 These run WITHOUT a graph on purpose. The card-to-node mapping and the completeness check
 are pure functions of the card, and this project has a documented history of checks that
 existed but never ran — a test that skips when Neo4j is absent is a check that does not
-run in CI. The live-graph behaviour (rebuild preserves annotations) is proved separately
-by scripts/research/identity_ab.py, which measured arm A losing 3 of 3 annotations and
+run in CI. The live-graph behaviour (a rebuild preserves each node's create-once
+properties) is proved separately by scripts/research/identity_ab.py, re-measured
+2026-10-16 as arm A 0 of 128 and arm B 127 of 128 — the one exception being the entry the
+harness deliberately rewrites, which gets a new `source_key` and is therefore a new node
+by design. It previously measured arm A losing 3 of 3 annotations and
 arm B losing none.
 """
 from __future__ import annotations
@@ -23,7 +26,6 @@ from src.coordinator.identity_from_card import (
     identity_nodes,
 )
 from src.coordinator.identity_shapes import (
-    BOUNDARY,
     EDGES,
     EXPERTISE,
     IDENTITY_ORIGINS,
@@ -41,36 +43,48 @@ def card():
 
 
 # ─────────────────────────────────────────────────────────────
-# Shapes — the content/annotation split is the whole design
+# Shapes — every property is declared, and anything else is refused
 # ─────────────────────────────────────────────────────────────
 
-class TestTheSplit:
-    @pytest.mark.parametrize("shape", list(SHAPES.values()), ids=lambda s: s.label)
-    def test_content_and_annotation_never_overlap(self, shape):
-        """A property in both classes has no defined rebuild behaviour."""
-        assert not (shape.content & shape.annotation), shape.label
+class TestTheDeclaration:
+    """TWO TESTS WERE DELETED HERE on 2026-10-16, deliberately, and the reason is the
+    point: `test_content_and_annotation_never_overlap` asserted
+    `not (shape.content & shape.annotation)`, and `test_the_card_never_produces_an
+    _annotation` looped 128 nodes intersecting each against the annotation set. With the
+    annotation class gone both intersect against an empty set, so both PASS while
+    asserting nothing — and the second looks thorough while doing it. A green test that
+    cannot fail is worse than no test, because it stops the next person checking.
+
+    What replaced them is below: the shape now REFUSES the three deleted names outright,
+    which is a stronger claim than "the card happens not to produce one".
+    """
 
     @pytest.mark.parametrize("shape", list(SHAPES.values()), ids=lambda s: s.label)
-    def test_annotations_are_the_same_three_everywhere(self, shape):
-        """Hers are hers, identically, on every node kind. A per-label annotation set
-        would mean a rebuild has to know which label it is looking at to know what to
-        preserve — one more thing that can be wrong."""
-        assert shape.annotation == frozenset(
-            {"salience", "reinforced_count", "last_referenced"}
-        )
+    def test_an_undeclared_property_is_refused(self, shape):
+        with pytest.raises(ValueError, match="not a declared property"):
+            shape.validated({"colour": "blue"})
 
+    @pytest.mark.parametrize("gone", ["salience", "reinforced_count", "last_referenced"])
     @pytest.mark.parametrize("shape", list(SHAPES.values()), ids=lambda s: s.label)
-    def test_an_unknown_property_is_refused(self, shape):
-        with pytest.raises(ValueError, match="neither content nor annotation"):
-            shape.split({"colour": "blue"})
+    def test_the_deleted_counter_names_are_refused_not_ignored(self, shape, gone):
+        """A write of one of these must FAIL, not pass through and land nowhere.
+
+        After the deletion these names are undeclared, so `validated` rejects them. That
+        matters because the failure mode of silent acceptance is the worst one available:
+        code would appear to record her learning, the property would be written to a node
+        nothing reads, and the gap would surface as "why did she not remember" months
+        later. Reinstating a counter has to go through the shape declaration.
+        """
+        with pytest.raises(ValueError, match="not a declared property"):
+            shape.validated({gone: 1})
 
     def test_a_bad_vocabulary_value_is_refused(self):
         with pytest.raises(ValueError, match="not in"):
-            LORE_ENTRY.split({"origin": "banana"})
+            LORE_ENTRY.validated({"origin": "banana"})
         with pytest.raises(ValueError, match="not in"):
-            TRAIT.split({"kind": "nonsense"})
+            TRAIT.validated({"kind": "nonsense"})
         with pytest.raises(ValueError, match="not in"):
-            EXPERTISE.split({"level": "expert"})
+            EXPERTISE.validated({"level": "expert"})
 
     def test_learned_is_a_valid_origin(self):
         """ADR-018 specifies four origins; the rule store's ORIGINS has three and the
@@ -85,9 +99,12 @@ class TestTheSplit:
         assert targets == set(SHAPES)
         assert all(src == "Persona" for src, _ in EDGES.values())
 
-    def test_source_hash_is_content_not_annotation(self):
-        """It describes the CARD, so a rebuild must refresh it. If it were an
-        annotation, a stale-source check could never detect anything."""
+    def test_source_hash_is_refreshed_not_create_once(self):
+        """It describes the CARD, so a rebuild must refresh it — a stale-source check
+        is the whole point of storing it, and could detect nothing if the value were
+        pinned at creation. Renamed from `..._is_content_not_annotation`: the name
+        asserted a distinction against a class that no longer exists, and a test name
+        that describes a vanished design is how the next reader is misled."""
         for shape in SHAPES.values():
             assert "source_hash" in shape.content
 
@@ -114,12 +131,19 @@ class TestMapping:
             assert n["source_field"] and n["source_index"] is not None
             assert len(n["source_hash"]) == 16
 
-    def test_the_card_never_produces_an_annotation(self, card):
-        """An annotation arriving from the card would be her learning overwritten by her
-        factory settings on every rebuild."""
-        ann = SHAPES["LoreEntry"].annotation
+    def test_every_property_the_card_produces_is_declared(self, card):
+        """Replaces `test_the_card_never_produces_an_annotation`, which went vacuous.
+
+        The old test intersected each node against the annotation set; with that set
+        empty it passed for every node while checking nothing. This asserts the property
+        that still has teeth and is strictly stronger: every key the card produces must
+        be DECLARED on its shape, so `validated` accepts it. An undeclared key raises,
+        which is what makes this fail rather than pass when it should.
+        """
         for n in identity_nodes(card):
-            assert not (set(n) & ann), n
+            shape = SHAPES[n["_shape"]]
+            props = {k: v for k, v in n.items() if k != "_shape"}
+            shape.validated(props)   # raises on anything undeclared
 
     def test_sliders_are_not_nodes(self, card):
         """A number modelled as a node is a value pretending to be a thing, and ADR-016
@@ -224,19 +248,44 @@ class TestTheSetLandmines:
 
     def test_no_map_form_SET_anywhere(self):
         """`SET n = $map` REPLACES every property — one character from `+=` and a
-        rebuild wipes annotations. `SET n += $map` DELETES any key whose value is null,
+        rebuild wipes a create-once property. `SET n += $map` DELETES any key whose value is null,
         so an absent optional field removes a property instead of leaving it unset.
         Both are avoided by assigning properties individually."""
         src = self._src()
         assert "SET n = $" not in src
         assert "SET n += $" not in src
 
-    def test_annotations_are_only_ever_set_ON_CREATE(self):
-        """Preservation is structural: the rebuild path never names them."""
+    def test_create_once_properties_are_only_ever_set_ON_CREATE(self):
+        """Preservation is structural: the rebuild path never names them.
+
+        RE-POINTED 2026-10-16. This asserted on `salience` and `reinforced_count`; they
+        are gone, but the MECHANISM is not, and it still has two properties that genuinely
+        must survive a rebuild. `node_id` is a surrogate id — if it churned, every edge
+        pointing at the node would be orphaned. `created_at` is transaction time, and it
+        is the one genuinely irreversible property here: it cannot be reconstructed after
+        the fact, which is why the ecosystem migration doc ranks transaction time as the
+        most irreversible day-1 decision.
+
+        The ADR-018 A/B (0 of 3 vs 3 of 3 survival across a card edit) measured THIS
+        mechanism rather than the counter, so its evidence carries over unchanged.
+        """
         src = self._src()
-        after_on_create = src.split("ON CREATE SET", 1)[1] if "ON CREATE SET" in src else ""
-        assert "n.salience = 0.0" in after_on_create
-        assert "n.reinforced_count = 0" in after_on_create
+        assert "ON CREATE SET" in src, (
+            "the create-once branch is gone — a rebuild now overwrites node_id and "
+            "created_at, and created_at cannot be reconstructed once lost"
+        )
+        after_on_create = src.split("ON CREATE SET", 1)[1]
+        # Cut at the unconditional SET: anything after it is refreshed every build.
+        create_only = after_on_create.split("\n                SET ", 1)[0]
+        assert "n.node_id = s.node_id" in create_only
+        assert "n.created_at = s.created_at" in create_only
+        # And the refresh block must not ASSIGN them, or they are rewritten every
+        # rebuild. Matched as an assignment, not a bare mention: the same statement ends
+        # `RETURN n.node_id AS node_id, n.created_at AS created_at`, which is a read and
+        # perfectly fine. A bare-substring check fails on that and I watched it do so.
+        refreshed = after_on_create.split("\n                SET ", 1)[1]
+        assert "n.node_id =" not in refreshed
+        assert "n.created_at =" not in refreshed
 
     def test_merge_matches_the_live_label(self):
         """An expired node and a live node share a positional key, so a MERGE on the

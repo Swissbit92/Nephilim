@@ -180,7 +180,11 @@ def test_no_chat_time_identity_write_path_exists():
     became reachable from a request and the read must move out to the route the way
     build_graph_rules_block already is.
     """
-    writers = ("apply_card", "reinforce")
+    # `reinforce` was removed from this tuple on 2026-10-16 with the method itself. A
+    # name that can no longer match anything makes half this loop pass vacuously while
+    # the test still reports green — and `apply_card` is now the ONLY identity writer,
+    # which is a stronger claim than before, not a weaker one.
+    writers = ("apply_card",)
     offenders = []
     for path in (ROOT / "src").rglob("*.py"):
         if path.name in ("identity_repository.py", "identity_source.py"):

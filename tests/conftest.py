@@ -483,9 +483,17 @@ def _block_graph_writes_to_real_personas(monkeypatch):
     def _persona_of_node(driver, node_id, database):
         """The persona owning a node, or None when it cannot be determined.
 
-        `reinforce()` addresses a node by ULID alone, and a ULID carries no persona, so
+        A node-addressed write passes a ULID alone, and a ULID carries no persona, so
         the parameter cannot be inspected the way `pid` can. Reading the node is the
         only way to know what a write would touch.
+
+        ⚠️ KEPT DELIBERATELY after `reinforce()` — its only caller — was deleted on
+        2026-10-16. Nothing passes `nid=` today, so this branch does not currently fire.
+        That is not a reason to remove it: it is fail-closed protection against a write
+        shape that is one commit away from returning, it costs nothing while idle, and
+        `test_graph_write_guard.py::test_guard_catches_a_node_addressed_write` exercises
+        it directly rather than through any production caller, so it is covered rather
+        than merely present.
         """
         try:
             rows = real_read(driver, "MATCH (n {node_id: $nid}) RETURN n.persona_id AS p",
@@ -509,7 +517,7 @@ def _block_graph_writes_to_real_personas(monkeypatch):
             if owner is None or not str(owner).startswith(SCRATCH_PERSONA_PREFIX):
                 raise AssertionError(
                     f"test tried to WRITE to the graph for node {params['nid']!r}, which "
-                    f"resolves to persona {owner!r}. Node-addressed writes (reinforce) "
+                    f"resolves to persona {owner!r}. A node-addressed write "
                     f"must target a node owned by a scratch persona (a name starting "
                     f"with {SCRATCH_PERSONA_PREFIX!r}); an owner that cannot be resolved "
                     f"is refused rather than allowed. Set ALLOW_PROD_BACKEND=1 only if "

@@ -9,8 +9,10 @@ makes the first run of this a one-way step, and a one-way step should be reviewa
 repeatable and refuse to run against a card that is mid-experiment.
 
 Identity NODES are regenerable — apply_card is build and rebuild both, and content is
-refreshed from the card while her annotations (salience, reinforced_count,
-last_referenced) survive, per ADR-018's A/B. Only the baseline is one-way.
+refreshed from the card while each node's create-once properties (`node_id`,
+`created_at`) survive, per ADR-018's A/B — re-measured 2026-10-16 at 127 of 128 on the
+live card, the one exception being the entry deliberately rewritten by the harness, which
+is a new node by design. Only the baseline is one-way.
 
 Usage:
     scripts/utils/seed_identity.py --persona gwen              # dry run, prints the plan

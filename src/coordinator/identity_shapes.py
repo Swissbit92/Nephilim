@@ -1,19 +1,36 @@
 """Node shapes for the persona identity graph (ADR-018, ecosystem ADR-012).
 
-THE ONE IDEA THIS FILE EXISTS FOR. Every node has two classes of property:
+THE ONE IDEA THIS FILE EXISTS FOR. Every property a node may carry is DECLARED here,
+and anything else is refused at write time. A property belonging to no declared class is
+the `polarity` bug's shape: one write path treats it as regenerable, another as
+accumulated, and nothing catches the mismatch until the behaviour is visibly wrong.
 
-    CONTENT     comes from the card. What the thing IS. Regenerated on every
-                rebuild. She cannot change it.
-    ANNOTATION  written by her over time. What the thing has come to MEAN.
-                NEVER regenerated. Preserved across a rebuild.
+WHAT USED TO BE HERE, AND WHY IT IS NOT (2026-10-16). This file declared a second class,
+ANNOTATION — `salience`, `reinforced_count`, `last_referenced` — described as "written by
+her over time, never regenerated". It was deleted because it never happened. Measured on
+the live graph: 256 nodes carried those properties and returned exactly ONE distinct row,
+`(0, 0.0)`. The counter never incremented, not once, in the whole life of the graph; and
+`last_referenced` sat on 0 of 256 nodes, because assigning null removes a property rather
+than initialising it. Edges, where ADR-018 said "evolution lives", carried no properties
+of any kind. So the class was unimplemented in both halves, and a declaration nobody can
+satisfy is worse than no declaration — it makes two tests pass while asserting nothing.
 
-She cannot change what her hair is. She can record that it has come to matter more.
+THE CREATE-ONCE / REFRESH-EVERY-REBUILD DISTINCTION SURVIVES, with a real referent.
+`node_id` and `created_at` are set in the Cypher's `ON CREATE` branch and never again: a
+surrogate id that churned would orphan every edge, and a transaction time that reset on
+rebuild cannot be reconstructed afterwards. That is the same mechanism the ADR-018 A/B
+measured (0 of 3 vs 3 of 3 survival across a card edit) — the A/B tested the MECHANISM,
+not the counter, so the evidence stands and only its subject has changed.
 
-WHY THE SPLIT MUST BE DECLARED RATHER THAN IMPLIED. A rebuild that cannot tell the two
-apart has exactly two options and both are wrong: regenerate everything and wipe her
-learning, or regenerate nothing and let a card edit never take effect. Under ecosystem
-ADR-012 the graph is the SYSTEM OF RECORD, not a droppable projection, so wiping her
-learning is no longer an inconvenience — it is data loss with no second copy.
+IF LEARNING IS ADDED LATER, re-introduce a second class THEN, with the property that
+learning actually needs. The measured argument against the old one was not "the idea is
+wrong" but "an access COUNT is the wrong instrument": repetition without discounting
+correlated sources counts how often a fact was copied, not independently confirmed, and
+`reinforce()` incremented on ACCESS rather than on re-assertion. Published evidence is
+absent rather than negative — Generative Agents never ablated the recency/importance
+terms it is cited for, A-MEM and MemGPT omit such a field by design, MemoryBank ships one
+with no ablation, and the one direct test of a frequency-containing pruner reports
++0.001 token F1 with a CI spanning zero (arXiv 2608.28978, four signals bundled).
 
 WHY THE SHAPES LIVE IN PYTHON. Neo4j Community enforces uniqueness and nothing else: no
 property-existence constraints, no property types, no triggers, and this instance has
@@ -59,41 +76,40 @@ class Shape(NamedTuple):
     #: MERGE key. Positional, matching the rule store's
     #: `(persona_id, source_field, source_key)` convention rather than
     #: content-addressing. Deliberate: a card EDIT should update a node in place, and a
-    #: content-addressed key would instead create a new node and orphan every annotation
-    #: attached to the old one.
+    #: content-addressed key would instead create a new node on every edit — churning
+    #: `node_id`, orphaning the node's edges, and resetting a `created_at` that cannot
+    #: be reconstructed once lost.
     key: tuple[str, ...]
     content: FrozenSet[str]
-    annotation: FrozenSet[str]
     #: Per-property controlled vocabulary, checked before any write.
     vocabularies: Dict[str, FrozenSet[str]]
 
-    def all_properties(self) -> FrozenSet[str]:
-        return self.content | self.annotation
+    def validated(self, props: Dict[str, Any]) -> Dict[str, Any]:
+        """Return `props` unchanged, having refused anything undeclared.
 
-    def split(self, props: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
-        """Partition a property dict into (content, annotation). Refuses anything else.
+        Named for what it does. This was `split()`, returning a (content, annotation)
+        pair, until the annotation class was deleted — a method that no longer splits
+        should not still be called split, because the next reader budgets for a
+        partition that is not there.
 
-        An unknown property is an ERROR, not something to pass through. A property
-        belonging to neither class is exactly the `polarity` bug's shape: one write path
-        treats it as regenerable, another as accumulated, and nothing catches the
-        mismatch until the behaviour is visibly wrong.
+        An unknown property is an ERROR, not something to pass through: a property
+        belonging to no declared class is exactly the `polarity` bug's shape, where one
+        write path treats it as regenerable and another as accumulated and nothing
+        catches the mismatch until the behaviour is visibly wrong.
         """
-        unknown = set(props) - set(self.all_properties())
+        unknown = set(props) - set(self.content)
         if unknown:
             raise ValueError(
-                f"{self.label}: {sorted(unknown)} belong to neither content nor "
-                f"annotation. Declare which, or do not write it — a property in neither "
-                f"class is how a rebuild silently picks the wrong behaviour."
+                f"{self.label}: {sorted(unknown)} is not a declared property of this "
+                f"node. Declare it in the shape, or do not write it — an undeclared "
+                f"property is how a rebuild silently picks the wrong behaviour."
             )
         for prop, vocab in self.vocabularies.items():
             if prop in props and props[prop] not in vocab:
                 raise ValueError(
                     f"{self.label}.{prop}={props[prop]!r} not in {sorted(vocab)}"
                 )
-        return (
-            {k: v for k, v in props.items() if k in self.content},
-            {k: v for k, v in props.items() if k in self.annotation},
-        )
+        return dict(props)
 
 
 # Shared by every identity node. `origin` and the bi-temporal four are the same names
@@ -111,16 +127,10 @@ _BASE_CONTENT: FrozenSet[str] = frozenset({
     "source_key",
 })
 
-#: Hers. The only properties she may write on a card-derived node.
-_BASE_ANNOTATION: FrozenSet[str] = frozenset({
-    "salience", "reinforced_count", "last_referenced",
-})
-
 LORE_ENTRY = Shape(
     label="LoreEntry",
     key=("persona_id", "source_field", "source_key"),
     content=_BASE_CONTENT | {"kind"},
-    annotation=_BASE_ANNOTATION,
     vocabularies={"origin": IDENTITY_ORIGINS, "kind": LORE_KINDS},
 )
 
@@ -128,7 +138,6 @@ TRAIT = Shape(
     label="Trait",
     key=("persona_id", "source_field", "source_key"),
     content=_BASE_CONTENT | {"kind"},
-    annotation=_BASE_ANNOTATION,
     vocabularies={"origin": IDENTITY_ORIGINS, "kind": TRAIT_KINDS},
 )
 
@@ -136,7 +145,6 @@ BOUNDARY = Shape(
     label="Boundary",
     key=("persona_id", "source_field", "source_key"),
     content=_BASE_CONTENT | {"kind", "priority"},
-    annotation=_BASE_ANNOTATION,
     vocabularies={"origin": IDENTITY_ORIGINS, "kind": BOUNDARY_KINDS},
 )
 
@@ -144,7 +152,6 @@ EXPERTISE = Shape(
     label="Expertise",
     key=("persona_id", "source_field", "source_key"),
     content=_BASE_CONTENT | {"level"},
-    annotation=_BASE_ANNOTATION,
     vocabularies={"origin": IDENTITY_ORIGINS, "level": EXPERTISE_LEVELS},
 )
 

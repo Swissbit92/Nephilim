@@ -14,12 +14,21 @@ and no second copy.
 The mechanism is Cypher's own, not something invented here:
 
     MERGE (n:Label:CurrentIdentity {natural key})
-      ON CREATE SET n.node_id = ..., n.salience = 0.0, n.reinforced_count = 0
-      SET n.text = ..., n.origin = ..., n.source_hash = ...   <-- content only
+      ON CREATE SET n.node_id = ..., n.created_at = ...       <-- set once, ever
+      SET n.text = ..., n.origin = ..., n.source_hash = ...   <-- refreshed every build
 
-The annotation properties are named ONLY in the `ON CREATE` branch, so a rebuild that
-takes the match path cannot touch them. Preservation is therefore structural: a property
-cannot be wiped by a statement that never mentions it.
+`node_id` and `created_at` are named ONLY in the `ON CREATE` branch, so a rebuild that
+takes the match path cannot touch them. Preservation is structural: a property cannot be
+wiped by a statement that never mentions it. Both need it — a surrogate id that churned
+would orphan every edge pointing at the node, and a transaction time cannot be
+reconstructed after the fact, which is what makes it the one genuinely irreversible
+property here.
+
+⚠️ This branch also carried `salience = 0.0, reinforced_count = 0` until 2026-10-16. They
+were deleted: measured on the live graph, 256 nodes carried them and returned exactly one
+distinct row, `(0, 0.0)` — never incremented, not once. The ADR-018 A/B that justified
+this split (0 of 3 vs 3 of 3 survival across a card edit) tested the MECHANISM, not those
+properties, so the evidence stands and only its subject changed.
 
 PROPERTIES ARE ASSIGNED INDIVIDUALLY, NEVER VIA A MAP, and that is deliberate. Neo4j's
 SET documentation is explicit on two map behaviours that are both landmines here:
@@ -64,15 +73,6 @@ from ..identity_shapes import (BASELINE_EDGE, BASELINE_LABEL, EDGES, SHAPES,
 
 logger = logging.getLogger(__name__)
 
-#: Defaults written ONCE, on create. Never on match — that is the preservation.
-#: `last_referenced` is DELIBERATELY ABSENT. Neo4j's SET docs are explicit that with
-#: `n += $map`, "if any property in the map is null, it will be removed" — so a default of
-#: None would delete the key rather than initialise it, and the key would then never enter
-#: the property-key registry either. It is set on first reinforcement and not before.
-ANNOTATION_DEFAULTS: Dict[str, Any] = {
-    "salience": 0.0,
-    "reinforced_count": 0,
-}
 
 _LABEL_TO_EDGE = {tgt: rel for rel, (_src, tgt) in EDGES.items()}
 
@@ -123,12 +123,6 @@ class IdentityRepository:
                   f"FOR (n:{label}) REQUIRE (n.persona_id, n.source_field, n.source_key) "
                   f"IS UNIQUE",
                   self._database)
-        # Register the nullable annotation key so a read does not emit UNRECOGNIZED
-        # notifications. Same reason as the rule store's _REGISTER_KEYS: setting a
-        # property to null DELETES it, so a key only ever null never enters the registry.
-        write(self._driver,
-              "CREATE (x:_PropertyKeyRegistry {last_referenced: ''}) DELETE x",
-              self._database)
         return True
 
     # ---- build / rebuild ------------------------------------------------
@@ -181,14 +175,10 @@ class IdentityRepository:
         for spec in nodes:
             shape: Shape = SHAPES[spec["_shape"]]
             props = {k: v for k, v in spec.items() if k != "_shape"}
-            content, annotation = shape.split(props)
-            if annotation:
-                raise ValueError(
-                    f"the card produced an ANNOTATION property {sorted(annotation)} for "
-                    f"{shape.label}. A card can only ever produce content — an annotation "
-                    f"arriving from the card would be her learning overwritten by her "
-                    f"factory settings on every rebuild."
-                )
+            # `validated` refuses any undeclared property, which now includes the three
+            # deleted annotation names — so a card that somehow produced one fails loudly
+            # instead of writing a property nothing reads.
+            content = shape.validated(props)
             content["node_id"] = new_id()
             content["created_at"] = now
             content.setdefault("valid_from", now)
@@ -209,9 +199,7 @@ class IdentityRepository:
                                                    source_field: s.source_field,
                                                    source_key: s.source_key}})
                   ON CREATE SET n.node_id = s.node_id,
-                                n.created_at = s.created_at,
-                                n.salience = 0.0,
-                                n.reinforced_count = 0
+                                n.created_at = s.created_at
                 SET n.text        = s.text,
                     n.origin      = s.origin,
                     n.source_hash = s.source_hash,
@@ -278,7 +266,7 @@ class IdentityRepository:
     # ---- read -----------------------------------------------------------
     def identity(self, persona_id: str, *, kind: Optional[str] = None,
                  limit: int = 256) -> List[Dict[str, Any]]:
-        """Her live identity, newest-anchored ordering, content and annotations together."""
+        """Her live identity, in card order. Content only — there is nothing else now."""
         if self._driver is None:
             return []
         return read(
@@ -290,9 +278,7 @@ class IdentityRepository:
                    n.kind AS kind, n.level AS level, n.origin AS origin,
                    n.source_field AS source_field, n.source_index AS source_index,
                    n.source_key AS source_key,
-                   n.source_hash AS source_hash,
-                   n.salience AS salience, n.reinforced_count AS reinforced_count,
-                   n.last_referenced AS last_referenced
+                   n.source_hash AS source_hash
             ORDER BY n.source_field ASC, n.source_index ASC
             LIMIT $limit
             """,
@@ -406,26 +392,20 @@ class IdentityRepository:
         return {"available": True, "captured_at": base["captured_at"],
                 "changed": drift, "unchanged": len(base["dials"]) - len(drift)}
 
-    def reinforce(self, node_id: str, *, salience_delta: float = 0.1) -> Dict[str, Any]:
-        """Her one write. Touches ANNOTATION properties only, by construction.
-
-        The Cypher names three properties and no others, so this cannot reach content
-        even if called with something odd — the same discipline as the rule store's
-        hard-wall guard, applied by omission rather than by validation.
-        """
-        if self._driver is None:
-            return {"reinforced": False, "reason": "graph unavailable"}
-        rows = write(
-            self._driver,
-            """
-            MATCH (n:CurrentIdentity {node_id: $nid})
-            SET n.reinforced_count = coalesce(n.reinforced_count, 0) + 1,
-                n.salience = CASE WHEN coalesce(n.salience, 0.0) + $d > 1.0 THEN 1.0
-                                  ELSE coalesce(n.salience, 0.0) + $d END,
-                n.last_referenced = $now
-            RETURN n.node_id AS node_id, n.salience AS salience,
-                   n.reinforced_count AS reinforced_count
-            """,
-            self._database, nid=node_id, d=float(salience_delta), now=now_iso(),
-        )
-        return {"reinforced": bool(rows), **(rows[0] if rows else {})}
+    # `reinforce()` WAS HERE, and was deleted 2026-10-16 — there is deliberately no
+    # replacement. It was the only writer of `reinforced_count` / `salience` /
+    # `last_referenced`, it had zero callers outside its own A/B harness, and on the live
+    # graph 256 nodes carried those properties with exactly one distinct value between
+    # them: `(0, 0.0)`. It never ran in production.
+    #
+    # Do not reinstate it as-is if learning arrives. It incremented on ACCESS, which is
+    # not the signal the epistemic argument for a counter actually needs — repetition
+    # without discounting correlated sources measures how often a fact was copied, not
+    # how often it was independently confirmed. One user restating something to one
+    # persona is one source, replayed. Published evidence is absent rather than negative
+    # (Generative Agents never ablated the terms it is cited for; A-MEM and MemGPT omit
+    # the field by design; MemoryBank ships one unablated), and the single direct test of
+    # a frequency-containing mechanism reports +0.001 token F1 with a CI spanning zero.
+    #
+    # The write path that remains is `apply_card`, and `test_graph_sourced_identity`
+    # asserts that it is the ONLY writer. Adding a second one has to argue past that test.
