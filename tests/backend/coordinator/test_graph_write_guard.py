@@ -29,7 +29,7 @@ def test_guard_catches_a_pid_keyed_write():
 
 
 def test_guard_catches_a_node_addressed_write():
-    """`reinforce` passes only a ULID, which names no persona.
+    """A node-addressed write passes only a ULID, which names no persona.
 
     The guard must resolve the owner, and refuse when it cannot. A stub driver cannot
     be read, so this asserts the FAIL-CLOSED branch.

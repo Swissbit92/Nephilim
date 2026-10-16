@@ -2,7 +2,7 @@
 title: The graph is the source of identity, not extra prompt text
 status: Accepted
 created: 2026-09-28
-last_reviewed_on: 2026-09-28
+last_reviewed_on: 2026-10-16
 review_in: 24 months
 applies_to: nephilim
 ai_summary: >
@@ -28,6 +28,12 @@ without reversing it.
 makes the graph the system of record and demotes the persona card to an origin and a
 reset target. ADR-018 then built the store — 128 typed nodes for gwen, a content/annotation
 split so a rebuild preserves her learning, a `:Baseline` recording her shipped dials.
+
+> ⚠️ **2026-10-16:** the ANNOTATION half of that split was **deleted** — the counter it
+> held had never incremented on any of 256 live nodes. The `ON CREATE` / refresh mechanism
+> survives, re-pointed at `node_id` and `created_at`. Nothing in THIS ADR changes: the
+> byte-identity boundary below is unaffected and was asserted green throughout the
+> deletion. See ADR-018's 2026-10-16 amendment.
 
 **The claim was not true.** Nothing read the graph. Dropping the database would have cost
 nothing, which is the precise opposite of a system of record. Verified 2026-09-28: zero

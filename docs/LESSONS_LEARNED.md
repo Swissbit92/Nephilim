@@ -2,7 +2,7 @@
 title: Lessons Learned
 status: active
 created: 2026-04-19
-last_reviewed_on: 2026-10-10
+last_reviewed_on: 2026-10-16
 review_in: 12 months
 applies_to: nephilim
 ---
@@ -10,6 +10,70 @@ applies_to: nephilim
 # Lessons Learned
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
+
+## 2026-10-16 — A field that was never written, and the four ways that was nearly missed
+
+**What happened.** The learning counter (`reinforced_count`, `salience`,
+`last_referenced`, the `identity_engagement` detector, `IdentityRepository.reinforce()`)
+was deleted. The decisive evidence took one query: **256 live nodes, exactly one distinct
+row, `(0, 0.0)`**. It had never incremented. `last_referenced` sat on **0 of 256**,
+because assigning null *removes* a property rather than initialising it — so a field that
+had been declared, defaulted and documented for weeks did not physically exist. And edges,
+where ADR-018 said evolution lived, carried **no properties at all**.
+
+**What we learned.**
+
+- **Query the data before reading the design.** Three documents described a live
+  content/annotation split. One query showed one half of it had never been written to.
+  The cheapest check available — `RETURN DISTINCT` over the property — would have settled
+  it at any point in the preceding three weeks, and nobody ran it.
+- **"Absent evidence" and "negative evidence" are different, and the difference changes
+  what you are allowed to claim.** No ablation isolating an access counter exists in any
+  agent-memory system. **Generative Agents never ablated the recency/importance/relevance
+  terms it is universally cited for** — so citing it in support of such a weight cites a
+  system that assumed one. That makes deleting *consistent with* the evidence, not ahead
+  of it, and the write-up says so rather than claiming the counter was disproven.
+- **When you delete a feature, check what the evidence attached to it was actually
+  about.** ADR-018's A/B (0 of 3 vs 3 of 3) looked like evidence *for the counter*. It was
+  evidence for the `ON CREATE` / refresh **mechanism**, which still guards `node_id` and
+  `created_at`. Deleting the mechanism alongside its subject would have thrown away a
+  measured result and left `created_at` — the one genuinely irreversible property here —
+  unprotected.
+- **An empty declaration is worse than none.** The first plan kept `Shape.annotation` as
+  an empty seam "for later". That yields a declaration nothing can satisfy, an unreachable
+  guard, and **two tests that pass while asserting nothing**: one intersecting against an
+  empty set, the other looping 128 nodes doing the same *while looking thorough*. A green
+  test that cannot fail is worse than a missing one, because it stops the next person
+  checking.
+- **A blocker that is not closing is a decision, not a wait.** The stated reason to keep
+  the counter was "not enough conversation yet to validate the detector". Re-measured: 79
+  messages on one day → **233 across 9 days, with the daily curve falling** and 2 messages
+  in the final six. Tripling the data moved it no closer to a fittable threshold. Re-check
+  the trend before deferring on the same grounds twice.
+- **A requirement outlives the instrument chosen for it.** The competency question *"which
+  parts of her have I never engaged with?"* is a real operator need and is now
+  unanswerable. It stays **active** with its `covers.props` emptied — retiring the question
+  because its instrument died would have lost the requirement.
+
+**Two bugs I introduced, both caught by instruments rather than by reading.** Removing the
+read projection left a **dangling comma** in `identity()`'s RETURN clause, and the full
+3435-test suite stayed green — graph tests skip in a normal run, so only the live A/B
+surfaced it. That is the **third** time skip-by-default graph tests have hidden a real
+break; `./scripts/checks/graph_tests.sh` exists for exactly this and must be run on any
+graph change. And a new assertion matched `RETURN n.node_id` — a *read* — as though it
+were a rebuild overwrite, which is why it must match the assignment form.
+
+**Two process failures worth more than the code.** `git stash` does not restore the index,
+so a stash taken to compare lint counts silently unstaged six verified files — the second
+time in a week. And a **QA agent asked to "verify by reproduction" edited the tree to
+prove a test fails, then restored one file from HEAD instead of my edited state**: 18 tests
+broke after I had changed only documentation, and `git diff` showed that file as *clean*,
+which reads as fine. After any review agent returns, diff every file you expected to
+change — a reverted file is indistinguishable from an untouched one.
+
+**How to apply going forward.** On any graph change: run `graph_tests.sh`, and verify the
+**committed** tree (`git show HEAD:<path>`) rather than the working tree. Before trusting
+a declared property class, `RETURN DISTINCT` it on the live store.
 
 ## 2026-10-10 — The repetition defect was a cache with no expiry, and the ruler was broken too
 
