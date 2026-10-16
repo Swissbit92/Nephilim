@@ -2,7 +2,7 @@
 title: The identity graph is built from the card and evolves in its edges
 status: Accepted
 created: 2026-09-28
-last_reviewed_on: 2026-09-28
+last_reviewed_on: 2026-10-16
 review_in: 12 months
 applies_to: nephilim
 ai_summary: >
@@ -11,6 +11,10 @@ ai_summary: >
   label, or before wiring any of it into a prompt. Records what is deliberately
   deferred (write policy, episodes, prompt injection) and the finding that the card
   is mostly PROSE, which bounds how finely it can be modelled without invention.
+  PARTLY SUPERSEDED — read the 2026-10-16 amendment at the end BEFORE the property
+  tables above it: the ANNOTATION property class it specifies was deleted, so any
+  sentence here about salience, reinforced_count, last_referenced or reinforce() is
+  history. The create-once/refresh mechanism, and the A/B that justified it, stand.
 ---
 
 # ADR-018: The identity graph is built from the card and evolves in its edges
@@ -92,7 +96,7 @@ part of this design:
 | | may she change it | on rebuild |
 |---|---|---|
 | `origin: card` node **content** — the lore text, the trait name, the boundary | **no** (same rule as hard walls) | regenerated from the card |
-| `origin: card` node **annotations** — salience, times reinforced, last referenced | **yes** | **preserved** |
+| ~~`origin: card` node **annotations** — salience, times reinforced, last referenced~~ | — | **DELETED 2026-10-16, see the amendment below** |
 | `origin: learned` nodes — something she has actually acquired | yes | not regenerated; dropped on reset |
 | **edges**, and **edge properties** | **yes** | **preserved** |
 
@@ -240,9 +244,83 @@ no longer exists is misleading rather than inert.
 
 ### Still true, and still deliberate
 
-Nothing is wired into her prompt. `reinforce()` is her only write and it names three
-annotation properties and nothing else, so it cannot reach content even when called oddly
-— the same discipline as the hard-wall guard, applied by omission rather than validation.
+Nothing is wired into her prompt.
+
+⚠️ This section also said: *"`reinforce()` is her only write and it names three annotation
+properties and nothing else."* **That is no longer true — see the amendment below.**
+`apply_card` is now the only identity write, which `test_graph_sourced_identity.py`
+asserts mechanically.
+
+## AMENDMENT 2026-10-16 — the ANNOTATION class is deleted, the split's MECHANISM is not
+
+The three annotation properties (`salience`, `reinforced_count`, `last_referenced`),
+`IdentityRepository.reinforce()` and the `identity_engagement` detector that would have
+driven it are **removed**. Everything above describing annotations as a live property
+class is superseded by this section; the rest of the ADR stands.
+
+**Why, measured rather than argued.** On the live graph, 256 nodes carried
+`reinforced_count`/`salience` and returned exactly **one** distinct row — `(0, 0.0)`. The
+counter never incremented once in the graph's whole life. `last_referenced` sat on **0 of
+256**, because assigning null removes a property rather than initialising it, so the
+third field never materialised at all. And **edges carried no properties of any kind** —
+so "evolution lives in the edges", the sentence this ADR is titled after, was
+unimplemented in both halves rather than merely unused.
+
+**Why not wait for usage to justify it.** The stated blocker was that gwen had barely
+been talked to (79 messages, one day, 2026-09-29). Re-measured 2026-10-16: **233 messages
+across 9 days** — and the daily curve is 79, 102, then 2–16 and falling, with 2 messages
+in the six days before this change. Volume tripled and is still nowhere near the scale
+that could *fit* a threshold, let alone validate one. Waiting was not converging.
+
+**Why an access COUNT was the wrong instrument even in principle.** The strongest case
+for a counter is epistemic: a fact repeated across independent sessions is likelier true.
+But the literature points at **source diversity and provenance**, not mention count —
+counting repetition without discounting correlated sources measures how often a fact was
+*copied*, not independently confirmed, and one user restating something to one persona is
+one source replayed. `reinforce()` incremented on **access**, not on re-assertion, so it
+could not have supplied that signal regardless.
+
+**What the published evidence says, stated as absence rather than refutation.** No
+ablation isolating an access counter could be found in any agent-memory system.
+Generative Agents never ablated the recency/importance/relevance terms it is universally
+cited for — its ablations remove whole modules. A-MEM and MemGPT omit the field by design
+(MemGPT evicts FIFO). MemoryBank is the closest published analog, increments strength on
+recall, calls itself *"an exploratory and highly simplified memory updating model"*, and
+ships no ablation. The one direct test of a frequency-containing pruner reports **+0.001
+token F1 with a 95% CI spanning zero** (arXiv 2608.28978) — and bundles frequency with
+recency, centrality and age, so it does not isolate frequency either. This is
+*understudied with a null where tested*, not *proven harmful*; deleting is consistent
+with the evidence rather than ahead of it.
+
+**THE MECHANISM THIS ADR MEASURED SURVIVES, with a real referent.** The A/B in this
+document (arm A 0 of 3, arm B 3 of 3) tested the **`ON CREATE` / unconditional `SET`
+split**, not the counter — so its evidence carries over unchanged, and only its subject
+moves. `node_id` and `created_at` are still named only in `ON CREATE`: a surrogate id
+that churned would orphan every edge pointing at the node, and a transaction time cannot
+be reconstructed once reset. Re-measured on the live card at a larger scale than the
+original: **arm A 0 of 128, arm B 127 of 128**, the one exception being the entry the
+harness deliberately rewrites, which earns a new content-derived `source_key` and is a new
+node by design — asserted explicitly rather than tolerated.
+
+**What was deliberately NOT done.** `Shape.annotation` was not left in place as an empty
+declared seam. That was the first plan and it is the worst of the options: it leaves a
+declaration nothing can satisfy, an unreachable guard, and two tests that pass while
+asserting nothing — `test_content_and_annotation_never_overlap` intersects against an
+empty set, and `test_the_card_never_produces_an_annotation` loops 128 nodes doing the
+same while looking thorough. Both were deleted. `Shape.validated()` now **refuses** the
+three names outright, which is a stronger guarantee than the old "the card happens not to
+produce one".
+
+**If learning is added later**, declare a second property class *then*, named for the
+signal it actually carries. `origin: learned` remains a valid value and the vocabulary
+still accepts it, so nothing here forecloses that — this amendment removes a field that
+was never written, not the idea that she can evolve.
+
+Enforced by `scripts/checks/learning_counter_is_gone.py` (two arms: no counter surface
+survives in `src/`, and gwen's graph-sourced prompt stays byte-identical to the
+card-sourced one per ADR-019). The 256 live nodes still carry the inert properties;
+`scripts/utils/drop_counter_properties.py` removes them, dry-run by default, and refuses
+if any value is non-default.
 
 ## Related
 

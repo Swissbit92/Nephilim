@@ -16,7 +16,7 @@ That is a decision with evidence behind it, not conservatism:
     "beautiful"; pulling an attribute out of that clause requires inference, and that is
     the regime where structured output measurably degrades.
 
-So her appearance IS in the graph — as the lore nodes that describe it. She can reinforce
+So her appearance IS in the graph — as the lore nodes that describe it. She can build
 lore entry 7, and entry 7 is the appearance. What is lost is only a spec-sheet version of
 her that would have read worse.
 
@@ -118,13 +118,13 @@ def _source_key(text: str) -> str:
     """The MERGE key for an identity node: derived from CONTENT, not from position.
 
     `source_index` used to be in the key, so an operator reordering a card list silently
-    moved every annotation after the edit point onto a different entry. Measured on gwen:
+    moved every node after the edit point onto a different entry. Measured on gwen:
     moving one of 21 lore entries from last to first changed the text under ALL 21 lore
     keys. Nothing detected it -- `source_hash` is written by the same MERGE that matched
     the wrong node, and a reorder changes no leaf so the completeness check sees nothing.
 
     The asymmetry that makes this the right trade: a REORDER is silent and accidental and
-    must not move annotations; a REWORDING is deliberate and visible and legitimately
+    must not move nodes; a REWORDING is deliberate and visible and legitimately
     mints a new node, because card-origin content is the operator's to change (ADR-018).
     The old key was wrong for both cases; this one is right for the dangerous one.
 
@@ -140,7 +140,7 @@ def _disambiguate(nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
     Two identical entries in one list are distinct nodes -- `source_index` distinguished
     them for free, and a bare content hash would collapse them into one, losing a node
-    and its annotations. Occurrence order among IDENTICAL texts is itself reorder-stable,
+    and its edges. Occurrence order among IDENTICAL texts is itself reorder-stable,
     since identical entries are interchangeable by definition.
     """
     seen: Dict[tuple, int] = {}
@@ -173,7 +173,7 @@ def identity_nodes(card: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     `source_index` records POSITION and is what `card_from_nodes` orders by; it is no
     longer part of the MERGE key, because keying on position meant a reordered list
-    silently retargeted annotations onto the wrong node (see `_source_key`). Identity is
+    silently retargeted nodes onto the wrong entry (see `_source_key`). Identity is
     keyed on content; order is carried as a property and updated freely.
     """
     pid = card.get("key") or "unknown"

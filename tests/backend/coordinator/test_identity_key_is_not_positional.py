@@ -1,13 +1,13 @@
 """An identity node's key must not be its POSITION in a card list.
 
 ADR-018's central mechanical promise is that "a rebuild must regenerate CONTENT while
-PRESERVING her annotations and edges". The annotation properties (`salience`,
-`reinforced_count`, `last_referenced`) are named only in the MERGE's `ON CREATE` branch,
+PRESERVING her edges and each node's create-once properties". `node_id` and `created_at`
+are named only in the MERGE's `ON CREATE` branch,
 so a rebuild structurally cannot wipe them — that half works.
 
 But preservation of the VALUE is worthless if the value is preserved on the wrong node.
 `MERGE (n:Label:CurrentIdentity {persona_id, source_field, source_index})` keyed identity
-to LIST POSITION, so an operator reordering a card list silently moved every annotation
+to LIST POSITION, so an operator reordering a card list silently moved every node
 after the edit point onto a different entry. Measured on gwen before the fix: moving one
 of 21 lore entries from last to first changed the text under ALL 21 lore keys.
 
@@ -21,8 +21,11 @@ was "`source_hash` plus the completeness check". Neither can fire:
 This is the repo's recorded `fix_by_shape_not_by_file` shape: an overloaded field produces
 a confident wrong answer rather than a gap, so every test stays green.
 
-The migration was free at the moment it was made — `reinforced_count` was 0 on all 128
-live nodes, so no learned annotation existed to mis-assign yet. Ecosystem ADR-012 names
+The migration was free at the moment it was made — nothing learned existed to mis-assign
+yet, and as of 2026-10-16 that is permanent rather than temporary: the counter it would
+have protected was deleted, having never incremented on any of 256 live nodes. What a
+reorder would now mis-assign is `created_at` and the node's edges, which is reason enough
+— a transaction time cannot be reconstructed once it moves. Ecosystem ADR-012 names
 that window explicitly ("the first non-card write closes it permanently"), which is why
 this landed before the write path rather than after.
 """
@@ -63,7 +66,7 @@ def test_reordering_a_list_does_not_move_any_key(gwen):
     moved = {k for k in before if after[k] != before[k]}
     assert not moved, (
         f"{len(moved)} keys point at different text after a pure reorder — every "
-        f"annotation on those nodes has silently retargeted")
+        f"create-once properties on those nodes have silently retargeted")
 
 
 def test_reordering_still_reorders_the_REBUILT_CARD(gwen):
@@ -85,7 +88,7 @@ def test_editing_an_entry_mints_a_new_key(gwen):
 
     The asymmetry is the design: a reorder is silent and accidental, a rewording is
     deliberate and visible. Card-origin content is the operator's to change (ADR-018), so
-    losing annotations on a rewording is a consequence they chose; losing them on a
+    losing a node's identity on a rewording is a consequence they chose; losing it on a
     reorder is one nobody chose. Pinned so a future "fix" for the rewording case cannot
     quietly reintroduce positional keys.
     """
@@ -147,7 +150,7 @@ def test_the_read_projection_returns_the_key_it_is_keyed_by():
     """A key nothing can read is a key nothing can target.
 
     `identity()` projected source_field and source_index but not source_key, so a caller
-    holding read nodes could not address them the way the MERGE does — and `reinforce()`
+    holding read nodes could not address them the way the MERGE does — and a node-addressed write
     plus any future write path must. Caught by checking the live read rather than the
     card-derived nodes, which is where the two diverge.
     """
