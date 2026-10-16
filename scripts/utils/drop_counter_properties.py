@@ -35,6 +35,13 @@ from src.coordinator.config import get_settings  # noqa: E402
 from src.coordinator.graph_driver import build_driver, read, write  # noqa: E402
 
 GONE = ("reinforced_count", "salience", "last_referenced")
+#: SCOPED to the identity labels rather than matching every node. Measured 2026-10-16,
+#: only these four carry the properties (Trait 51, LoreEntry 29, Expertise 26, Boundary
+#: 22, per persona), so an unscoped `MATCH (n)` would hit exactly the right set TODAY —
+#: by luck, not by design. A future node type with a property coincidentally called
+#: `salience` would land in the blast radius of a cleanup that has nothing to do with it.
+LABELS = ("LoreEntry", "Trait", "Boundary", "Expertise")
+_SCOPE = " OR ".join(f"n:{label}" for label in LABELS)
 #: The values the deleted `ON CREATE` branch wrote. Anything else means it RAN.
 DEFAULTS = {"reinforced_count": 0, "salience": 0.0}
 
@@ -52,13 +59,24 @@ def main() -> int:
         return 2
     db = g.database
     try:
-        rows = read(drv, """
-            MATCH (n)
-            WHERE n.reinforced_count IS NOT NULL OR n.salience IS NOT NULL
-               OR n.last_referenced IS NOT NULL
+        has_any = " OR ".join(f"n.{p} IS NOT NULL" for p in GONE)
+        rows = read(drv, f"""
+            MATCH (n) WHERE ({_SCOPE}) AND ({has_any})
             RETURN DISTINCT n.reinforced_count AS rc, n.salience AS sal,
                    n.last_referenced AS lr, count(*) AS nodes
             """, db)
+
+        # Say out loud whether anything OUTSIDE the scope carries them. If something
+        # does, this script is the wrong tool for it and silence would hide that.
+        outside = read(drv, f"""
+            MATCH (n) WHERE NOT ({_SCOPE}) AND ({has_any})
+            RETURN labels(n) AS labels, count(*) AS nodes
+            """, db)
+        if outside:
+            print("NOTE: nodes OUTSIDE the identity labels also carry one of these, and "
+                  "this script will NOT touch them:")
+            for r in outside:
+                print(f"  {r['labels']}  ->  {r['nodes']} node(s)")
         if not rows:
             print("OK: no live node carries any of the three. Nothing to do.")
             return 0
@@ -86,17 +104,15 @@ def main() -> int:
             return 0
 
         res = write(drv, f"""
-            MATCH (n)
-            WHERE {' OR '.join(f'n.{p} IS NOT NULL' for p in GONE)}
+            MATCH (n) WHERE ({_SCOPE}) AND ({has_any})
             REMOVE {', '.join(f'n.{p}' for p in GONE)}
             RETURN count(n) AS touched
             """, db)
         touched = res[0]["touched"] if res else 0
         print(f"\nremoved the three properties from {touched} node(s).")
 
-        left = read(drv, """
-            MATCH (n) WHERE n.reinforced_count IS NOT NULL OR n.salience IS NOT NULL
-               OR n.last_referenced IS NOT NULL RETURN count(n) AS n
+        left = read(drv, f"""
+            MATCH (n) WHERE ({_SCOPE}) AND ({has_any}) RETURN count(n) AS n
             """, db)
         remaining = left[0]["n"] if left else 0
         # Verify by re-reading, not by trusting the write's own report — the repo has a
