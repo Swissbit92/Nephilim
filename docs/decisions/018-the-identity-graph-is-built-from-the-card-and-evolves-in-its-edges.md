@@ -166,6 +166,14 @@ Parked precisely: when may she create a `learned` node; when may she change an e
 property and how often; may she ever retire or delete, and is that distinct from "no
 longer true"; and which of those need approval versus none.
 
+⚠️ **UN-DEFERRED 2026-10-17 — that research happened, and the answer is
+[ADR-021](021-agentic-memory-is-one-graph-with-scoped-truth.md).** The reasoning below
+held up on every point: episodes carry pointers and never text, and provenance via
+`source_session_id`/`source_message_id` is exactly the mechanism Graphiti's Episode
+nodes provide. What the research added is the part this paragraph could not know — a
+`:Thread` grouping with ordered episodes, and the finding that Graphiti's own shipped
+retrieval reads episodes by **time window** rather than walking the chain it stores.
+
 **Episodes and the short-term/long-term memory split are deferred to their own
 research.** "We watched a film on Tuesday" is a different kind of thing from "she likes
 horror", conversation history already lives durably in SQLite, and duplicating 896
