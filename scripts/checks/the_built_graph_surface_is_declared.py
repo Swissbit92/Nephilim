@@ -32,30 +32,66 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 SRC = ROOT / "src" / "coordinator"
 
 #: The files that build graph structure. Listed rather than globbed so that adding a
-#: third writer is a decision someone makes here, not something that happens quietly.
+#: writer is a decision someone makes here, not something that happens quietly — and the
+#: list has to be TRUE for that sentence to mean anything. `scripts/research/identity_ab.py`
+#: is on it because it writes raw Cypher against the live graph; it was missed on the first
+#: pass, and the claim that a new writer is a decision made here was therefore false for it.
 CYPHER_SOURCES = (
     SRC / "repositories" / "identity_repository.py",
     SRC / "repositories" / "neo4j_rule_repository.py",
     SRC / "rule_proposals.py",
+    ROOT / "scripts" / "research" / "identity_ab.py",
 )
 
 #: `(x:Label` / `(:Label` — a parenthesis is required, so a bare `:Label` inside prose
 #: or a Python annotation cannot match.
-_LABEL = re.compile(r"\(\s*[a-z0-9_]*((?::[A-Z][A-Za-z]+)+)")
+#:
+#: ⚠️ **A LEADING UNDERSCORE IS PART OF THE PATTERN, and leaving it out hid a live label.**
+#: The first version required `[A-Z]` immediately after the colon, which made
+#: `:_PropertyKeyRegistry` — created from `ensure_schema()`, reached from `routes/chat.py`
+#: — structurally invisible. Not a one-off miss: a whole CLASS of label the scan could
+#: never see, in the check written specifically to make that impossible. Neo4j permits a
+#: leading underscore, so the pattern must too. Lowercase is still excluded, because the
+#: variable position in `(x:Label` is lowercase and admitting it would match `(a:b` in any
+#: prose string.
+_LABEL = re.compile(r"\(\s*[a-z0-9_]*((?::[A-Z_][A-Za-z0-9_]*)+)")
 #: `[:REL]->` / `-[r:REL]-` — the arrow or dash after the bracket is required, which is
 #: what keeps a Python slice like `text[:_MAX_BYTES]` out of the relationship set.
-_REL = re.compile(r"\[\s*[a-z0-9_]*:([A-Z][A-Z_]*)\s*\][-<>]")
+_REL = re.compile(r"\[\s*[a-z0-9_]*:([A-Z_][A-Z0-9_]*)\s*\][-<>]")
 #: `n:CurrentIdentity` in a REMOVE/SET clause, which has no parenthesis of its own.
-_BARE_LABEL = re.compile(r"\b(?:REMOVE|SET)\s+[a-z0-9_]+((?::[A-Z][A-Za-z]+)+)")
+_BARE_LABEL = re.compile(r"\b(?:REMOVE|SET)\s+[a-z0-9_]+((?::[A-Z_][A-Za-z0-9_]*)+)")
 #: `MERGE (n:{label}:CurrentIdentity ...)` — the f-string hole is filled from SHAPES at
-#: runtime, so the literal carries `{label}` where a label would be. Dropped, not
-#: guessed: the identity half of the manifest is derived from SHAPES already.
-_FSTRING_HOLE = re.compile(r"\{[a-z_]+\}")
+#: runtime, so the literal carries `{label}` where a label would be.
+#:
+#: ⚠️ **Replaced with a sentinel, NOT deleted.** Deleting it leaves `MERGE (n::Current…`,
+#: a double colon no label pattern can parse, so the whole clause matched nothing and
+#: `CurrentIdentity` was only ever seen via incidental `MATCH`/`REMOVE` references
+#: elsewhere in the same file. A secondary label introduced ONLY through this idiom would
+#: have been invisible. The sentinel keeps the clause parseable and is dropped from the
+#: results, since the identity half of the manifest comes from SHAPES anyway.
+_FSTRING_HOLE = re.compile(r"\{[A-Za-z_][A-Za-z0-9_.\[\]']*\}")
+_HOLE_SENTINEL = "FstringHolePlaceholder"
 
 
 def _non_docstring_strings(path: pathlib.Path) -> list[str]:
-    """Every string constant in the file except the ones Python reads as documentation."""
+    """Every string constant in the file except the ones Python reads as documentation.
+
+    **An f-string is REASSEMBLED, not walked as pieces.** This is the subtle half. Python
+    parses `f"MERGE (n:{label}:CurrentIdentity ...)"` into a `JoinedStr` whose literal
+    halves are SEPARATE `Constant` nodes — `"MERGE (n:"` and `":CurrentIdentity ..."` —
+    so a scan that walks constants individually never sees one clause. The second half
+    begins at a colon with no parenthesis in front of it and matches nothing.
+
+    The consequence was not hypothetical: `:CurrentIdentity` is written ONLY through this
+    idiom at `identity_repository.py:198`, and the first version of this check detected it
+    purely by accident, via unrelated `MATCH`/`REMOVE` references elsewhere in the same
+    file. A secondary label introduced only this way would have been invisible — in the
+    check whose entire job is to make that impossible. So each `JoinedStr` is rebuilt into
+    one string with `_HOLE_SENTINEL` standing in for every interpolation, and its own
+    `Constant` children are then skipped so they are not also counted as fragments.
+    """
     tree = ast.parse(path.read_text())
+
     docstrings: set[int] = set()
     for node in ast.walk(tree):
         if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -64,15 +100,29 @@ def _non_docstring_strings(path: pathlib.Path) -> list[str]:
                     and isinstance(body[0].value, ast.Constant)
                     and isinstance(body[0].value.value, str)):
                 docstrings.add(id(body[0].value))
-    out = []
+
+    out: list[str] = []
+    inside_fstring: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.JoinedStr):
+            parts = []
+            for piece in node.values:
+                if isinstance(piece, ast.Constant) and isinstance(piece.value, str):
+                    parts.append(piece.value)
+                    inside_fstring.add(id(piece))
+                else:
+                    parts.append(_HOLE_SENTINEL)
+                    # A nested FormattedValue can itself hold string constants (format
+                    # specs, dict keys); none of them are Cypher.
+                    for inner in ast.walk(piece):
+                        if isinstance(inner, ast.Constant) and isinstance(inner.value, str):
+                            inside_fstring.add(id(inner))
+            out.append("".join(parts))
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if id(node) not in docstrings:
+            if id(node) not in docstrings and id(node) not in inside_fstring:
                 out.append(node.value)
-        elif isinstance(node, ast.JoinedStr):
-            # An f-string's literal halves arrive as separate Constant children, which
-            # ast.walk reaches on its own. Nothing to add here.
-            continue
     return out
 
 
@@ -83,10 +133,17 @@ def derive() -> tuple[set[str], set[str]]:
         if not path.exists():
             raise FileNotFoundError(path)
         for text in _non_docstring_strings(path):
-            text = _FSTRING_HOLE.sub("", text)
+            text = _FSTRING_HOLE.sub(_HOLE_SENTINEL, text)
             for group in _LABEL.findall(text) + _BARE_LABEL.findall(text):
-                labels |= {part for part in group.split(":") if part}
-            rels |= set(_REL.findall(text))
+                # The sentinel is label-SHAPED on purpose (anything else would make
+                # `(n:<hole>:Real` unparseable again), so it can sit flush against a real
+                # name when the interpolation is adjacent — `(n:CurrentIdentity{expr})`
+                # reassembles as one token. Strip it as a substring, not by equality.
+                labels |= {part for part in
+                           (seg.replace(_HOLE_SENTINEL, "") for seg in group.split(":"))
+                           if part}
+            rels |= {r.replace(_HOLE_SENTINEL.upper(), "") or r
+                     for r in _REL.findall(text)}
     return labels, rels
 
 

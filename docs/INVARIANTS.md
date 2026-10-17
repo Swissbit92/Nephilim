@@ -248,9 +248,23 @@ Neo4j Community has no partial index and no predicate on `MERGE`, so without the
 label a rebuild resurrects every soft-expired node. That is a fact about one database's
 write semantics, not about Gwen.
 
-**The exemption class had to be defined here, because nobody has defined it.** Grüninger &
-Fox state the backwards criterion in the founding 1995 paper (§3) and carve out no
-exception — and their own worked example violates it, since no competency question in that
+⚠️ **"Built" is not "reached".** `CORRECTS`, `:ProposedRule` and `HAS_PROPOSAL` are written
+only by code nothing outside `tests/` calls — `rule_proposals.RuleProposalStore` has zero
+non-test importers (verified 2026-10-17). ADR-017 stages that on purpose, but a competency
+question written for a mechanism nothing can trigger satisfies C17's letter while leaving
+its purpose untouched. **Reachability from a live route is a separate criterion and this
+check does not assert it.**
+
+⚠️ **The live graph still holds 34 `behaviour` Trait nodes and 0 `policy` until the
+re-seed runs.** No current read breaks: `IdentityRepository.identity()`'s optional `kind=`
+filter is never passed by its one live caller, and the overlay keys off `source_field`.
+But a caller added before the re-seed that filters `identity(pid, kind="policy")` gets
+**0 rows and no error** — the silent-empty-result shape, not a failure.
+
+**The exemption class had to be defined here, because nobody has defined it.** [Received
+from this session's research pass, 2026-10-17 — primary sources fetched by a subagent, not
+independently re-verified.] Grüninger & Fox state the backwards criterion in the founding
+1995 paper (§3) and carve out no exception — and their own worked example violates it, since no competency question in that
 paper asks about `Poss(a,s)` or `S₀`. Surveyed 2026-10-17: NeOn's ORSD, ROBOT `report`, the
 OBO Foundry dashboard's 14 principles, LinkML and schema.org enforce structural hygiene and
 **none of them enforces demand-traceability at all**, so there was no exemption pattern to
@@ -264,8 +278,17 @@ indistinguishable from a field quietly dropped to make a check go green.
 half.** Identity labels and edges come from `identity_shapes.SHAPES`/`EDGES`, which cannot
 drift. The rule and proposal half lives inside Cypher strings that nothing can enumerate,
 so it is listed by hand — and a hand-written manifest that drifts is worse than none,
-because C17 would then pass by comparing the question set against a stale list. One
-subtlety carries real weight: the scan walks the AST and skips docstrings, because
+because C17 would then pass by comparing the question set against a stale list. **Three subtleties each cost a real blind spot, and two were found by review rather than
+by the check.** (1) The label pattern must admit a **leading underscore**: it required
+`[A-Z]` after the colon, which made `:_PropertyKeyRegistry` — written from
+`ensure_schema()`, reached from `routes/chat.py` — structurally invisible, so a label built
+on a live path sat undeclared and unexempted while this check reported a clean pass. It is
+the eleventh name, and it was on the pre-fix list before the accounting dropped to nine.
+(2) An **f-string must be reassembled**, not walked as pieces: Python splits
+`f"MERGE (n:{label}:CurrentIdentity ...)"` into separate `Constant` nodes, so the clause
+that is the *only* writer of `:CurrentIdentity` matched nothing, and that label was being
+detected purely by accident through unrelated `MATCH`/`REMOVE` references in the same file.
+(3) The scan walks the AST and skips docstrings, because
 `neo4j_rule_repository`'s module docstring contains `(:Rule)-[:LEARNED_FROM]->(:Message)`
 as a shape a future write path will take. A regex sweep reports those two as live schema.
 Planned is not built.

@@ -16,9 +16,22 @@ so those are listed by hand — and `scripts/checks/the_built_graph_surface_is_d
 re-derives them from the source on every invariant run, so the hand-written half
 cannot drift without failing.
 
-**`MECHANISM_EXEMPTIONS` is the one legitimate escape, and it is narrow.** Grüninger
-& Fox (IJCAI-95 §3), who state the backwards criterion, do not carve out a category
-for representational machinery — and their own worked example violates the rule they
+⚠️ **"Built" here means "some Cypher in this repo writes it" — NOT "a live request path
+reaches it".** Three of these names are written only by code nothing outside `tests/`
+calls: `CORRECTS` (`correct_rule`), and `:ProposedRule`/`HAS_PROPOSAL`
+(`rule_proposals.RuleProposalStore`, which has zero non-test importers — verified
+2026-10-17). ADR-017 stages that deliberately ("if this is ever wired to chat,
+`GRAPH_ENFORCE_RULES` stops being optional"), so this is not a defect. But a competency
+question written for a mechanism nothing can trigger satisfies C17's letter while leaving
+its purpose — do not build what the system does not need — untouched, and that distinction
+has to be visible here rather than inferred. **Reachability is a separate criterion this
+module does not assert.** Adding it would need call-graph analysis from the route layer,
+which is not attempted.
+
+**`MECHANISM_EXEMPTIONS` is the one legitimate escape, and it is narrow.** [Received from
+this session's research pass, 2026-10-17; the primary sources were fetched by a subagent
+and are not independently re-verified here.] Grüninger & Fox (IJCAI-95 §3), who state the
+backwards criterion, do not carve out a category for representational machinery — and their own worked example violates the rule they
 state, since no competency question in that paper asks about `Poss(a,s)` or `S₀`.
 Nothing downstream closed the gap: surveyed 2026-10-17 across NeOn's ORSD, ROBOT
 `report`, the OBO Foundry dashboard's 14 principles, LinkML and schema.org, no
@@ -51,6 +64,8 @@ _RULE_PATH_LABELS: dict[str, str] = {
     "CurrentRule": "neo4j_rule_repository.seed_rules (secondary label)",
     "CurrentIdentity": "identity_repository.apply_card (secondary label)",
     "ProposedRule": "rule_proposals.propose",
+    "_PropertyKeyRegistry": "neo4j_rule_repository._REGISTER_KEYS (created and DELETEd "
+                            "in the same statement; never survives the transaction)",
 }
 
 #: Relationship types written by the rule and proposal paths.
@@ -92,6 +107,17 @@ MECHANISM_EXEMPTIONS: dict[str, str] = {
         "`MERGE (n:Trait:CurrentIdentity {natural key})` cannot match a node whose "
         "label the previous expiry removed. Without it apply_card revives every "
         "trait the card no longer contains."
+    ),
+    "_PropertyKeyRegistry": (
+        "Neo4j emits a warning for a property name its key store has never seen, which "
+        "is the ONLY available detection for a misspelled property in a WHERE clause — "
+        "in a store with no type constraints, `WHERE r.expried_at IS NULL` is a silent "
+        "always-null filter, not an error. The keys are registered by creating a node "
+        "carrying them and DELETEing it in the same statement, so the label never "
+        "survives the transaction and no graph read can reach it. Measured 2026-09-26: "
+        "with the keys registered the real read emits 0 notifications while the "
+        "misspelling still emits 1. A question about Gwen cannot name it, because it is "
+        "a fact about one database's notification behaviour."
     ),
 }
 

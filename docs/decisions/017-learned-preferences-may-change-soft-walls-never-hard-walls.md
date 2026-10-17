@@ -318,6 +318,17 @@ if it were in force.** `:ProposedRule` carries no `:Rule` label precisely so
 unapproved change govern a reply — SC-04's drift happening through the mechanism built to
 prevent it.
 
+⚠️ **`rul.cq04` makes `:ProposedRule` demanded; it does not make it reached.**
+`rule_proposals.RuleProposalStore` has **zero non-test importers** (verified 2026-10-17),
+and `correct_rule` — the only writer of `CORRECTS` — has zero non-test callers. That is
+this ADR's own staging: the Consequences section already says that wiring this to chat
+makes `GRAPH_ENFORCE_RULES` non-optional, so the write path is deliberately built, tested
+and not yet connected. It is recorded here because a competency question written for a
+mechanism nothing can trigger satisfies C17's *letter* while leaving its purpose — do not
+build what the system does not need — untouched. **Not orphaned is a weaker claim than
+reached**, and C17 asserts only the first. The honest status of both edges is *built,
+tested, demanded, not yet on a live path.*
+
 `HAS_RULE` was undemanded for a duller reason: `rul.cq03` cannot sort a rule into
 movable/soft/hard without first reaching it from the persona, so the demand was there all
 along and the `covers` block never recorded it.
