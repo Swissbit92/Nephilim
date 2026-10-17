@@ -105,9 +105,15 @@ def run_arm(drv, db, card, arm: str) -> dict:
     # projection that feeds the prompt overlay to serve a research script would be the
     # tail wagging the dog, and ADR-019's byte-identity boundary is not worth risking
     # for a measurement.
-    def _create_once(label_filter: str = "") -> dict:
-        rows = read(drv, f"""
-            MATCH (p:Persona {{persona_id: $pid}})-[]->(n:CurrentIdentity{label_filter})
+    # `label_filter` was a parameter here and neither caller ever passed it, so the
+    # flexibility was unreached. It also made the label `CurrentIdentity{filter}` — a
+    # literal fragment glued to an interpolation, which no static scan can resolve, and
+    # `scripts/checks/the_built_graph_surface_is_declared.py` now refuses that shape
+    # rather than guessing a truncated name. Deleted rather than reworked: the honest
+    # resolution for unreached flexibility is to remove it.
+    def _create_once() -> dict:
+        rows = read(drv, """
+            MATCH (p:Persona {persona_id: $pid})-[]->(n:CurrentIdentity)
             RETURN n.source_field AS sf, n.source_index AS si,
                    n.node_id AS node_id, n.created_at AS created_at
             """, db, pid=PERSONA)

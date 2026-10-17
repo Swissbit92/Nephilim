@@ -221,3 +221,74 @@ produce a check that is mostly false positives — which teaches people to bypas
 which is worse than an honest gap. It is here because the next person wiring a generator
 backend needs to read it, and because an unenforceable constraint stated plainly is more
 use than one quietly omitted.
+
+## Nothing is built that no competency question demands
+
+Status: active
+Statement: Every label and relationship type in `src/coordinator/graph_surface.py` is declared there and built by the Cypher in the three graph-writing modules, in both directions. Every one of them is either demanded by a competency question in the ecosystem question set, or carries a `MECHANISM_EXEMPTIONS` entry naming the write-semantics hazard it prevents.
+Falsifiable: WHEN a label or relationship type appears in a Cypher literal and not in `graph_surface`, OR is declared there and no Cypher builds it, THE CHECK SHALL exit 1 and name it. The question-set half is enforced by `docs/architecture/competency_questions/check.py` in the ecosystem repo, which exits 1 on a built name that is neither demanded nor exempted, and exits 2 — not 0 — when it cannot read `graph_surface` at all.
+Check: scripts/checks/the_built_graph_surface_is_declared.py
+
+**C17 was printed for three weeks and asserted nothing.** The criterion — *"every label,
+relationship type and temporal field in the schema is demanded by at least one question;
+anything demanded by none does not get built"* — needs two operands, and only one existed.
+`check.py` computed the demanded surface, printed it under a heading that read as a
+finding, and compared it to nothing. Nine built names sat undemanded the whole time, and
+the output looked healthy.
+
+**What the nine turned out to be is the useful part, because they split two ways.**
+`HAS_RULE`, `HAS_BASELINE` and `CORRECTS` were demanded all along by questions whose
+`covers` block never recorded the edge — `rul.cq03` cannot sort a rule into
+movable/soft/hard without first reaching it from the persona, and `tmp.cq04` is literally
+the question about corrections. `:ProposedRule` and `HAS_PROPOSAL` were a real gap: a write
+path gated on operator approval is useless if the operator cannot ask what is pending, and
+nothing in the set asked. Those got `rul.cq04`. Only `:CurrentRule` and `:CurrentIdentity`
+are exempt, and they are exempt for a reason no question can absorb: they exist because
+Neo4j Community has no partial index and no predicate on `MERGE`, so without the secondary
+label a rebuild resurrects every soft-expired node. That is a fact about one database's
+write semantics, not about Gwen.
+
+⚠️ **"Built" is not "reached".** `CORRECTS`, `:ProposedRule` and `HAS_PROPOSAL` are written
+only by code nothing outside `tests/` calls — `rule_proposals.RuleProposalStore` has zero
+non-test importers (verified 2026-10-17). ADR-017 stages that on purpose, but a competency
+question written for a mechanism nothing can trigger satisfies C17's letter while leaving
+its purpose untouched. **Reachability from a live route is a separate criterion and this
+check does not assert it.**
+
+⚠️ **The live graph still holds 34 `behaviour` Trait nodes and 0 `policy` until the
+re-seed runs.** No current read breaks: `IdentityRepository.identity()`'s optional `kind=`
+filter is never passed by its one live caller, and the overlay keys off `source_field`.
+But a caller added before the re-seed that filters `identity(pid, kind="policy")` gets
+**0 rows and no error** — the silent-empty-result shape, not a failure.
+
+**The exemption class had to be defined here, because nobody has defined it.** [Received
+from this session's research pass, 2026-10-17 — primary sources fetched by a subagent, not
+independently re-verified.] Grüninger & Fox state the backwards criterion in the founding
+1995 paper (§3) and carve out no exception — and their own worked example violates it, since no competency question in that
+paper asks about `Poss(a,s)` or `S₀`. Surveyed 2026-10-17: NeOn's ORSD, ROBOT `report`, the
+OBO Foundry dashboard's 14 principles, LinkML and schema.org enforce structural hygiene and
+**none of them enforces demand-traceability at all**, so there was no exemption pattern to
+copy. The requirement that an exemption state its hazard is borrowed from the suppression
+tooling instead: ESLint needs a separate plugin to require a reason, Checkstyle's
+suppression format has no justification field, and SHACL's `sh:deactivated` says outright
+that the spec gives "no guidance on documenting why". A reason-less exemption is
+indistinguishable from a field quietly dropped to make a check go green.
+
+**The manifest is half derived and half hand-written, and the check exists for the second
+half.** Identity labels and edges come from `identity_shapes.SHAPES`/`EDGES`, which cannot
+drift. The rule and proposal half lives inside Cypher strings that nothing can enumerate,
+so it is listed by hand — and a hand-written manifest that drifts is worse than none,
+because C17 would then pass by comparing the question set against a stale list. **Three subtleties each cost a real blind spot, and two were found by review rather than
+by the check.** (1) The label pattern must admit a **leading underscore**: it required
+`[A-Z]` after the colon, which made `:_PropertyKeyRegistry` — written from
+`ensure_schema()`, reached from `routes/chat.py` — structurally invisible, so a label built
+on a live path sat undeclared and unexempted while this check reported a clean pass. It is
+the eleventh name, and it was on the pre-fix list before the accounting dropped to nine.
+(2) An **f-string must be reassembled**, not walked as pieces: Python splits
+`f"MERGE (n:{label}:CurrentIdentity ...)"` into separate `Constant` nodes, so the clause
+that is the *only* writer of `:CurrentIdentity` matched nothing, and that label was being
+detected purely by accident through unrelated `MATCH`/`REMOVE` references in the same file.
+(3) The scan walks the AST and skips docstrings, because
+`neo4j_rule_repository`'s module docstring contains `(:Rule)-[:LEARNED_FROM]->(:Message)`
+as a shape a future write path will take. A regex sweep reports those two as live schema.
+Planned is not built.

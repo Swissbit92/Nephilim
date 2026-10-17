@@ -276,6 +276,63 @@ in high-volume domains — may not apply, and the gates are the margin that make
 worth having. If it turns out to be chatty, the feature is not worth its risk and this
 ADR should be revisited rather than tuned.
 
+## AMENDMENT 2026-10-17 — `SUPERSEDES` stays new→old, and `:ProposedRule` finally has a question
+
+**The competency set demanded `SUPERSEDED_BY`; the code builds `SUPERSEDES`.** Opposite
+name, opposite direction, and nothing caught it. Resolved in favour of the code, and the
+question set was renamed:
+
+- PROV-O's `wasRevisionOf` points **new→old**, and it is the closest standardised
+  analogue to what `supersede_rule` writes.
+- Neo4j's own modelling guidance: *"there is no need to add duplicate relationships in
+  the opposite direction"* — direction is a traversal detail, not a semantic commitment.
+- `history()` already walks `(r)-[:SUPERSEDES*0..n]->(a)`, newest first. Reversing the
+  edge would have made the only query anybody runs walk backwards from a leaf.
+- **The argument for reversing it was falsified.** The premise was that supersession
+  should only touch the new node, so the edge should hang off the old one. It does not:
+  the same transaction already does `SET old.expired_at`, `SET old.valid_to` and
+  `REMOVE old:CurrentRule`. `old` is mutated either way.
+
+`scripts/research/exercise_supersedes.py` watches the chain traverse **3 generations back
+on a live scratch persona**, and re-checks the NULL trap on the same run against a rule
+that was **never superseded** — the case that matters, since `expired_at > $T` written
+without `IS NULL OR` drops every still-valid row and this repo has shipped exactly that
+once (128 stale nodes, `expired: 0`, no error, no failing test).
+
+**`CORRECTS` is kept distinct from `SUPERSEDES`, and now demanded.** Both point new→old
+and both expire the old node; what differs is the cause, and the cause is what
+`tmp.cq04` ("What changed when I corrected you?") is asking about. Collapsing them would
+leave that question unable to tell a correction the operator made from an evolution the
+system made — the same reason PROV-O separates `wasRevisionOf` from a plain replacement.
+`tmp.cq04`'s `covers` block now names both.
+
+**`:ProposedRule` and `HAS_PROPOSAL` were built by this ADR's write path and demanded by
+nothing**, which C17 run backwards surfaced on 2026-10-17. Of the two available
+resolutions — write the question down, or delete the schema — this is the first, because
+the need is real and was simply never transcribed: *a write path gated on operator
+approval is useless if the operator has no way to ask what is pending*, and nothing in
+the set asked. The new `rul.cq04` ("What changes to how you behave are waiting on me to
+say yes?") carries the negative fixture that matters: **a proposal must not be returned as
+if it were in force.** `:ProposedRule` carries no `:Rule` label precisely so
+`standing_rules()` cannot see it, and a read that coalesced the two would let an
+unapproved change govern a reply — SC-04's drift happening through the mechanism built to
+prevent it.
+
+⚠️ **`rul.cq04` makes `:ProposedRule` demanded; it does not make it reached.**
+`rule_proposals.RuleProposalStore` has **zero non-test importers** (verified 2026-10-17),
+and `correct_rule` — the only writer of `CORRECTS` — has zero non-test callers. That is
+this ADR's own staging: the Consequences section already says that wiring this to chat
+makes `GRAPH_ENFORCE_RULES` non-optional, so the write path is deliberately built, tested
+and not yet connected. It is recorded here because a competency question written for a
+mechanism nothing can trigger satisfies C17's *letter* while leaving its purpose — do not
+build what the system does not need — untouched. **Not orphaned is a weaker claim than
+reached**, and C17 asserts only the first. The honest status of both edges is *built,
+tested, demanded, not yet on a live path.*
+
+`HAS_RULE` was undemanded for a duller reason: `rul.cq03` cannot sort a rule into
+movable/soft/hard without first reaching it from the persona, so the demand was there all
+along and the `covers` block never recorded it.
+
 ## Related
 
 - [ADR-014](014-the-rule-store-is-a-neo4j-projection-superseding-the-adr-001-and-adr-006-rejections.md) — the rule store, the tiers, and the original polarity inversion
