@@ -253,7 +253,12 @@ def identity_nodes(card: Dict[str, Any]) -> List[Dict[str, Any]]:
                   "clarifying_questions", "relationship_to_user"):
         v = (card.get("behavior") or {}).get(fname)
         if isinstance(v, str) and v.strip():
-            out.append(_node(TRAIT, pid, f"behavior.{fname}", 0, v, kind="behaviour"))
+            # `policy`, not `behaviour`: these seven are standing rules about how an
+            # exchange proceeds ("no pretense of professionalism", "every conversation
+            # steers to X"), while behavior.traits above holds bare dispositions
+            # ("seductive", "eager"). One `kind` held both until 2026-10-17, which put it
+            # at 34 live nodes against its own stated ~15-20 revisit trigger.
+            out.append(_node(TRAIT, pid, f"behavior.{fname}", 0, v, kind="policy"))
 
     return _disambiguate(out)
 

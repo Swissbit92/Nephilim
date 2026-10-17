@@ -291,3 +291,49 @@ class TestTheSetLandmines:
         """An expired node and a live node share a positional key, so a MERGE on the
         primary label alone would bind the expired one and resurrect it."""
         assert "CurrentIdentity" in self._src()
+
+
+class TestTheBehaviourPolicySplit:
+    """`behaviour` held two different kinds of thing until 2026-10-17.
+
+    It reached 34 live nodes against the vocabulary's own stated revisit trigger of
+    ~15-20, and inspection showed why: one bucket carried bare dispositions from a list
+    field ("seductive", "eager") AND full procedural clauses from seven scalar fields
+    ("no pretense of professionalism", "every conversation steers to X"). The remedy was
+    a sibling value, `policy`, not hierarchy — a conversational policy is not a more
+    specific behaviour, it is a different thing, so nesting it would have kept a genus
+    label that is wrong for half its members.
+    """
+
+    def test_dispositions_stay_behaviour_and_policies_become_policy(self, card):
+        by_field = {}
+        for n in identity_nodes(card):
+            if n["_shape"] == "Trait":
+                by_field.setdefault(n["source_field"], set()).add(n.get("kind"))
+
+        assert by_field.get("behavior.traits") == {"behaviour"}, (
+            "the list of bare dispositions must stay `behaviour`")
+        for fname in ("pace", "humor", "formality", "small_talk", "emoji_policy",
+                      "clarifying_questions", "relationship_to_user"):
+            field = f"behavior.{fname}"
+            if field in by_field:
+                assert by_field[field] == {"policy"}, (
+                    f"{field} is a standing rule about how an exchange proceeds, so it "
+                    f"is `policy`, not {by_field[field]}")
+
+    def test_no_kind_exceeds_its_own_revisit_trigger(self, card):
+        """The trigger that forced this split, now mechanical rather than remembered.
+
+        ⚠️ ~15-20 has NO external authority — Z39.19's only granularity section is
+        qualitative and "7±2" is about recall during one task, not stored category size.
+        It is this repo's own engineering heuristic, so the assertion is at the top of the
+        stated range and the message says what to do rather than just failing.
+        """
+        import collections
+        counts = collections.Counter(
+            n.get("kind") for n in identity_nodes(card) if n["_shape"] == "Trait")
+        over = {k: v for k, v in counts.items() if v > 20}
+        assert not over, (
+            f"{over} exceeds the ~15-20 revisit trigger in identity_shapes. Split it into "
+            f"a SIBLING value (as `policy` was split from `behaviour`), not a hierarchy — "
+            f"and check first whether the bucket holds two different kinds of thing.")
