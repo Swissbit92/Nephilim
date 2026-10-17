@@ -2,7 +2,7 @@
 title: Companion memory and continuity (eval-first)
 status: Accepted
 created: 2026-06-27
-last_reviewed_on: 2026-08-23
+last_reviewed_on: 2026-10-17
 review_in: 12 months
 applies_to: nephilim
 ---
@@ -502,7 +502,24 @@ arXiv:2502.14975); crisis-routing red-team; audit that **no engagement-dark-patt
   frontier model, implicating prompt/schema design over model size. **The good
   ideas are kept without the graph DB:** temporal validity, provenance/confidence,
   and a controlled predicate vocabulary fold into Phase 1's SQLite fact store as
-  *ontology-lite* (above). **Escalation trigger** (mirroring ADR-001): revisit a
+  *ontology-lite* (above). ⚠️ **SUPERSEDED IN SCOPE 2026-10-17 by [ADR-021](021-agentic-memory-is-one-graph-with-scoped-truth.md).**
+Facts now live in the graph. Read ADR-021 before acting on the rejection below.
+
+**What ADR-021 does NOT claim:** that this escalation trigger fired. It did not — there
+is no continuity eval, so it could not have. The decision was made on a different basis:
+since ecosystem ADR-012 the graph is the system of record for identity, so the choice
+stopped being "SQLite or a graph" and became "two stores or one". The numbers below are
+about retrieval accuracy at scale and **remain true**; they are why ADR-021's retrieval
+design is deliberately unambitious.
+
+**What still stands, unchanged and binding:** every voice measurement in this document.
+0.804 → 0.661 → 0.625, and the framing rework at 0.708 / 0.542 / 0.500 against a 0.792
+ruler. *Do not re-attempt prompt-framing.* ADR-021's read path is **gated** on one
+experiment that is deliberately not a fourth prose variant — and the reason it is allowed
+at all is that **gwen was never in these evals**, while gojo, the one strong voice that
+was, scored 1.0 with memory and without.
+
+**Escalation trigger** (mirroring ADR-001): revisit a
   graph layer only if continuity evals show failures concentrated in multi-hop
   *relational* queries — path networkx-over-SQLite-facts → embedded graph → Neo4j
   read-only projection. (Kùzu, the usual embedded-graph answer, was archived Oct

@@ -64,6 +64,94 @@ PREDICATE_VOCABULARY: frozenset[str] = frozenset({
 
 # Predicates where a single current value is expected — a new fact supersedes the
 # prior one (recency-wins). The rest accrete multiple concurrent valid facts.
+#: MANDATORY definitions, one per predicate, enforced by
+#: scripts/checks/every_declared_term_has_a_definition.py.
+#:
+#: ⚠️ THE TWO VAGUE ONES ARE WHY THIS DICT EXISTS. `has_opinion_on` and
+#: `is_currently_engaged_with` have unconstrained ranges, and measured on the only 12 rows
+#: this store ever held, half of everything the extractor wrote landed in the vaguest
+#: predicates — three rows were facts about the ASSISTANT'S OWN REASONING
+#: (`is_currently_engaged_with: analyzing the user's question`). Noy & McGuinness name an
+#: unconstrained range ("do not make the range THING") as the modelling defect. The
+#: literature bounds relation GENERICITY, not relation count.
+#:
+#: ⚠️ NOT PROMPT MATERIAL. The extractor currently receives these predicates as a bare
+#: comma-joined list of names. Do not append 33 definitions to that prompt: schema pruning
+#: beat the full schema at ~6x fewer tokens and small models degrade sharply with schema
+#: bloat. If definitions ever reach the model, they reach it PRUNED to the few terms a
+#: given call could plausibly use.
+PREDICATE_DEFINITIONS: dict[str, str] = {
+    # identity — single-valued, recency-wins
+    "has_name": "The name he goes by. Single-valued: a new one supersedes the old.",
+    "has_nickname": "What she calls him, or he asked to be called. Distinct from "
+                    "`has_name`: a nickname is relational, a name is his.",
+    "has_age": "His stated age in years. Never inferred from anything else.",
+    "has_birthday": "A calendar date, not an age. Use `has_age` for a number of years.",
+    "has_pronouns": "The pronouns he uses for himself. Stated only, never guessed.",
+    # place / occupation / study
+    "lives_in": "Where he currently lives. A place, not a workplace.",
+    "works_as": "His role or trade — what he does. Use `works_at` for the employer.",
+    "works_at": "The organisation that employs him. An employer, not a role.",
+    "studies_at": "An institution he studies at. Not an employer and not a subject.",
+    # relationships — the object is a person entity, not a literal
+    "has_relationship": "A named person and how they relate to him. The object is an "
+                        "ENTITY, never a literal, so the person becomes a node.",
+    "has_pet": "An animal he keeps. The object is an entity for the same reason.",
+    # preferences / stances
+    "likes": "Something he enjoys. Weaker than `has_favorite` and about enjoyment "
+             "rather than choice — use `prefers` when he picks one thing OVER another.",
+    "dislikes": "Something he does not enjoy. Weaker than `avoids`: dislike is a "
+                "feeling, avoidance is a behaviour.",
+    "prefers": "A comparative choice — this over that. Requires both sides to be "
+               "meaningful; if there is no alternative, it is `likes`.",
+    "is_allergic_to": "A medical allergy. Not a strong dislike — use `dislikes` for "
+                      "that, because this one may be acted on as a constraint.",
+    "avoids": "Something he deliberately stays away from, as a behaviour. The acted-on "
+              "counterpart of `dislikes`.",
+    "has_opinion_on": "⚠️ USE SPARINGLY — the known over-used predicate. Only for a "
+                      "stated, specific view on a NAMED subject, where no narrower "
+                      "predicate fits. If the subject is a thing he enjoys, it is "
+                      "`likes`; if a goal, `has_goal`; if a worry, `is_concerned_about`.",
+    "has_favorite": "The single top choice in a named category. Stronger and narrower "
+                    "than `likes`, and implies a category to be top of.",
+    # goals / plans / time-bound
+    "has_goal": "Something he is trying to achieve, with no date attached. ⚠️ Record "
+                "HIS phrasing, not hers — one live row stored her second-person "
+                "rendering ('start something of your own') as though it were his fact.",
+    "plans_to": "A specific intended action, more concrete than a goal and usually "
+                "nearer. Add `has_deadline` separately if a date was given.",
+    "has_deadline": "A date or time by which something must happen. The date itself, "
+                    "attached to the thing it bounds.",
+    "is_concerned_about": "⚠️ USE SPARINGLY — the second over-used predicate. A stated "
+                          "worry about a NAMED thing. Not a general mood, and never "
+                          "about the conversation itself.",
+    # health
+    "has_health_condition": "A stated medical condition. Never inferred, never guessed "
+                            "from a symptom mentioned in passing.",
+    "takes_medication": "A medication he has said he takes. A name, not a dose regimen.",
+    # activity / habit / interest
+    "has_hobby": "A recurring activity he does for enjoyment. Narrower than `likes`: a "
+                 "hobby is something he DOES, not merely something he enjoys.",
+    "has_skill": "Something he can do competently. Ability, not enjoyment — he may be "
+                 "skilled at something he dislikes.",
+    "is_learning": "A skill in progress. Becomes `has_skill` only if he says so.",
+    "follows_routine": "A repeated pattern with a shape to it — a sequence or a "
+                       "practice. Use `has_daily_habit` when the cadence is daily.",
+    "has_daily_habit": "Something he does daily. The daily special case of "
+                       "`follows_routine`, kept separate because the cadence is the fact.",
+    "is_currently_engaged_with": "⚠️ USE SPARINGLY AND NEVER FOR THE CONVERSATION — a "
+                                 "thing he is in the middle of right now, outside this "
+                                 "chat. Three live rows misused this for the assistant's "
+                                 "own reasoning. If it is about the chat, it is scene "
+                                 "state and does not belong in the store at all.",
+    # events / ownership
+    "experienced_life_event": "A significant thing that happened to him. Past and "
+                              "specific — not a condition and not a routine.",
+    "attended_event": "A specific named event he went to. Narrower than "
+                      "`experienced_life_event`: an event has a name and a date.",
+    "owns": "A possession worth remembering. Not a pet (`has_pet`) and not a skill.",
+}
+
 SINGLE_VALUED_PREDICATES: frozenset[str] = frozenset({
     "has_name", "has_nickname", "has_age", "has_birthday", "has_pronouns",
     "lives_in", "works_as", "works_at", "studies_at",

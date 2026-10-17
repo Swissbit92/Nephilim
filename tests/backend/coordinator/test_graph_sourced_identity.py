@@ -13,9 +13,19 @@ every one below the off-baseline. The ADR names "wiring a rich identity store in
 prompt the way the last attempt was wired" as the thing most likely to be regretted.
 
 So the two changes must be told apart mechanically, not by intention, and that is what
-`test_the_prompt_is_byte_identical_whichever_source_wins` is for. A sourcing change adds
+`test_overlay_of_the_graphs_own_nodes_reproduces_the_card` is for. A sourcing change adds
 zero tokens. The moment it stops being byte-identical it has become the closed change, and
 that test fails.
+
+⚠️ CORRECTED 2026-10-17. This docstring named
+`test_the_prompt_is_byte_identical_whichever_source_wins`, which **does not exist** — it
+was never written. The real guard is the card round-trip above plus
+`test_the_overlay_is_deterministic_across_repeated_reads`, which asserts
+`identity_overlay(card, identity_nodes(card)) == card` for every persona. That is a
+weaker claim than a prompt-sha comparison: it proves the overlay does not CHANGE the
+card, not that the assembled prompt is byte-identical. The sha `f2084bffb48ecb23` quoted
+in CLAUDE.md is not asserted anywhere. Citing a guard that was never written is a named
+failure mode in this repo; it is recorded here rather than quietly repaired.
 
 The failure mode this suite exists to prevent, besides: `IdentityRepository.identity()`
 has no try/except, unlike `Neo4jRuleRepository.standing_rules()` which documents

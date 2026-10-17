@@ -2,7 +2,7 @@
 title: The rule store is a Neo4j projection — superseding the ADR-001 and ADR-006 rejections
 status: Accepted
 created: 2026-09-26
-last_reviewed_on: 2026-09-29
+last_reviewed_on: 2026-10-17
 review_in: 12 months
 applies_to: nephilim
 ---
@@ -129,6 +129,14 @@ droppable with one command. This is the ecosystem invariant —
 *"nothing lives only in the graph, by construction"* — and it is what satisfies
 ADR-001's one transferable ground: an always-on service whose loss costs
 capability rather than data is a different risk from one whose loss costs data.
+
+⚠️ **2026-10-17: the separate ADR this clause demanded now exists —
+[ADR-021](021-agentic-memory-is-one-graph-with-scoped-truth.md).** Facts have moved into
+the graph, so "`memory_facts` stays in SQLite" below is history. What stayed in SQLite is
+the **message text**, which ADR-021 keeps there deliberately. This clause was right to
+defer rather than decide: it asked for a separate decision answering ADR-006's evidence
+on the merits, and that is what ADR-021 does, including stating plainly that ADR-006's
+revisit trigger never fired.
 
 **Scope is rules, not facts.** `memory_facts` stays in SQLite.
 
