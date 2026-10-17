@@ -81,6 +81,26 @@ RULE_TYPE_DEFINITIONS: dict[str, str] = {
                  "expensive direction.",
 }
 
+ORIGIN_DEFINITIONS: dict[str, str] = {
+    "card": "Written by the operator in the persona JSON. The reset target, and the only "
+            "origin from which a hard wall may legitimately change.",
+    "conversation": "Stated in dialogue and accepted through the sanctioned write path. "
+                    "Never applies to a hard wall — see ADR-017.",
+    "inferred": "Derived by the system rather than asserted by anyone. Never rendered as "
+                "the user's words.",
+}
+#: ⚠️ Three values here against four in identity_shapes.IDENTITY_ORIGINS. That divergence
+#: is deliberate: `learned` exists for identity and not for rules, because a reset drops
+#: precisely the learned set, and no rule is acquired that way.
+
+RULE_TYPE_SOURCE_DEFINITIONS: dict[str, str] = {
+    "declared": "The card stated this rule's type explicitly, so the classification is "
+                "the operator's and can be trusted.",
+    "default": "No type was stated, so it fell to the fail-closed default (hard_wall). "
+               "Records that nobody chose — distinguishing an unclassified rule from one "
+               "deliberately classified as a hard wall.",
+}
+
 POLARITY_DEFINITIONS: dict[str, str] = {
     "prohibition": "The text names something she must NOT do, so it renders under a "
                    "'Never' header.",

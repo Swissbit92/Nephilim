@@ -190,9 +190,18 @@ model reliably picks a valid predicate while getting the fact wrong. Definitions
 conformance and human clarity. Any future claim that they buy correctness needs its own
 measurement.
 
-**Adding a vocabulary to the registry is how it becomes governed.** A controlled
-vocabulary absent from `GOVERNED` is invisible to this check, so the registry is part of
-the constraint rather than an implementation detail; `--list` prints what is covered.
+**Adding a vocabulary to the registry is how it becomes governed, and the registry audits
+itself.** A vocabulary absent from `GOVERNED` would be invisible to this check — so the
+check first enumerates every `frozenset` in the governed files and fails on any that is
+neither governed nor listed in `NOT_A_VALUE_VOCABULARY` **with a stated reason**, the same
+discipline `identity_from_card.EXCLUDED_FIELDS` uses and for the same reason: "excluded"
+without a reason is how something gets quietly dropped to make a check go green.
+
+That audit earned its place immediately. Reviewing this work before opening its PR, it
+found **two real misses** in the first registry I wrote — `ORIGINS` and
+`RULE_TYPE_SOURCES`, both genuine value vocabularies in the rule store, both silently
+unchecked. The docstring had warned about exactly that hole and the first version shipped
+with it anyway. 55 terms became 60 across 10 vocabularies.
 
 ## Success is never inferred from an exit code
 

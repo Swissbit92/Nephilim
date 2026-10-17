@@ -39,6 +39,7 @@ message names it. Exit 2 = could not determine, which is NOT a pass.
 from __future__ import annotations
 
 import ast
+import re
 import sys
 from pathlib import Path
 
@@ -58,7 +59,26 @@ GOVERNED = [
      "PREDICATE_VOCABULARY", "PREDICATE_DEFINITIONS"),
     ("src/coordinator/repositories/neo4j_rule_repository.py", "RULE_TYPES", "RULE_TYPE_DEFINITIONS"),
     ("src/coordinator/repositories/neo4j_rule_repository.py", "POLARITIES", "POLARITY_DEFINITIONS"),
+    ("src/coordinator/repositories/neo4j_rule_repository.py", "ORIGINS", "ORIGIN_DEFINITIONS"),
+    ("src/coordinator/repositories/neo4j_rule_repository.py",
+     "RULE_TYPE_SOURCES", "RULE_TYPE_SOURCE_DEFINITIONS"),
 ]
+
+#: Frozensets in the governed files that are deliberately NOT value vocabularies. A REASON
+#: IS REQUIRED — the same discipline `identity_from_card.EXCLUDED_FIELDS` uses, and for the
+#: same stated reason: "excluded" without one is how something gets quietly dropped to make
+#: a check go green. The audit below fails on any frozenset that is neither governed nor
+#: listed here, which is what stops this registry from silently falling behind the code.
+NOT_A_VALUE_VOCABULARY: dict[str, str] = {
+    "_BASE_CONTENT": "a property-NAME allowlist, not a set of values a property may take. "
+                     "Its members are documented individually where they are declared.",
+    "SINGLE_VALUED_PREDICATES": "a SUBSET of PREDICATE_VOCABULARY marking recency-wins "
+                                "behaviour. Its members are already defined by "
+                                "PREDICATE_DEFINITIONS; a second dict would be a second "
+                                "place to drift.",
+    "_BENIGN_SCHEMA_RACE": "Neo4j error codes tolerated during concurrent schema creation. "
+                           "Not domain terms.",
+}
 
 #: A definition shorter than this is not a definition, it is a restatement of the term.
 MIN_DEFINITION_CHARS = 25
@@ -93,7 +113,24 @@ def main() -> int:
             print(f"  {vocab:<22} in {mod}  (definitions: {defs})")
         return 0
 
+    # AUDIT FIRST: a vocabulary absent from GOVERNED is invisible to the rest of this
+    # check, so the registry's own completeness is part of the constraint. This found two
+    # real misses (ORIGINS, RULE_TYPE_SOURCES) on the first run after it was written.
+    seen: set[str] = set()
+    for mod in sorted({m for m, _, _ in GOVERNED}):
+        path = ROOT / mod
+        if not path.exists():
+            continue
+        for m in re.finditer(r"^([A-Za-z_][A-Za-z0-9_]*)\s*(?::[^=]+)?=\s*frozenset\(",
+                             path.read_text(encoding="utf-8"), re.M):
+            seen.add(m.group(1))
+    governed = {v for _, v, _ in GOVERNED}
+    ungoverned = sorted(seen - governed - set(NOT_A_VALUE_VOCABULARY))
     problems: list[str] = []
+    for name in ungoverned:
+        problems.append(f"frozenset '{name}' is neither in GOVERNED nor declared in "
+                        f"NOT_A_VALUE_VOCABULARY — an ungoverned vocabulary is invisible "
+                        f"to this check, so say which it is and why")
     undetermined: list[str] = []
     checked = defined = 0
 
