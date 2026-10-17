@@ -330,6 +330,47 @@ card-sourced one per ADR-019). The 256 live nodes still carry the inert properti
 `scripts/utils/drop_counter_properties.py` removes them, dry-run by default, and refuses
 if any value is non-default.
 
+## AMENDMENT 2026-10-17 — `policy` is a sibling of `behaviour`, and C17 now bites
+
+Two changes, both forced by the semantics pass that made every controlled term carry a
+definition. Writing the definitions is what made the first one visible: `behaviour`
+could not be defined without noticing it held two different kinds of thing.
+
+**`TRAIT_KINDS` gains `policy`.** `behaviour` reached **34 live nodes** against the
+vocabulary's own stated trigger — *"revisit when a single `kind` passes ~15-20 nodes"* —
+and inspection showed why. One bucket carried bare dispositions from a list field
+(`behavior.traits`: "seductive", "eager") AND full procedural clauses from seven scalar
+fields (`behavior.small_talk`, `.emoji_policy`, `.clarifying_questions`, `.pace`,
+`.humor`, `.formality`, `.relationship_to_user` — "no pretense of professionalism",
+"every conversation steers to X"). The remedy is a **sibling value, not a hierarchy**: a
+conversational policy is not a more specific behaviour, it is a different thing, so
+nesting it would have kept a genus label that is wrong for half its members. `style` is
+what she sounds LIKE; a `policy` is a rule she follows about how an exchange proceeds.
+
+The mapper now produces emotional 14, behaviour 10, psychological 10, tic 9, policy 7,
+style 1 — 51 Trait nodes, every bucket under the trigger.
+
+⚠️ **The ~15-20 trigger has no external authority and the comment in `identity_shapes.py`
+says so.** ANSI/NISO Z39.19's only granularity section is qualitative, and "7±2" is about
+recall during a single task, not about how many members a stored category may hold. It is
+this repo's own engineering heuristic. It is now asserted mechanically at the TOP of its
+range by `test_no_kind_exceeds_its_own_revisit_trigger`, whose failure message says what
+to do — split into a sibling, and check first whether the bucket holds two different
+kinds of thing — rather than merely failing.
+
+**C17 is enforced, which needed an operand that did not exist.** The criterion is
+*"every label, relationship type and temporal field in the schema is demanded by at least
+one question; anything demanded by none does not get built"*, and the ecosystem's
+`check.py` computed the demanded half, printed it under a heading that reads as a
+finding, and compared it to nothing. Nine built names sat undemanded for three weeks with
+healthy-looking output. `src/coordinator/graph_surface.py` is now the other operand: the
+identity half is DERIVED from `SHAPES`/`EDGES` here, so it cannot drift, and the
+hand-written rule/proposal half is re-derived from the Cypher on every invariant run.
+
+See [ADR-017's 2026-10-17 amendment](017-learned-preferences-may-change-soft-walls-never-hard-walls.md)
+for how the nine resolved, and [INVARIANTS](../INVARIANTS.md) for the exemption class —
+which had to be defined here, because no published methodology defines one.
+
 ## Related
 
 - [ADR-014](014-the-rule-store-is-a-neo4j-projection-superseding-the-adr-001-and-adr-006-rejections.md) — the three layers, and the graph as a droppable projection

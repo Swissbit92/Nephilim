@@ -103,8 +103,15 @@ TRAIT_KIND_DEFINITIONS: dict[str, str] = {
     # (see the flatness note above). These four definitions exist to make the boundary
     # decidable so the overload can be split deliberately rather than by taste.
     "behaviour": "What she DOES, observably, as a pattern — an action another person "
-                 "could watch her perform. If it explains WHY she does it, use "
-                 "`psychological`; if it is what she FEELS, use `emotional`.",
+                 "could watch her perform, usually stated as a disposition "
+                 "(\"seductive\", \"eager\"). If it explains WHY she does it, use "
+                 "`psychological`; if it is what she FEELS, use `emotional`; if it is a "
+                 "standing rule about how an exchange proceeds, use `policy`.",
+    "policy": "A standing rule governing HOW AN EXCHANGE PROCEEDS — what she does about "
+              "small talk, clarifying questions, emoji, formality, pace. Procedural and "
+              "conditional, not aesthetic: `style` is what she sounds LIKE, a policy is a "
+              "rule she follows. Split out of `behaviour` on 2026-10-17 because that "
+              "bucket held both bare dispositions and full procedural clauses.",
     "psychological": "WHY she is as she is — a motive, a wound, a drive, a defence. "
                      "Explanatory rather than observable. Never a feeling in the moment "
                      "(`emotional`) and never an action (`behaviour`).",
@@ -139,7 +146,7 @@ EXPERTISE_LEVEL_DEFINITIONS: dict[str, str] = {
 
 
 TRAIT_KINDS: FrozenSet[str] = frozenset({"behaviour", "psychological", "emotional",
-                                         "style", "tic"})
+                                         "style", "tic", "policy"})
 BOUNDARY_KINDS: FrozenSet[str] = frozenset({"ethics", "content", "personal"})
 EXPERTISE_LEVELS: FrozenSet[str] = frozenset({"strong", "familiar", "avoid"})
 
