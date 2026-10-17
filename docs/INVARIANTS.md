@@ -2,7 +2,7 @@
 title: Invariants
 status: active
 created: 2026-10-02
-last_reviewed_on: 2026-10-10
+last_reviewed_on: 2026-10-17
 review_in: 12 months
 applies_to: nephilim
 ---
@@ -132,6 +132,67 @@ stopped after two consecutive failures and could only be cleared by a successful
 which is the thing it was blocking. Two transient draws reverted a situation to the
 lifetime cache for the rest of the process's uptime, logged at INFO. Bound the *rate*
 (exponential backoff) rather than the total whenever the failure may be transient.
+
+## Every declared term carries a definition
+
+Status: active
+Statement: Every member of every controlled vocabulary registered in `scripts/checks/every_declared_term_has_a_definition.py` has a definition of at least 25 characters, and no definition exists for a term that is not in its vocabulary.
+Falsifiable: WHEN a vocabulary gains a term with no definition, OR a definition is shorter than 25 characters, OR a definition names a term absent from its vocabulary, THE CHECK SHALL exit 1 and name the term. A vocabulary it cannot read exits 2, which is not a pass.
+Check: scripts/checks/every_declared_term_has_a_definition.py
+
+**Semantics are mandatory from 2026-10-17.** This repo enforced its vocabularies strictly
+long before it defined them: an out-of-vocabulary value has always raised at the write
+path, while not one of the 55 terms said what it MEANT. The meaning lived in Python
+comments and ADR prose — unqueryable, and invisible to whatever assigns the next value.
+
+**Why that is a data problem and not a documentation problem.** `TRAIT_KINDS` holds
+`behaviour`, `psychological`, `emotional`, `style` and `tic`; **34 live nodes are tagged
+`behaviour` and 20 `psychological`**, and nothing stated the difference. The same shape
+has already cost this repo real data: `has_opinion_on` in the fact store had an
+unconstrained range, and **half of everything the extractor ever wrote landed in the two
+vaguest predicates** — three of twelve live rows were facts about the *assistant's own
+reasoning*. Noy & McGuinness name an unconstrained range ("do not make the range THING")
+as the modelling defect, and **the literature bounds relation GENERICITY, not relation
+count.** A vague term is where data goes to die.
+
+**A definition must DISTINGUISH, not restate.** "behaviour: a behaviour" satisfies no
+purpose; the useful form says what belongs here *and what goes next door instead*. The
+25-character floor exists because a shorter string is almost always a restatement — the
+check was watched rejecting `"tic": "a tic"`.
+
+⚠️ **DEFINITIONS ARE NOT PROMPT MATERIAL, and this is the constraint most likely to be
+violated by someone acting in good faith.** Two separate measurements forbid it:
+
+- Adding identity content to her prompt is a **closed change**: voice distinctiveness
+  0.804 with injection off, 0.625 on, and three deliberate reframings at 0.708 / 0.542 /
+  0.500 — every one below the off-baseline (ADR-006).
+- The extractor prompt is capped by a different result: schema pruning beat the full
+  schema at **~6x fewer tokens**, and small models "degrade sharply with schema bloat".
+  The extractor currently receives the 33 predicates as a bare comma-joined list of
+  names. Appending 33 definitions to it is precisely that bloat.
+
+So definitions serve the human reading the code and this check. If they ever reach a
+model, they reach it **pruned to the few terms a given call could plausibly use**.
+
+**What this invariant deliberately does NOT require.** No SKOS, RDFS, OWL, PROV-O or
+SHACL; no `broader`/`narrower` hierarchy; no external vocabulary (schema.org, FOAF,
+Dublin Core, OWL-Time, Wikidata, BFO). Researched 2026-10-17 and declined on evidence,
+not taste: those solve interoperability between parties who cannot talk to each other, at
+term counts no one person can hold — thesauri exist for 40k–400k terms and this is 55.
+A hierarchy would also make extraction *worse*, turning one decode decision into two.
+The ecosystem's own ontology research reached the same verdict one level up ("adopt none
+of the candidates wholesale") and gates the formal apparatus behind a stated trigger: **a
+second person or consumer.** That trigger governs here too.
+
+**Also deliberately not required: that definitions improve accuracy.** Measured
+elsewhere: 13B models reach 83–94% ontology *conformance* alongside **22–38% F1** — the
+model reliably picks a valid predicate while getting the fact wrong. Definitions buy
+conformance and human clarity. Any future claim that they buy correctness needs its own
+measurement.
+
+**Adding a vocabulary to the registry is how it becomes governed.** A controlled
+vocabulary absent from `GOVERNED` is invisible to this check, so the registry is part of
+the constraint rather than an implementation detail; `--list` prints what is covered.
 
 ## Success is never inferred from an exit code
 

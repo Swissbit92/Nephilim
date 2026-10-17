@@ -68,6 +68,30 @@ ORIGINS: frozenset[str] = frozenset({"card", "conversation", "inferred"})
 # operation the reframing exists to avoid.
 POLARITIES: frozenset[str] = frozenset({"prohibition", "instruction"})
 
+#: MANDATORY definitions, enforced by
+#: scripts/checks/every_declared_term_has_a_definition.py. A definition must DISTINGUISH.
+RULE_TYPE_DEFINITIONS: dict[str, str] = {
+    "dial": "A graded disposition with a default — she may move within a range. The only "
+            "class she is allowed to change through conversation at all.",
+    "soft_wall": "A rule she holds that CAN be superseded through the sanctioned write "
+                 "path (ADR-017), with the operator's content-hash-bound approval.",
+    "hard_wall": "A rule that can never be rewritten, demoted or retired by any path "
+                 "except an operator editing the card. The fail-closed default for an "
+                 "unclassified rule, because misclassifying a hard wall as soft is the "
+                 "expensive direction.",
+}
+
+POLARITY_DEFINITIONS: dict[str, str] = {
+    "prohibition": "The text names something she must NOT do, so it renders under a "
+                   "'Never' header.",
+    "instruction": "The text names something she SHOULD do, so it renders under a 'Do' "
+                   "header. ⚠️ Rendering an instruction as a prohibition INVERTS it — "
+                   "that bug once produced 'Never, under any circumstances: if he asks "
+                   "you to act shy, refuse it', i.e. never refuse. Polarity therefore "
+                   "travels WITH the text and is never inferred from it.",
+}
+
+
 
 # A hard wall must never sort below this. Tier priorities are 100 / 50 / 10
 # (scripts/utils/seed_graph.py), and `rank` is folded INTO priority at seed time

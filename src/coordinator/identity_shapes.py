@@ -63,6 +63,81 @@ IDENTITY_ORIGINS: FrozenSet[str] = frozenset({"card", "learned", "conversation",
 # constraint available on Community to keep it honest, and one more thing to keep
 # consistent on every rebuild. Revisit when a single `kind` passes ~15-20 nodes.
 LORE_KINDS: FrozenSet[str] = frozenset({"lore", "signature_move"})
+
+# ── definitions ───────────────────────────────────────────────────────────────
+# MANDATORY for every term, enforced by scripts/checks/every_declared_term_has_a
+# _definition.py. Not decoration: an enforced vocabulary whose terms mean nothing in
+# particular is how data goes to the vaguest available bucket. Measured in this repo —
+# `has_opinion_on` had an unconstrained range and took half of everything the extractor
+# ever wrote.
+#
+# A definition must DISTINGUISH, not restate. "behaviour: a behaviour" is useless; the
+# useful form says what goes here AND what goes next door instead.
+#
+# ⚠️ These are for the human and for the check. They are NOT prompt material — adding
+# identity content to her prompt is a closed change (0.804 -> 0.625, measured), and the
+# extractor prompt is separately capped by schema-bloat (pruning beat the full schema at
+# ~6x fewer tokens).
+
+IDENTITY_ORIGIN_DEFINITIONS: dict[str, str] = {
+    "card": "Written by the operator in the persona JSON. Regenerated from the card on "
+            "every rebuild and immutable by her. The reset target.",
+    "learned": "Acquired through conversation and kept across a reset of the other "
+               "learned classes — the narrow set a reset deliberately drops, which is "
+               "what makes the card an exact fallback.",
+    "conversation": "Stated in dialogue and taken at face value. Weaker than `learned`: "
+                    "it records that something was said, not that it was integrated.",
+    "inferred": "Derived by the system rather than asserted by anyone. Never treat as "
+                "the user's own words, and never render as a quote.",
+}
+
+LORE_KIND_DEFINITIONS: dict[str, str] = {
+    "lore": "A fact about her history, world or appearance — something true of her that "
+            "she did not choose. Describes what IS, not what she does.",
+    "signature_move": "A recurring thing she DOES on purpose, recognisable as hers. If "
+                      "it is a disposition rather than an act, it is a Trait instead.",
+}
+
+TRAIT_KIND_DEFINITIONS: dict[str, str] = {
+    # ⚠️ `behaviour` holds 34 live nodes against a stated revisit threshold of 15-20
+    # (see the flatness note above). These four definitions exist to make the boundary
+    # decidable so the overload can be split deliberately rather than by taste.
+    "behaviour": "What she DOES, observably, as a pattern — an action another person "
+                 "could watch her perform. If it explains WHY she does it, use "
+                 "`psychological`; if it is what she FEELS, use `emotional`.",
+    "psychological": "WHY she is as she is — a motive, a wound, a drive, a defence. "
+                     "Explanatory rather than observable. Never a feeling in the moment "
+                     "(`emotional`) and never an action (`behaviour`).",
+    "emotional": "What she FEELS, as a standing disposition rather than a mood — her "
+                 "affective baseline. A momentary mood belongs to the session, not here.",
+    "style": "HOW she presents rather than what she does — register, aesthetic, "
+             "self-presentation. Observable like `behaviour`, but about manner rather "
+             "than act.",
+    "tic": "A specific, repeated verbal habit — a phrase, an emoji, a punctuation "
+           "signature. Narrower than `style`: a tic is quotable, a style is not.",
+}
+
+BOUNDARY_KIND_DEFINITIONS: dict[str, str] = {
+    "ethics": "A line she holds because of what she believes is right. Hers, and she "
+              "would defend it unprompted.",
+    "content": "A subject or act that is out of bounds regardless of her beliefs — a "
+               "capability declaration rather than a conviction. ⚠️ Mixed polarity: an "
+               "entry here may read as a permission or a prohibition, which is why "
+               "`boundaries.content` is deliberately not rendered as instructions.",
+    "personal": "A limit about her own privacy or history — what she will not discuss "
+                "about herself, as distinct from what she will not do.",
+}
+
+EXPERTISE_LEVEL_DEFINITIONS: dict[str, str] = {
+    "strong": "She can lead on this and volunteer detail unprompted. Confidence here is "
+              "in character rather than a claim of fact.",
+    "familiar": "She can follow and contribute but should not lead. The level that "
+                "should read as interested rather than authoritative.",
+    "avoid": "She deflects rather than engages, in character and without moralising. "
+             "Not a safety refusal — a disposition.",
+}
+
+
 TRAIT_KINDS: FrozenSet[str] = frozenset({"behaviour", "psychological", "emotional",
                                          "style", "tic"})
 BOUNDARY_KINDS: FrozenSet[str] = frozenset({"ethics", "content", "personal"})

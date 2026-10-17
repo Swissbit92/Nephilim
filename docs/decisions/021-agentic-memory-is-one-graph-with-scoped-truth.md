@@ -157,6 +157,78 @@ The test is CoALA's and it is structural rather than a content list: **does this
 one decision cycle?** Nobody publishes a content list — checked across Letta, LangGraph,
 Cognee, mem0 and Zep — so inventing one here would be inventing precedent.
 
+### Semantics: definitions are mandatory, formal ontology is not
+
+Added 2026-10-17, after the schema above was accepted, because the question "does this
+include semantics?" exposed that it did not.
+
+**The gap.** This repo enforced its vocabularies strictly and defined none of them — 55
+controlled terms across 8 vocabularies, every one a bare string whose meaning lived in a
+Python comment. The live graph carries 30 distinct property keys and **not one** is a
+definition, label, description or note.
+
+**That is a data problem, not a documentation problem.** 34 live nodes are tagged
+`behaviour` and 20 `psychological` with nothing stating the difference, and the same shape
+has already cost real data here: `has_opinion_on` had an unconstrained range and **half of
+everything the extractor ever wrote landed in the two vaguest predicates** — three of
+twelve live rows were facts about the *assistant's own reasoning*. Noy & McGuinness name
+an unconstrained range ("do not make the range THING") as the modelling defect, and the
+literature bounds relation **genericity**, not relation count.
+
+**Decision: a definition per term, enforced — and nothing more.** Now a standing
+constraint with a wired check, [INVARIANTS.md](../INVARIANTS.md) → "Every declared term
+carries a definition". 55/55 defined, and the check was watched failing three ways: an
+undefined new term, a definition that restates its term, and a definition orphaned from
+its vocabulary.
+
+**Declined on evidence rather than taste:** SKOS, RDFS, OWL, PROV-O, SHACL, and every
+external vocabulary (schema.org, FOAF, Dublin Core, OWL-Time, Wikidata, BFO/DOLCE/SUMO).
+They solve interoperability between parties who cannot talk to each other, at term counts
+no one person can hold — thesauri exist for 40k–400k terms; this is 55. schema.org is also
+a licence trap on import (CC BY-SA share-alike), and SKOS has no deprecation mechanism at
+all. The ecosystem's own ontology research reached the same verdict one level up — "adopt
+none of the candidates wholesale" — and gates the formal apparatus behind a stated
+trigger: **a second person or consumer.** That trigger governs here too.
+
+**Hierarchy declined, and this was the counter-intuitive one.** A `broader`/`narrower`
+tree over 33 predicates would make extraction *worse*: it turns one decode decision into
+two, each a fresh chance to pick wrong. The measured lever is showing **fewer** options per
+call — schema pruning beat the full schema at ~6x fewer tokens, and small models degrade
+sharply with schema bloat — not organising more of them. Flat is the correctly-sized
+artifact, and Graphiti does the same.
+
+**Validation is two layers, because one is not enough.** Neo4j Community gives uniqueness
+only — no property existence, no types, no node keys, zero APOC. That gap is smaller than
+it looks: **most of what needs validating is not a shape at all.** SHACL would not have
+caught the `polarity` inversion either, because "did this supersession preserve an
+invariant across properties" is not "does this node have property X of type Y". So:
+
+1. **Write-time vocabulary checks** — already built, and stronger than a database
+   constraint because they reject before a row exists. Keep them fail-loud.
+2. **Periodic integrity queries that should return zero rows** — already built as
+   `check_integrity()`, and what actually caught the four-way `supersede_rule` break.
+   This is dbt's own definition of a test, arrived at here independently.
+
+SHACL via neosemantics remains the decided-but-unbuilt route for shape constraints if they
+are ever wanted. Nothing in this ADR needs it.
+
+**Conformance is not correctness, and nothing here depends on confusing them.** Measured:
+13B models reach 83–94% ontology conformance alongside **22–38% F1** — the model reliably
+picks a valid predicate while getting the fact wrong. Definitions buy conformance and human
+clarity. Any future claim that they buy accuracy needs its own measurement.
+
+⚠️ **Definitions never reach her prompt.** Adding identity content to the prompt is the
+closed change (0.804 → 0.625; reframings 0.708 / 0.542 / 0.500), and the extractor prompt
+is separately capped by schema bloat. If definitions ever reach a model, they reach it
+pruned to the few terms that call could plausibly use.
+
+**One safety property, now deliberate rather than accidental.** The schema above carries
+the predicate as a **property** on a single edge type, not as the relationship type
+itself. That is also an injection boundary: Cypher cannot parameterise a relationship
+type, so a predicate used as a type would be string-interpolated into a query. Keeping
+the predicate a property and the vocabulary closed is a security control, not only a
+data-quality one.
+
 ### Write path
 
 Three rules, each from how the reference implementations actually work.
