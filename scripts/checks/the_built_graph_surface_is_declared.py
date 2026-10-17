@@ -19,6 +19,14 @@ reported `Message` and `LEARNED_FROM` as live schema — two names with no node,
 and no writer. Planned is not built, so the scan walks the AST and skips the string
 literals Python treats as documentation.
 
+**What this scan still cannot see, verified absent from all four files rather than
+assumed.** A label or type assembled by string concatenation, `.format()` or `%`-format;
+and a `SET`/`REMOVE` clause whose VARIABLE name is itself an interpolation. These are
+documented rather than handled because none occurs in the scanned sources today and
+handling them speculatively would add patterns nothing exercises. If you introduce one,
+this check will not catch it — build the name in an f-string instead, which it does see,
+including a type taken from a variable or a dict lookup.
+
 Exit 0 = the manifest matches the source · 1 = it does not · 2 = could not determine.
 """
 from __future__ import annotations
@@ -69,8 +77,17 @@ _BARE_LABEL = re.compile(r"\b(?:REMOVE|SET)\s+[a-z0-9_]+((?::[A-Z_][A-Za-z0-9_]*
 #: elsewhere in the same file. A secondary label introduced ONLY through this idiom would
 #: have been invisible. The sentinel keeps the clause parseable and is dropped from the
 #: results, since the identity half of the manifest comes from SHAPES anyway.
+#:
+#: ⚠️ **ALL CAPS, and that is the whole point.** A label may be mixed case but a
+#: relationship type here may not (`_REL` is `[A-Z_][A-Z0-9_]*`), so a mixed-case sentinel
+#: satisfies the label pattern and fails the relationship one — which relocated the blind
+#: spot instead of closing it. Reproduced on the real line
+#: `MERGE (p)-[:{_LABEL_TO_EDGE[label]}]->(n)` at `identity_repository.py:211`: the type
+#: came back in neither set. It was inert only because every type reachable through that
+#: idiom today is already in `EDGES`, so the SHAPES derivation was the safety net rather
+#: than the scan. One sentinel that satisfies both patterns removes the asymmetry.
 _FSTRING_HOLE = re.compile(r"\{[A-Za-z_][A-Za-z0-9_.\[\]']*\}")
-_HOLE_SENTINEL = "FstringHolePlaceholder"
+_HOLE_SENTINEL = "FSTRINGHOLEPLACEHOLDER"
 
 
 def _non_docstring_strings(path: pathlib.Path) -> list[str]:
@@ -126,35 +143,75 @@ def _non_docstring_strings(path: pathlib.Path) -> list[str]:
     return out
 
 
-def derive() -> tuple[set[str], set[str]]:
+def _resolve(token: str, where: str, unresolvable: list[str]) -> str | None:
+    """One scanned name, with the three cases an interpolation can produce.
+
+    - No sentinel: a literal name. Return it.
+    - Entirely the sentinel: a FULLY dynamic name — `(n:{label}` or
+      `[:{_LABEL_TO_EDGE[label]}]`. There is no literal to learn, and every value it can
+      take comes from `SHAPES`/`EDGES`, which is already the manifest's own source. Drop
+      it; nothing is lost.
+    - Sentinel plus a literal fragment: a PARTIALLY dynamic name — `[:HAS_{kind}]`. This
+      is the dangerous one. Stripping the sentinel leaves `HAS_`, a name that does not
+      exist, and the scan would then compare the manifest against a fiction. It cannot be
+      resolved statically and it is NOT covered by the SHAPES derivation, so it is
+      recorded as unresolvable and the check fails rather than guessing.
+    """
+    if _HOLE_SENTINEL not in token:
+        return token
+    if token == _HOLE_SENTINEL:
+        return None
+    unresolvable.append(f"{token.replace(_HOLE_SENTINEL, '<interpolated>')} in {where}")
+    return None
+
+
+def derive(unresolvable: list[str] | None = None) -> tuple[set[str], set[str]]:
     labels: set[str] = set()
     rels: set[str] = set()
+    sink = unresolvable if unresolvable is not None else []
     for path in CYPHER_SOURCES:
         if not path.exists():
             raise FileNotFoundError(path)
         for text in _non_docstring_strings(path):
             text = _FSTRING_HOLE.sub(_HOLE_SENTINEL, text)
             for group in _LABEL.findall(text) + _BARE_LABEL.findall(text):
-                # The sentinel is label-SHAPED on purpose (anything else would make
-                # `(n:<hole>:Real` unparseable again), so it can sit flush against a real
-                # name when the interpolation is adjacent — `(n:CurrentIdentity{expr})`
-                # reassembles as one token. Strip it as a substring, not by equality.
-                labels |= {part for part in
-                           (seg.replace(_HOLE_SENTINEL, "") for seg in group.split(":"))
-                           if part}
-            rels |= {r.replace(_HOLE_SENTINEL.upper(), "") or r
-                     for r in _REL.findall(text)}
+                for seg in group.split(":"):
+                    if seg and (name := _resolve(seg, path.name, sink)):
+                        labels.add(name)
+            for raw in _REL.findall(text):
+                if name := _resolve(raw, path.name, sink):
+                    rels.add(name)
     return labels, rels
 
 
 def main() -> int:
     sys.path.insert(0, str(ROOT))
+    unresolvable: list[str] = []
     try:
         from src.coordinator.graph_surface import BUILT_LABELS, BUILT_RELS
-        derived_labels, derived_rels = derive()
+        derived_labels, derived_rels = derive(unresolvable)
     except Exception as exc:  # pragma: no cover - environment, not logic
         print(f"could not determine: {exc}")
         return 2
+
+    # THREE stages, in this order, because each would mask the next.
+    #
+    # 1. An unresolvable name is a DEFINITE finding and comes first. Behind the empty-scan
+    #    guard, a file whose only graph statement is partly interpolated exits 2 ("could
+    #    not determine") and the real reason never prints.
+    # 2. The empty-scan guard comes next. It cannot come first for the reason above, and
+    #    it cannot come last because an empty scan makes every declared name look
+    #    unbuilt — a wall of false failures instead of one honest "I could not tell".
+    # 3. Only then the both-directions diff.
+    if unresolvable:
+        for item in sorted(set(unresolvable)):
+            print(f"FAIL {item} mixes a literal fragment with an interpolation, so no "
+                  f"static scan can tell what name it builds — and the SHAPES/EDGES "
+                  f"derivation does not cover it either. Build the whole name in the "
+                  f"interpolation (`[:{{EDGES[k]}}]`, not `[:HAS_{{k}}]`) so this check "
+                  f"can see it, or add it to graph_surface by hand and exclude it here "
+                  f"with a reason")
+        return 1
 
     if not derived_labels or not derived_rels:
         print("could not determine: the scan found no Cypher at all — "

@@ -116,6 +116,14 @@ def _drift_check():
      "so the whole clause matches nothing"),
     ("CREATE (a)-[:_ODD_REL]->(b)", None, "_ODD_REL",
      "the same underscore gap on the relationship pattern"),
+    ('f"MERGE (p)-[:{_MAP[label]}]->(n)"', None, None,
+     "a FULLY interpolated relationship type — `identity_repository.py:211`. There is no "
+     "literal to learn and every value comes from EDGES, so it must be dropped silently "
+     "rather than guessed. ⚠️ The sentinel must be ALL CAPS for the clause to match at "
+     "all: a label may be mixed case but `_REL` is all-caps-only, so a mixed-case "
+     "sentinel satisfied the label pattern and failed the relationship one — which "
+     "relocated the blind spot instead of closing it"),
+    ("SET n:A:B", "A", None, "a bare multi-label SET with no parenthesis"),
 ])
 def test_the_scan_sees_the_label_classes_it_once_could_not(
         tmp_path, monkeypatch, cypher, expect_label, expect_rel, why):
@@ -132,7 +140,9 @@ def test_the_scan_sees_the_label_classes_it_once_could_not(
                    f'Q = {cypher if cypher.startswith("f") else repr(cypher)}\n')
     monkeypatch.setattr(drift, "CYPHER_SOURCES", (src,))
 
-    labels, rels = drift.derive()
+    unresolvable: list[str] = []
+    labels, rels = drift.derive(unresolvable)
+    assert not unresolvable, f"nothing here is partially interpolated: {unresolvable}"
     if expect_label:
         assert expect_label in labels, f"the scan cannot see {why}; it saw {sorted(labels)}"
     if expect_rel:
@@ -149,3 +159,35 @@ def test_the_scan_refuses_to_pass_on_an_empty_result(tmp_path, monkeypatch):
     src.write_text('X = "nothing graph-shaped in here at all"\n')
     monkeypatch.setattr(drift, "CYPHER_SOURCES", (src,))
     assert drift.main() == 2
+
+
+@pytest.mark.parametrize("cypher,fragment", [
+    ('f"MERGE (p)-[:HAS_{kind}]->(n)"', "HAS_"),
+    ('f"MERGE (n:Trait{suffix} {{k: 1}})"', "Trait"),
+])
+def test_a_partly_interpolated_name_is_refused_not_guessed(
+        tmp_path, monkeypatch, cypher, fragment):
+    """The gap that survived the first fix, and the one shape that must FAIL loudly.
+
+    A literal fragment glued to an interpolation cannot be resolved statically, and it is
+    not covered by the SHAPES/EDGES derivation either. Stripping the sentinel leaves a
+    truncated name that does not exist — `HAS_` — and the check would then compare the
+    manifest against a fiction. So it is recorded as unresolvable and `main()` fails.
+
+    A FULLY interpolated name is the opposite case and is dropped silently: every value
+    it can take already comes from SHAPES/EDGES, which is the manifest's own source.
+    """
+    drift = _drift_check()
+    src = tmp_path / "partial.py"
+    src.write_text(f"Q = {cypher[1:]}\n" if cypher.startswith("f") else f"Q = {cypher}\n")
+    src.write_text(f"Q = {cypher}\n")
+    monkeypatch.setattr(drift, "CYPHER_SOURCES", (src,))
+
+    unresolvable: list[str] = []
+    labels, rels = drift.derive(unresolvable)
+    assert unresolvable, "a partly interpolated name was resolved instead of refused"
+    assert fragment in unresolvable[0]
+    assert fragment not in labels and fragment not in rels, (
+        f"{fragment!r} is a TRUNCATED name that does not exist; it must not enter the "
+        f"derived surface")
+    assert drift.main() == 1

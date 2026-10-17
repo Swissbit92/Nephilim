@@ -38,6 +38,18 @@ Nothing downstream closed the gap: surveyed 2026-10-17 across NeOn's ORSD, ROBOT
 production pipeline enforces demand-traceability at all, let alone defines an
 exemption class for it. So the category is defined here.
 
+**There are TWO kinds of exemption here, and reaching for the wrong template is how the
+next one gets justified badly.** `:CurrentRule` and `:CurrentIdentity` are *persistent and
+readable* — a question could point at them and would be wrong only because they are pure
+mechanism. `:_PropertyKeyRegistry` is *transient and unobservable*: it never survives its
+own transaction, so no read can reach it at all, which makes it closer to an index than to
+a label. Both are legitimate; they are not the same argument. Note which one applies when
+you add an entry.
+
+⚠️ **Do not teach the drift check to skip a CREATE-then-DELETE-in-one-statement label**
+instead of exempting it. That looks tidier and opens a real loophole: any undeclared label
+could then be hidden by pairing it with an immediate delete.
+
 A name earns an exemption ONLY if a competency question could never mention it
 without becoming a question about Cypher. `:CurrentRule` qualifies: it exists because
 Neo4j has no partial index and `MERGE` would otherwise resurrect a soft-expired node,
