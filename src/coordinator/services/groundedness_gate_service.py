@@ -93,7 +93,26 @@ _NO_FLAG_REASONING = (
 )
 
 
-def _classifier_system(live_state: bool = True) -> str:
+_GROUNDING_PREAMBLE = (
+    "The speaker WAS given a list of remembered facts about this user before "
+    "writing the draft. Those facts are grounding: they were supplied this "
+    "turn, from the user's own earlier statements.\n\n"
+    "--- facts available to the speaker this turn ---\n"
+    "{grounding}\n"
+    "--- end of facts ---\n\n"
+)
+
+_NO_FLAG_RECALLED = (
+    "- A claim that is SUPPORTED BY the remembered facts listed above, "
+    "including a paraphrase of one. The speaker was told it, so it is not a "
+    "guess — recalling it correctly is the whole point. Judge support by "
+    "MEANING, not wording: \"you hate meat\" is supported by \"is vegetarian\", "
+    "and \"you play GTA 5 and go to the gym\" is supported by those two "
+    "entries listed separately.\n"
+)
+
+
+def _classifier_system(live_state: bool = True, grounding: str = "") -> str:
     """Build the classifier prompt.
 
     Deliberately NOT a module constant any more: the live-state clause is
@@ -101,9 +120,12 @@ def _classifier_system(live_state: bool = True) -> str:
     clean A/B and an instant revert.
     """
     return (
-        "You are reviewing a DRAFT response before it is sent. No search, tool, "
-        "or live data lookup was used to produce this draft.\n\n"
-        "Flag the draft if it presents any of these as established fact:\n"
+        "You are reviewing a DRAFT response before it is sent. "
+        + ("No search, tool, or live data lookup was used to produce this "
+           "draft.\n\n" if not grounding
+           else "No search or live lookup was used, but remembered facts "
+                "WERE.\n\n" + _GROUNDING_PREAMBLE.format(grounding=grounding))
+        + "Flag the draft if it presents any of these as established fact:\n"
         "- A SPECIFIC, FALSIFIABLE, TIME-SENSITIVE claim ABOUT THE WORLD — a "
         "score, date, price, published statistic, or outcome of an actual "
         "real-world event (sports, elections, markets, breaking news). It must "
@@ -115,6 +137,7 @@ def _classifier_system(live_state: bool = True) -> str:
         "correctly from is the most dangerous case, not an excuse — judge the "
         "premise on its own, not the argument built on it.\n\n"
         "Do NOT flag:\n"
+        + (_NO_FLAG_RECALLED if grounding else "")
         + _NO_FLAG_REASONING
         + "- In-character fictional/persona lore or worldbuilding (this is a "
         "roleplay companion; its own backstory or the world's fiction is not a "
@@ -162,11 +185,34 @@ class GroundednessGateService:
         """
         self.llm_client = llm_client
 
-    def check(self, user_turn: str, drafted_response: str) -> GroundednessVerdict:
+    def check(self, user_turn: str, drafted_response: str,
+              grounding: str = "") -> GroundednessVerdict:
         """Check whether `drafted_response` should be replaced with an abstention.
 
         Never raises: on any classifier failure, fails open (never blocks a
         response the legacy path would have returned).
+
+        🔴 **`grounding` exists because the gate destroyed three correct answers
+        in its first live run beside the ADR-022 numbered recall frame.** The
+        gate saw only the question and the draft, so it could not tell a recited
+        fact from an invented one — and `_FLAG_LIVE_STATE` covers "the user's own
+        state", which is precisely what the frame now answers. Measured
+        2026-10-18 on the live backend, all three drafts CORRECT and all three
+        replaced with "I don't know, want me to search?":
+
+            "You read, play GTA 5, and hit the gym"            -> facts 6,7,8
+            "No way, I know how much you hate meat"            -> fact 2
+            "You've been thinking about quitting your job ..."  -> fact 16
+
+        ⚠️ The ADR-022 A/B measured 0.208 false refusals **without this gate in
+        the path** — the harness called the model directly. So that figure did
+        not describe production, the same class of error as quoting a
+        single-turn probe rate. The gate is the bottleneck the frame exposed,
+        not a second opinion on it.
+
+        Pass the injected recall block (or "") — never the whole system prompt,
+        which would hand the classifier the persona card and the lore as
+        "grounding" and make everything in-character unflaggable.
         """
         from ..config import get_settings
 
@@ -180,7 +226,8 @@ class GroundednessGateService:
                 "Answer (YES/NO):"
             )
             system = _classifier_system(
-                live_state=get_settings().groundedness.live_state_claims_enabled
+                live_state=get_settings().groundedness.live_state_claims_enabled,
+                grounding=grounding,
             )
             raw_verdict = self.llm_client.complete(system, user_prompt)
             flagged = self._parse_verdict(raw_verdict)
