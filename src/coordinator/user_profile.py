@@ -244,6 +244,30 @@ class UserProfile:
                 if text and key not in seen:
                     seen.add(key)
                     out.append(text)
+
+        # 🔴 TRUNCATION IS LOUD, because silent truncation here FREEZES her.
+        # The cap keeps the OLDEST entries, so once the store reaches it she can
+        # never be shown anything new — which is the opposite of the point.
+        # Measured 2026-10-18, hours after the curated merge wrote exactly 32:
+        # the extractor appended two more and both were cut off. They happened to
+        # be paraphrases of answers she had just RECITED (she said "eggs benedict
+        # and apple juice", the extractor read her own reply and stored "User eats
+        # eggs benedict and apple juice for breakfast"), so nothing was lost that
+        # time. A genuinely new fact would have been lost identically and just as
+        # quietly.
+        #
+        # ⚠️ Raising the cap only moves the freeze. The real fix is a WRITE
+        # policy — ADR-021 Phase 0's `asserted_by`, set from the SQLite role
+        # column so her own recited output cannot re-enter as a user fact — and
+        # that is deliberately deferred, so this warning is the interim guard
+        # rather than a new magic number chosen here.
+        if len(out) > max_facts:
+            logger.warning(
+                "[RecallFacts] %d facts stored, cap is %d — %d NOT shown. The cap "
+                "keeps the oldest, so new facts are being dropped. See ADR-021 "
+                "Phase 0 (write policy / asserted_by).",
+                len(out), max_facts, len(out) - max_facts,
+            )
         return out[:max_facts]
 
     def get_narrative_context(self, max_facts: int = 10, max_topics: int = 5) -> str:
