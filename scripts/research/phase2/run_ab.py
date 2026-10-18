@@ -175,7 +175,8 @@ def soften(system: str) -> str:
 
 
 def ask(model: str, system: str, user: str, tools: list | None = None,
-        history: list | None = None, timeout: int = 300) -> dict[str, Any]:
+        history: list | None = None, timeout: int = 300,
+        tool_result_for=None) -> dict[str, Any]:
     body: dict[str, Any] = {
         "model": model,
         "messages": [{"role": "system", "content": system},
@@ -194,7 +195,28 @@ def ask(model: str, system: str, user: str, tools: list | None = None,
     r = requests.post(f"{OLLAMA}/api/chat", json=body, timeout=timeout)
     r.raise_for_status()
     msg = r.json().get("message") or {}
-    return {"text": msg.get("content") or "", "tool_calls": msg.get("tool_calls") or []}
+    calls = msg.get("tool_calls") or []
+
+    # ⚠️ THE TOOL LOOP IS NOT OPTIONAL, and the first version of this file omitted
+    # it. Ollama returns a tool_call with EMPTY content, so scoring the content
+    # directly meant that firing the tool guaranteed a miss: arm E measured
+    # recall 0.000 across 13 fired calls and 0.439 across 41 unfired ones — the
+    # exact inverse of what a working tool should do. That is a defect in this
+    # harness, not a finding about tool-delivered facts, and reporting it as one
+    # would have been the worst outcome of this whole experiment.
+    if calls and tool_result_for is not None:
+        served = []
+        for c in calls:
+            fn = (c.get("function") or {})
+            served.append({"role": "tool", "content": tool_result_for(fn.get("arguments") or {}),
+                           "name": fn.get("name") or "recall"})
+        body["messages"] = [*body["messages"], msg, *served]
+        body.pop("tools", None)  # one hop; she has what she asked for
+        r2 = requests.post(f"{OLLAMA}/api/chat", json=body, timeout=timeout)
+        r2.raise_for_status()
+        msg = r2.json().get("message") or {}
+
+    return {"text": msg.get("content") or "", "tool_calls": calls}
 
 
 RECALL_TOOL = [{
@@ -314,7 +336,10 @@ def main() -> int:
             system = f"{base_system}\n\n<memory>\n{memory}\n</memory>"
 
         try:
-            got = ask(model, system, user, tools, history)
+            # Arm E's tool actually RETURNS the memory block, so a fired call is
+            # answerable. Without this the arm measures the absence of a loop.
+            got = ask(model, system, user, tools, history,
+                      tool_result_for=(lambda _a: memory) if arm == "E_tool" else None)
         except Exception as exc:  # noqa: BLE001
             got = {"text": "", "tool_calls": [], "error": str(exc)}
 
