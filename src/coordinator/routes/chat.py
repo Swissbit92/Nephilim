@@ -323,7 +323,8 @@ def _complete_or_503(card, system: str, user_prompt: str, *, log_context: str) -
 
 
 def _apply_groundedness_gate(
-    card, user_message: str, answer: str, metadata: ResponseMetadata
+    card, user_message: str, answer: str, metadata: ResponseMetadata,
+    extra_system_context: str | None = None,
 ) -> str:
     """Run the groundedness gate (ADR-007) on a no-tool-call draft.
 
@@ -350,7 +351,16 @@ def _apply_groundedness_gate(
             card, temperature=get_settings().groundedness.classifier_temperature
         )
         gate = GroundednessGateService(llm_client=client)
-        verdict = gate.check(user_message, answer)
+        # Hand the gate the numbered recall block, so a RECITED fact is not
+        # judged as an invented one. Without this the gate destroyed three
+        # correct answers on its first live run beside the frame — see
+        # `context_framing.recalled_facts_for_grounding`.
+        from ..context_framing import recalled_facts_for_grounding
+
+        verdict = gate.check(
+            user_message, answer,
+            grounding=recalled_facts_for_grounding(extra_system_context),
+        )
         if verdict.should_abstain:
             metadata.source_type = SourceType.GROUNDEDNESS_ABSTAIN
             return gate.abstain_message()
@@ -737,7 +747,8 @@ def _try_tool_brain(
         if ungated and intent != QueryIntent.NEEDS_WEB_SEARCH \
                 and result.status == ST_SILENT and result.answer:
             logger.info("[ToolBrain] ungated no-tool turn -> using native answer")
-            answer = _apply_groundedness_gate(card, body.message, result.answer, metadata)
+            answer = _apply_groundedness_gate(card, body.message, result.answer, metadata,
+                                               getattr(body, 'extra_system_context', None))
             return _build_llm_response(
                 answer, body.message, persona_name, metadata,
                 word_substitutions=card.get("word_substitutions"),
@@ -1024,7 +1035,8 @@ def _chat_inner(body: ChatBody):
             "No tools needed, using regular completion "
             f"(persona={persona_key} intent={intent.value})")
         answer = _complete_or_503(card, system, user_compiled, log_context=f"[Chat] {persona_key} no-tools:")
-        answer = _apply_groundedness_gate(card, body.message, answer, metadata)
+        answer = _apply_groundedness_gate(card, body.message, answer, metadata,
+                                          getattr(body, 'extra_system_context', None))
         # Covers /sessions/{id}/chat, /regenerate, /continue and /narrate too: all four
         # funnel through handle_session_chat -> this function, and none generates its own.
         answer, _still = _regenerate_once_on_violation(
@@ -1062,7 +1074,8 @@ def _chat_inner(body: ChatBody):
             f"(persona={persona_key} intent={intent.value} "
             f"tools={[t.get('function', {}).get('name') for t in tools]})")
         answer = _complete_or_503(card, system, user_compiled, log_context=f"[Chat] {persona_key} fallback:")
-        answer = _apply_groundedness_gate(card, body.message, answer, metadata)
+        answer = _apply_groundedness_gate(card, body.message, answer, metadata,
+                                          getattr(body, 'extra_system_context', None))
         return _build_llm_response(answer, body.message, persona_name, metadata, word_substitutions=card.get("word_substitutions"))
 
 
