@@ -71,3 +71,13 @@ neo4j==6.3.1
 # interpreter is ever upgraded — the stdlib version guarantees monotonicity within
 # a millisecond via a 42-bit counter, which is stronger than any third-party one.
 python-ulid>=4.0.1,<5
+
+# MCP server SDK — scripts/mcp/graph_server.py only, never imported by the app.
+# Pinned exactly, per this repo's stance that a floating >= lets CI drift from
+# local. 1.27.0 is the version btc_price_tracker's MCP server already runs and
+# locks, which is the strongest argument available for the number: it is the one
+# version in this ecosystem with a working server behind it.
+#
+# NOT a boot-path dependency. The FastAPI app never imports mcp; if that ever
+# changes, this comment is wrong and the import is the bug.
+mcp==1.27.0

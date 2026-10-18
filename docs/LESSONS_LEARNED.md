@@ -11,6 +11,99 @@ applies_to: nephilim
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
 
+## 2026-10-18 — The Phase 2 gate did not decide what it was built to decide, and the useful answer came from the arm I expected least
+
+**What happened.** ADR-021's Phase 2 ran: 5 arms × 35 hand-labelled probes × 2 reps,
+with 16 turns of gwen's real 2026-10-17 conversation prepended to every generation.
+Pre-registered before any generation, settled against the register afterwards.
+
+| arm | recall | learned facts | card facts | hallucination |
+|---|---|---|---|---|
+| A baseline — facts as prose in the system prompt | **0.796** | 0.795 | 0.800 | 0.938 |
+| B position — same facts on the user turn | 0.722 | 0.727 | 0.700 | 0.812 |
+| C conflict — turn-shape directive softened | **0.815** | 0.818 | 0.800 | 0.875 |
+| D both | **0.611** | 0.614 | 0.600 | 0.812 |
+| E tool — facts only via a `recall` tool | 0.537 | 0.477 | 0.800 | 0.688 |
+
+**The gate did not decide, and the reason is the first finding.** The defect the whole
+experiment exists to explain — *"I'm not sure how my body looks"* while `striking blue
+eyes` sat in her prompt — **never reproduced**. `card.eye_colour` came back correct **10
+of 10 across all five arms**, every one a variant of *"My eyes are a striking blue"*. The
+card stratum held at 0.800 with history, identical to the single-turn smoke. Adding real
+history was a genuine validity fix for a genuine defect in the harness, and it did not
+rescue the hypothesis. **My `PERSONA_FORMAT_OVERRIDE` reading of the 10:48 failure is
+unsupported by this experiment**, and the prediction that said so was recorded in advance
+and settled `partial` with that half marked wrong.
+
+**No arm beat the baseline, which is prereg falsifier (1).** C is +1.9 points on ONE
+discordant pair, p=1.0000 — nothing. Both candidate causes, position and instruction
+conflict, are wrong as explanations. The only result significant in any direction is
+negative: **D is −18.5 points, 7 down / 0 up, p=0.0156 on all three tests.** Combining two
+individually-harmless interventions hurt, which neither single-factor arm predicted and
+which is the argument for running the 2×2 rather than two A/Bs.
+
+**Arm E is the finding, and it says the opposite of what the arm totals say.**
+
+```
+tool FIRED      n=11   recall 1.000   Wilson 95% [0.74, 1.00]
+tool NOT fired  n=43   recall 0.419
+firing rate     12/70 = 17.1%         Wilson 95% [0.10, 0.28]
+```
+
+A fact delivered by a tool call was used **perfectly, in every observed case**. The
+literature could not answer whether a tool-delivered fact is used more reliably than a
+context-delivered one — nobody has isolated it — and here it is used *more* reliably, not
+less. Arm E loses overall (0.537 vs 0.796, sign test 12 down / 2 up, p=0.0129) for exactly
+one reason: **she fires it 17% of the time.** The ceiling is the highest of any arm and
+the gate is delivery, not representation. That is a far more actionable answer than "the
+tool arm lost", and it reframes the MCP question from *is this the right shape* to *can
+the firing rate be moved*.
+
+**I nearly reported a bug in my own harness as a finding about MCP.** The first run of arm
+E had **no tool-execution loop**. Ollama returns a `tool_call` with EMPTY content, so
+scoring the content meant a fired tool was an automatic miss: recall **0.000 across 13
+fired calls** against 0.439 across 41 unfired ones — the exact inverse of a working tool,
+and a tidy story about tool-delivered facts being unreliable. The giveaway was that the
+inversion was too clean. Re-run with the loop, the same arm reports 1.000 when fired.
+
+**The largest number in the run was not an arm effect at all.** Hallucination on the 8
+negative controls is **0.688–0.938**, baseline 0.938. She confidently answers 94% of
+questions she cannot possibly know, inventing a hometown ("Meadowgrove"), a twin sister
+("Debbie"), a skin tone, the operator's job and his age. No arm touches it, and it dwarfs
+every difference the experiment was designed to detect. Negative controls were 23% of the
+fixture precisely so this could not hide, and it is the single most consequential result
+of the day.
+
+**What we learned.**
+
+- **A smoke run is for finding out the instrument is wrong, and it earned its cost.** 70
+  generations found that the defect did not reproduce single-turn — prereg falsifier (5),
+  before three hours of the real run. The fix (real history) was right and did not save
+  the hypothesis, which is the honest sequence.
+- **"Never quote a single-turn probe rate as production" is in this repo's memory and I
+  built a single-turn harness anyway.** Twice-measured, twice-written-down, and still the
+  default shape when you sit down to write one.
+- **An inverted result is a defect signal.** A fired tool scoring 0.000 while an unfired
+  one scored 0.439 is not a subtle effect, it is a wiring error. Check the mechanism before
+  writing the sentence.
+- **A 2×2 earns its extra arm.** D being worse than both B and C is invisible to two
+  separate A/Bs.
+- **Report the gate's own conclusion even when it is "undecided".** The honest output of
+  Phase 2 is not a winner; it is that the defect is unexplained, the read path's real
+  blocker is abstention rather than voice, and the tool path is gated on one measurable
+  number.
+
+**How to apply going forward.**
+
+- **ADR-006's voice cost is not what gates the read path any more.** Phase 2 measured
+  recall at ~0.80 with facts injected and found no voice cliff; what it measured instead
+  is a 94% confident-answer rate on unanswerable questions. Phase 3 should be gated on
+  **abstention**, not on distinctiveness.
+- **The MCP/typed-tool path stays open with a number attached.** It needs the firing rate,
+  not a redesign. Re-run `scripts/research/phase2/run_ab.py --arms E_tool` on any model
+  change; the arm is the instrument.
+- Any harness offering a tool must execute it. Add the loop before the arm, not after.
+
 ## 2026-10-17 — Four defects from one real conversation, and the first one refutes the diagnosis I started with
 
 **What happened.** The operator held a 16-hour Telegram session with gwen —

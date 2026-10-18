@@ -1,0 +1,12 @@
+{
+  "name": "nephilim-graph",
+  "description": "Read-only access to nephilim's persona graph: one tool per competency question the graph can actually answer, plus an honest inventory of the ones it cannot.",
+  "version": "0.1.0",
+  "mcpServers": {
+    "nephilim-graph": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/.venv/bin/python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/mcp/graph_server.py"],
+      "cwd": "${CLAUDE_PLUGIN_ROOT}"
+    }
+  }
+}

@@ -49,6 +49,7 @@ CYPHER_SOURCES = (
     SRC / "repositories" / "neo4j_rule_repository.py",
     SRC / "rule_proposals.py",
     ROOT / "scripts" / "research" / "identity_ab.py",
+    SRC / "graph_queries.py",
 )
 
 #: `(x:Label` / `(:Label` — a parenthesis is required, so a bare `:Label` inside prose
