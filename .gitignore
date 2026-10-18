@@ -44,6 +44,12 @@ chats.db
 # Runtime data dir (live SQLite + timestamped backups like chats.db.backup_*,
 # which don't match *.db). Prevents committing live conversation data.
 /data/
+# ...and `data` with NO trailing slash, because a pattern ending in `/` matches a
+# DIRECTORY ONLY. A worktree set up with `ln -s ../../nephilim/data data` creates a
+# SYMLINK, which `/data/` does not match, so `git add -A` committed it and CI died
+# with `FileExistsError: [Errno 17] File exists: 'data'` on a link pointing at a path
+# that does not exist on the runner. Caught 2026-10-18.
+/data
 
 # Node.js
 node_modules/
