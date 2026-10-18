@@ -75,3 +75,24 @@ The mechanism: the exclusion list covered *in-character fictional/persona lore o
 - The backstory exclusion is **kept**, not replaced.
 
 **A testing gap this exposed, which matters more than the fix.** `test_routes_chat.py` pins `groundedness.gate_enabled=False` in its shared `_make_settings()` fixture. Every gate path in that suite is therefore dark, which is how a gate defect that was live in production coexisted with a fully green suite. New gate tests run with the flag explicitly ON. The general lesson: a fixture that pins a production flag to its non-production value converts an entire suite into evidence about a configuration nobody runs.
+
+## AMENDMENT 2026-10-18 — this gate now owns one domain of two
+
+[ADR-022](022-the-graph-is-consulted-on-every-turn-and-she-may-only-assert-what-it-returned.md)
+proposes a second grounding gate over **personal and relational claims** — what she
+asserts about the operator, about herself, or about their shared history — checked against
+an unconditional graph read.
+
+**This gate is unchanged and is not superseded.** It keeps **real-world** claims: scores,
+balances, dates, live account state. The split is stated in both documents so the next
+reader does not merge them into one classifier with two jobs.
+
+⚠️ **Two properties of this gate are deliberately NOT inherited by the new one, and both
+are live decisions there rather than defaults.** This gate **fails open** so it can never
+make a reply worse — but a fail-open gate cannot deliver *"if the graph does not know,
+neither does she"*, because it under-fires exactly when the classifier is confused, which
+is when invention is most likely. And this gate scopes narrowly to avoid
+false-abstention on legitimate persona lore, which remains the correct asymmetry for a
+companion: a false *"I don't know"* about her own feelings is worse than an invented
+hometown.
+
