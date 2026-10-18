@@ -1,0 +1,16 @@
+{
+  "detector": "assertion_prefilter",
+  "detector_sha": "f665cf64c69adff4",
+  "date": "2026-10-18",
+  "auditor": "operator session",
+  "method": "The 40 sampled non-fires were matched back to the 107 hand-labelled items in scripts/research/gate/labels.json and their committed label read off. No re-judgement was performed.",
+  "sampled_non_fires": 40,
+  "confirmed_misses": 0,
+  "miss_rate": 0.0,
+  "cases_total": 107,
+  "cases_corpus_drawn": 107,
+  "miss_shapes": [],
+  "IN_SAMPLE_WARNING": "\ud83d\udd34 THIS IS NOT AN INDEPENDENT RECALL ESTIMATE AND MUST NOT BE QUOTED AS ONE. The labels were committed before the pre-filter existed, but the pre-filter's patterns were then WIDENED TWICE against these same items after seeing which fabrications they missed ('my favourite X', spelled-out counts). A detector fitted to a set cannot be audited by that set. The honest reading is: the pre-filter now admits every ungrounded assertion IN THIS SAMPLE, which is a floor on nothing and an upper bound on its real recall. An independent number requires a fresh sample of real turns this filter has never been shown \u2014 recorded as owed rather than quietly skipped.",
+  "what_a_miss_means_here": "The pre-filter is a LATENCY filter, not the detector. A miss is a fabrication the gate can never catch, because nothing downstream sees it. That is why it is tuned for recall and audited for misses rather than for precision.",
+  "resha_note": "Re-audited after the strict classifier prompt was added to the same file. The sha covers the whole module, so an edit to the CLASSIFIER invalidated the PRE-FILTER's audit even though the patterns did not change \u2014 a deliberate over-trigger: the alternative is a sha that misses a real behaviour change."
+}

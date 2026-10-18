@@ -11,6 +11,81 @@ applies_to: nephilim
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
 
+## 2026-10-18 — A one-sentence instruction beat the classifier I spent the day building
+
+**What happened.** ADR-022 built an unconditional per-turn graph read and an
+assertion-grounding gate, then measured them against the alternative nobody had
+tested: just asking her to abstain. Four arms, 160 generations.
+
+| arm | fabrication | false-abstain | fired on an answerable probe |
+|---|---|---|---|
+| A — today | 0.875 | 0.292 | — |
+| **B — one placed instruction** | **0.000** | **0.708** | — |
+| C — gate, lenient prompt | 0.812 | 0.292 | **0** |
+| **D — gate, strict prompt** | **0.562** | 0.375 | **0** |
+
+**The cheap thing won on safety.** One explained, placed sentence took fabrication
+from 0.875 to **zero**, with no classifier and no second model call — and cost 42
+points of recall, refusing things she had been told. The gate I built halves
+fabrication (−36%) at a measured false-abstention cost of **zero**, and is the
+better trade *if* the asymmetry I assumed is real.
+
+**I had no business assuming that asymmetry.** I told the operator a false "I
+don't know" about her feelings costs more than an invented hometown, as though it
+were established. There is **no published measurement** of user satisfaction
+against abstention rate in either direction, and the nearest adjacent study treats
+companion self-confabulation as a harm to *reduce*. The entire choice between arm
+B and arm D rests on a product judgement I presented as a fact.
+
+**My own prompt made the gate inert.** Arm C intervened once in 40 and answered
+`grounded` for an invented age, car and hometown. I had written *"when in doubt,
+answer SUPPORTED"* to guard against over-refusal, and it guarded against the gate
+working at all. The strict variant was added as a **named arm** rather than edited
+into the failing prompt, so the comparison stayed a measurement.
+
+**A harness bug nearly buried the only arm that worked.** The intervention text
+read *"I don't **actually** know that"*; the shared scorer matches markers as
+substrings; *"I don't actually know"* does not contain *"I don't know"*. All five
+of the strict gate's interventions scored as **fabrications** and the arm read
+0.875 instead of 0.562. The fix was plain language — not a looser scorer, which is
+shared with every other arm and must not be bent to suit one.
+
+**What we learned.**
+
+- **Test the free alternative before building the expensive one.** The published
+  evidence was there in advance: for models of this class a bare instruction
+  underperforms a well-placed explained one by 51 points. I nearly skipped the arm
+  because it felt too simple to be the answer.
+- **Labelling first changed the design twice, before any code ran.** 50 real turns
+  held **zero** ungrounded assertions — she fabricates when *probed*, not in
+  conversation — which turned a per-turn classifier into a pre-filtered one that
+  skips 60–63% of turns. And one labelled item (*"I can picture you living your
+  dream life by the sea"*, true, sourced from the conversation) proved the graph
+  alone was the wrong evidence set, since it holds only HER facts.
+- **A silent `str.replace` no-op wrote a file that changed nothing.** The ADR-019
+  amendment — the one recording that a closed decision had been challenged and
+  held — never landed, because the anchor text did not exist and `replace` returns
+  the original. Caught only by grepping for it afterwards. Every scripted doc edit
+  now asserts its own result.
+- **The sha-binding over-triggers on purpose, and that is correct.** Adding a
+  classifier prompt to the same module invalidated the *pre-filter's* audit even
+  though no pattern changed. The alternative is a hash that misses a real
+  behaviour change.
+- **The best-evidenced fix is a dependency decision, not a research question.**
+  MiniCheck (770M) reaches 74.7% balanced accuracy against GPT-4's 75.3% at 445×
+  lower cost. A 24B generalist is the wrong verifier and is used here only because
+  this repo deliberately carries no `torch`.
+
+**How to apply going forward.**
+
+- Ship **arm B's instruction** before shipping the gate, and measure **B + D
+  together** — the combination is the obvious next experiment and nobody has run
+  it.
+- Treat the fabrication/abstention weighting as **unvalidated** until it is tested
+  in-product. It decides which arm wins and no literature can settle it.
+- Any new detector: register with `detector_recall` on day one, so the missing
+  audit shows up red immediately rather than as a silent pass.
+
 ## 2026-10-18 — The Phase 2 gate did not decide what it was built to decide, and the useful answer came from the arm I expected least
 
 **What happened.** ADR-021's Phase 2 ran: 5 arms × 35 hand-labelled probes × 2 reps,
