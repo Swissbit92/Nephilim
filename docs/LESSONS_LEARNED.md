@@ -11,6 +11,74 @@ applies_to: nephilim
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
 
+## 2026-10-18 — I argued against the right idea with a hypothesis, and the hypothesis was false
+
+**What happened.** Having measured that one instruction takes invention to 0.000
+while pushing wrongly-refused from 0.292 to 0.708, I framed it to the operator as
+a balance: 0%/71% might be worse than 88%/29% for a product whose point is
+remembering. He pushed back — *we found a fix that works for one error, why
+disregard it? Take it and attack the other separately, rather than balancing
+both at once.*
+
+**I argued against that, and my argument was a hypothesis I stated as a reason.**
+I said the two errors were one knob — a see-saw — so holding invention at zero
+would be impossible while recovering recall. I had no evidence for that.
+
+**The mechanism says it should have been obvious the hypothesis was wrong:**
+
+| failure | condition |
+|---|---|
+| invents | the fact is **absent** and she fills the gap |
+| wrongly refuses | the fact is **present** and she does not look |
+
+Different conditions. The instruction never taught her to check — it taught her
+to **assume absence**. She said *"I don't know what kind of books you read"* with
+Animal Farm and Jordan Peterson in her prompt.
+
+**The fix that follows is free.** Number the facts; tell her to find it in the
+list first, and only then decline. Decline clause byte-identical to the previous
+arm, so the difference is the lookup.
+
+| arm | invents | wrongly refuses |
+|---|---|---|
+| today | 0.875 | 0.375 |
+| instruction only | **0.000** | 0.708 |
+| **cite, don't guess** | **0.000** | **0.208** |
+| cite + the gate | 0.000 | 0.250 |
+
+Total error −78%, **10 probes down, 0 up, p=0.0020**. The only unambiguous win in
+the whole ADR, and it beats the baseline on **both** axes at once.
+
+**What we learned.**
+
+- **Do not argue against a decomposition with an untested coupling claim.** "Those
+  two are the same knob" is an empirical statement. I used it as a reason to not
+  try, and it cost an experiment to find out it was false. If the coupling is the
+  objection, measure the coupling.
+- **When one intervention fixes error A and creates error B, check whether B has a
+  different CAUSE before calling it a trade-off.** Here A was "fact absent" and B
+  was "fact present, unexamined". A trade-off framing hides that the second has
+  its own fix.
+- **The day's expensive build is now superseded by a prompt change.** Adding the
+  classifier on top of citation made it *worse* (0.250 vs 0.208). The gate stays
+  behind its flag as a measuring stick and is not a recommended path — and the
+  specialist-verifier dependency that was the top open item is moot, because the
+  gate it was meant to fix is no longer the design.
+- **Converting a judgement into a lookup is the small-model lever.** "Is this
+  supported?" is a judgement, and the 24B is bad at it — it returned *supported*
+  for an invented hometown 9 times in 16. "Which numbered item says this?" is a
+  lookup, and the same model does it well enough to take invention to zero.
+
+**How to apply going forward.**
+
+- ⚠️ **One cost is unmeasured: replies are 31% shorter.** A length shift is how a
+  format instruction announces itself touching voice — the
+  `PERSONA_FORMAT_OVERRIDE` signature, three prior instances, each with replies
+  getting *longer*. This is the inverse and the frozen-gallery distinctiveness run
+  is owed before prod.
+- Ship citation behind a flag, measure voice, then default it on.
+- Leave the gate off.
+
 ## 2026-10-18 — A one-sentence instruction beat the classifier I spent the day building
 
 **What happened.** ADR-022 built an unconditional per-turn graph read and an
