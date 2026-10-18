@@ -11,6 +11,61 @@ applies_to: nephilim
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
 
+## 2026-10-18 — The gate destroyed three CORRECT answers, and the A/B could not have seen it
+
+**What the live run was supposed to confirm.** The numbered recall frame had
+measured fabrication 0.875 → 0.000 and false refusals 0.375 → 0.208 over 160
+generations. Flags on, 32 curated facts in the store, one question: *"what do I
+usually eat for breakfast?"*
+
+She said **"I don't know."**
+
+**What the log said, which the reply did not.** The groundedness gate logs the
+drafts it destroys **in full** — a change made 2026-08-12 for exactly this
+situation. All three abstentions that session had killed a **correct** answer:
+
+    "You read, play GTA 5, and hit the gym"            -> facts 6, 7, 8
+    "No way, I know how much you hate meat"            -> fact 2
+    "You've been thinking about quitting your job..."  -> fact 16
+
+The frame was working perfectly. The gate was eating its output and replacing it
+with *"I don't know — want me to search?"*
+
+**The cause.** `check(user_turn, drafted_response)` is handed only the question
+and the draft. It has no access to what was injected, so a recited fact and an
+invented one are indistinguishable to it. Two details turned blindness into
+misfire: `_FLAG_LIVE_STATE` explicitly covers *"the user's own real account or
+portfolio state presented as known"* — which is what the frame answers — and the
+classifier prompt opens *"No search, tool, or live data lookup was used to
+produce this draft"*, which became **false** the moment facts were injected.
+ADR-007 named false-abstention on legitimate answers as its top risk; the frame
+created a new legitimate class the gate could not see.
+
+**The correction to a published number.** The A/B measured 0.208 false refusals
+**with the gate not in the path** — its harness called the model directly rather
+than going through the route. So that figure never described production. This is
+the same class as quoting a single-turn probe rate, which is twice-recorded
+here, and it generalises: *a measurement taken off the production path does not
+describe production, however many generations it has behind it.* An A/B can only
+compare what it actually runs.
+
+**The lesson about guards specifically.** Two independent guards in this system
+intercept answers, and **neither knows what is in the prompt**: the groundedness
+gate, and the capability-scope deflection (which ate a fourth question — *"how
+much bitcoin did i buy and when?"* — while the same facts answered correctly on
+a differently-phrased probe the same session). When you add a new source of
+grounding, every guard that decides "is this grounded?" becomes wrong until it
+is told. The guards were individually correct and collectively broken, which is
+why nothing failed and no test went red.
+
+**And the one I did not patch.** The deflection is tempting to fix by skipping
+it when the message contains "my". That re-opens the fabrication it exists to
+stop — *"what's my local weather"* also contains "my" — and trading a false
+refusal for a fabrication is the worse error by this repo's own weighting. It is
+recorded as the next item with the trade-off stated, rather than guessed at.
+
+---
+
 ## 2026-10-18 — 397 profiles, one session each: the retrieval was never the problem
 
 **What I thought the problem was.** Three sessions of work went into *how*
