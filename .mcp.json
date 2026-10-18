@@ -1,0 +1,25 @@
+{
+  "_comment": [
+    "Read-only MCP access to nephilim's Neo4j graph, for the operator and Claude Code.",
+    "NOT for gwen — see scripts/mcp/graph_server.py's docstring for why her path stays in-process.",
+    "",
+    "No credentials here on purpose. The server resolves Neo4j settings through",
+    "pydantic-settings, which reads .env relative to the working directory, so cwd is",
+    "the whole configuration and this file can be committed without carrying a secret.",
+    "",
+    "Relative paths match the ecosystem's other MCP server (btc_price_tracker/.mcp.json),",
+    "with .venv/ rather than venv/ because that is nephilim's layout.",
+    "",
+    "To enable the raw-Cypher escape hatch for your own exploration, add:",
+    "  \"env\": { \"NEPHILIM_MCP_ALLOW_CYPHER\": \"1\" }",
+    "It is absent by default: it costs context in every client's tool list, and the ten",
+    "typed tools are the real read-only boundary. When enabled it still rejects write",
+    "clauses AND runs inside a transaction that is always rolled back."
+  ],
+  "mcpServers": {
+    "nephilim-graph": {
+      "command": ".venv/bin/python",
+      "args": ["scripts/mcp/graph_server.py"]
+    }
+  }
+}
