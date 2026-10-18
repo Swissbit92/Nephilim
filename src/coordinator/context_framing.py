@@ -87,6 +87,36 @@ RECALL_INSTRUCTION = (
 )
 
 
+def recalled_facts_for_grounding(extra_system_context: str | None) -> str:
+    """The numbered recall block, if that is what was injected — else "".
+
+    Exists so the ADR-007 groundedness gate can tell a RECITED fact from an
+    invented one. The gate saw only the question and the draft, and on its first
+    live run beside the numbered frame it destroyed three correct answers (facts
+    2, 6/7/8 and 16) and replaced them with "I don't know, want me to search?".
+
+    Two deliberate narrowings:
+
+    - **Only the numbered frame qualifies.** The prose frame
+      (`frame_injected_context`) also carries user facts, but the measured
+      defect and the gate exclusion written for it are both specific to a
+      numbered list. The prose path keeps today's behaviour, unmeasured and
+      unchanged.
+    - **Only the facts, never the whole system prompt.** Handing the classifier
+      the persona card and the lore as "grounding" would make everything
+      in-character unflaggable, which is the opposite of what the gate is for.
+    """
+    if not extra_system_context or RECALL_INSTRUCTION not in extra_system_context:
+        return ""
+    body = extra_system_context
+    for tag in ("<remembered>", "</remembered>"):
+        body = body.replace(tag, "")
+    # Drop the preamble and the instruction; keep the enumerated lines only.
+    lines = [ln for ln in body.splitlines() if ln.lstrip().startswith("[")
+             or ln.rstrip().endswith(":")]
+    return "\n".join(lines).strip()
+
+
 def frame_numbered_facts(persona_key: str, card: dict | None,
                          about_user: list[str],
                          about_self: list[str] | None = None) -> str | None:
