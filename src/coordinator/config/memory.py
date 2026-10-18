@@ -118,6 +118,55 @@ class MemorySettings(BaseSettings):
         alias="MEMORY_FACTS_INJECT_ALL_THRESHOLD"
     )
 
+    #: The ONE operator this deployment serves. Empty keeps the legacy behaviour.
+    #:
+    #: 🔴 WHY THIS EXISTS. Identity was recovered by looking up an LLM-EXTRACTED NAME
+    #: and minting `user_{uuid4}` when that failed, so every time the roleplay changed
+    #: what she called him he became a NEW PERSON with an empty memory. Measured on the
+    #: live database 2026-10-18: **397 user profiles, every one with exactly one
+    #: session.** 389 of them had no extracted name at all; "Ben" held 475 messages
+    #: because he once asked her to use it; his real name held 2 profiles. **130 of the
+    #: 397 hold at least one fact** — real accumulated knowledge about one person,
+    #: scattered across 130 identities none of which she can reach.
+    #:
+    #: Memory injection could not have worked while this held, whatever the retrieval
+    #: or the rendering did, because there was nothing to retrieve FROM across sessions.
+    #:
+    #: Default empty so this is opt-in and instantly reversible; a real multi-user
+    #: deployment leaves it unset and keeps the name-resolution path.
+    single_operator_user_id: str = Field(
+        default="",
+        alias="SINGLE_OPERATOR_USER_ID",
+    )
+
+    #: ADR-022 / the numbered recall frame. Render recalled memory as a NUMBERED
+    #: list with a find-it-first instruction instead of the ADR-006 M1 prose
+    #: narrative. Measured 2026-10-18 over 160 generations, 16 turns of real
+    #: conversation per probe, probe as the unit:
+    #:
+    #:     arm                   invents   wrongly refuses
+    #:     prose block (today)     0.875             0.375
+    #:     instruction only        0.000             0.708
+    #:     NUMBERED + find-first   0.000             0.208
+    #:
+    #: Beats the baseline on BOTH axes — total error −78%, 10 probes down and 0
+    #: up, p=0.0020 on all three exact tests, zero citation leakage. It converts
+    #: a judgement ("do I know this?") into a lookup ("is it in the list?").
+    #:
+    #: ⚠️ Requires `context_inject_enabled`; it changes the RENDERING of that
+    #: injection rather than being a second source. On its own it does nothing,
+    #: so the two flags are not independent and the ordering below enforces it.
+    #:
+    #: ⚠️ It also contradicts ADR-006 Gate 0.1, which tied identically-formatted
+    #: injected blocks to a distinctiveness drop 0.768 → 0.643. The ADR-022 run
+    #: measured accuracy and NOT voice; replies came back 31% shorter. The
+    #: operator accepted that and skipped the distinctiveness run — recorded in
+    #: `context_framing.frame_numbered_facts` as a judgement, not a measurement.
+    recall_numbered_facts: bool = Field(
+        default=False,
+        alias="MEMORY_RECALL_NUMBERED",
+    )
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

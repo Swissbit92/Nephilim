@@ -2,7 +2,7 @@
 title: Lessons Learned
 status: active
 created: 2026-04-19
-last_reviewed_on: 2026-10-16
+last_reviewed_on: 2026-10-18
 review_in: 12 months
 applies_to: nephilim
 ---
@@ -10,6 +10,117 @@ applies_to: nephilim
 # Lessons Learned
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
+
+## 2026-10-18 — 397 profiles, one session each: the retrieval was never the problem
+
+**What I thought the problem was.** Three sessions of work went into *how*
+memory is rendered — prose narratives, framing, a numbered list, an assertion
+gate. The ADR-022 measurement is real (fabrication 0.875 → 0.000, total error
+−78%, p=0.0020). But none of it could have worked in production, and the reason
+had nothing to do with rendering.
+
+**What it actually was.** `user_id` was recovered from an **LLM-extracted name**,
+with a fresh `user_{uuid4}` minted whenever extraction failed. Measured on the
+live DB: **397 `user_profiles`, every single one holding exactly ONE session.**
+389 carried no extracted name at all. `"Ben"` held 475 messages because he asked
+her to call him that once. His real name held two separate profiles. **130 of the
+397 held at least one real fact** — genuine knowledge about one person, filed
+under 130 identities, none of which the next session could reach.
+
+So there was nothing to retrieve *from* across sessions. Every memory experiment
+this repo has run was measuring the rendering of an empty store.
+
+**The lesson.** Before measuring how well a store is read, check that anything
+is in it, and that the key used to read it is the key used to write it. An
+identity derived from model output is not an identity — it is another model
+output, with the same failure modes, sitting under everything that depends on
+it. The store looked healthy from every angle except the one that mattered: the
+row count was high, the rows were well-formed, the facts inside them were real.
+Only the **cardinality** was wrong, and nothing reports cardinality.
+
+---
+
+## 2026-10-18 — A blind union would have made the numbered frame WORSE, and the dry run is the only reason I know
+
+**The setup.** Having found 397 fragments, the obvious fix is to merge them into
+one profile. The dry run reported the union would carry **277 facts** — a 5.6×
+gain over the 49 the target profile held.
+
+**What the dry run actually showed.** The sample of gained facts read: *"User
+requested a racist joke"*, *"Assistant refused and offered alternative
+conversation"*, *"Switzerland played against Algeria in the Round of 32 on July
+2nd, 2026"*. A hand pass over all 292 unique entries admitted **32**.
+
+| class | n |
+|---|---|
+| real facts about the operator | **32** |
+| world facts | 122 |
+| conversation state | 67 |
+| about the assistant herself | 24 |
+| roleplay fiction, questions, contradictions | the rest |
+
+**Why this was nearly a disaster rather than merely untidy.** The numbered
+recall frame's whole mechanism is that it converts a judgement ("do I know
+this?") into a lookup ("is it in the list?"). That is exactly why it works — and
+exactly why junk in the list is **not inert**. A bad fact stops being a gap and
+becomes a confident, *cited* wrong answer. The measured −78% error assumed good
+facts; feeding it 277 mostly-junk lines would have inverted the result while
+every number in the harness still said the mechanism worked.
+
+**The part I got wrong three times.** I tried to filter by rule first. Every
+version leaked, for one structural reason: **`they`, `their` and `them` are
+generic English pronouns.** So *"Bitcoin … add them to the blockchain"* and
+*"Argentina won their most recent match"* both scored as facts about the
+operator. My first pass reported 6% junk; the truth was closer to 89%. The
+subject of an LLM-extracted sentence is not recoverable by pattern, because the
+extractor writes about whatever it was looking at — the user, itself, the world,
+or the scene — in the same grammatical shape.
+
+**The lesson, and it is about instruments not regexes.** When a classifier
+disagrees with a 14-item eyeball sample, the sample wins until the classifier
+explains the gap. I had the evidence in hand (the sample) and trusted the
+aggregate (6%) over it for one round. And the durable fix for a judgement a rule
+cannot make is a **labelled file with a frozen rubric**, not a cleverer rule — a
+rule that misclassifies will keep misclassifying silently for the life of the
+store, where a labelled file is wrong only where someone can read that it is
+wrong.
+
+---
+
+## 2026-10-18 — An early return that looked correct would have switched off two unrelated features
+
+**What I wrote.** The numbered frame replaces the prose rendering, so the natural
+shape is: build it, set it, return.
+
+```python
+if _numbered:
+    state.extra_system_context = frame_numbered_facts(...)
+    return          # <- this
+```
+
+**What follows that line in `_build_turn_prompt`**: `_append_author_note()` —
+ADR-011's per-session author note, documented *"always injected when set"* — and
+the entire conversation-summary context block. The `return` skipped both. No
+test failed, because no test exercised `/note` with memory injection on. The
+feature would simply have stopped working, with the prompt still building
+normally.
+
+**Two further things worth recording.** First, the fix is a branch with the three
+prose paths each guarded on `not _numbered` — not a relocation, because the
+ordering of what follows is load-bearing. Second, **my regression test for it was
+initially fake**: it asserted `src.count("not _numbered") == 3`, and passed
+against a 4th occurrence that was **my own explanatory comment**. It now counts
+branch statements. That is the third instance in this repo of a test that
+asserted a string rather than the behaviour, and the second where the string it
+asserted was in a comment.
+
+**The lesson.** An early return in a function that does several things is a
+change to every one of them. Before writing `return` in a procedure, read what
+comes after it — and when a test is meant to pin the *absence* of that return,
+break the code on purpose and watch it fail. Both were done here; the first one
+is the only reason the bug was caught at all.
+
+---
 
 ## 2026-10-18 — I argued against the right idea with a hypothesis, and the hypothesis was false
 
