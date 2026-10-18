@@ -23,6 +23,26 @@ def _profile(facts=None, background=None, name="Ben") -> UserProfile:
     })
 
 
+class _EmoRepo:
+    """Stub for the emotional half of `_load_session_identity`.
+
+    It loads a profile AND an emotional state; these tests are about the
+    profile, so the emotional side is stubbed rather than skipped — leaving it
+    out made all three tests fail on an AttributeError that said nothing about
+    the behaviour under test.
+    """
+
+    class _State:
+        trust_level = 0.5
+        current_mood = "curious"
+
+        def to_prompt_context(self):
+            return ""
+
+    def get_or_create(self, session_id):
+        return self._State()
+
+
 class TestRecallFactExtraction:
     def test_background_comes_before_facts(self):
         p = _profile(facts=["f1"], background=["b1"])
@@ -115,3 +135,108 @@ class TestSeamOrdering:
             "the numbered branch must not return — it would skip the ADR-011 "
             "author note and the summary-context block"
         )
+
+
+class TestOperatorIdentityIsReadBeforeTheTurn:
+    """THE REGRESSION that shipped once.
+
+    `SINGLE_OPERATOR_USER_ID` was wired into the POST-turn identity path only.
+    The read side (`_load_session_identity`, Phase 1) still resolved the user
+    from `get_session_user(session_id)`, which is EMPTY for a brand-new session —
+    so turn 1 carried no profile, the numbered frame had nothing to render, and
+    the one prose branch that needs no profile (the emotional narrative) injected
+    alone. Measured live: 32 curated facts in the store and she still guessed at
+    breakfast.
+
+    Wiring only the write half fixes the fragmentation going forward and fixes
+    nothing she can say.
+    """
+
+    def test_a_brand_new_unlinked_session_still_resolves_the_operator(self, monkeypatch):
+        from coordinator.config import get_settings
+        from coordinator.services import chat_session_service as css
+
+        get_settings.cache_clear()
+        monkeypatch.setenv("SINGLE_OPERATOR_USER_ID", "user_operator")
+        get_settings.cache_clear()
+
+        class _Repo:
+            def get_session_user(self, session_id):
+                return ""          # a brand-new session is linked to nobody
+
+            def get_profile(self, user_id):
+                assert user_id == "user_operator", (
+                    f"the read side asked for {user_id!r}, not the operator"
+                )
+                return _profile(facts=["Enjoys eggs benedict for breakfast"])
+
+        state = type("S", (), {
+            "session_id": "fresh-session", "user_id": None, "user_profile": None,
+            "user_profile_context": "", "effective_user_id": None,
+            "emotional_state": None, "emotional_context": "",
+        })()
+        deps = type("D", (), {"user_profile_repo": _Repo(),
+                              "emotional_state_repo": _EmoRepo()})()
+
+        css._load_session_identity(state, deps)
+
+        assert state.user_id == "user_operator"
+        assert state.user_profile is not None, "turn 1 must carry the profile"
+        assert state.user_profile.get_recall_facts() == [
+            "Enjoys eggs benedict for breakfast"
+        ]
+        get_settings.cache_clear()
+
+    def test_the_operator_id_wins_over_a_stale_session_link(self, monkeypatch):
+        """A session linked to one of the 396 merged-away ids must not win."""
+        from coordinator.config import get_settings
+        from coordinator.services import chat_session_service as css
+
+        get_settings.cache_clear()
+        monkeypatch.setenv("SINGLE_OPERATOR_USER_ID", "user_operator")
+        get_settings.cache_clear()
+
+        class _Repo:
+            def get_session_user(self, session_id):
+                return "user_deadbeef"        # a pre-merge fragment
+
+            def get_profile(self, user_id):
+                assert user_id == "user_operator"
+                return _profile(facts=["real fact"])
+
+        state = type("S", (), {
+            "session_id": "old-session", "user_id": None, "user_profile": None,
+            "user_profile_context": "", "effective_user_id": None,
+            "emotional_state": None, "emotional_context": "",
+        })()
+        css._load_session_identity(state, type("D", (), {
+            "user_profile_repo": _Repo(), "emotional_state_repo": _EmoRepo()})())
+        assert state.user_id == "user_operator"
+        get_settings.cache_clear()
+
+    def test_empty_setting_keeps_the_session_link_path(self, monkeypatch):
+        """A real multi-user deployment must be unaffected."""
+        from coordinator.config import get_settings
+        from coordinator.services import chat_session_service as css
+
+        get_settings.cache_clear()
+        monkeypatch.delenv("SINGLE_OPERATOR_USER_ID", raising=False)
+        get_settings.cache_clear()
+
+        class _Repo:
+            def get_session_user(self, session_id):
+                return "user_from_session"
+
+            def get_profile(self, user_id):
+                assert user_id == "user_from_session"
+                return _profile(facts=["x"])
+
+        state = type("S", (), {
+            "session_id": "s", "user_id": None, "user_profile": None,
+            "user_profile_context": "", "effective_user_id": None,
+            "emotional_state": None, "emotional_context": "",
+        })()
+        css._load_session_identity(state, type("D", (), {
+            "user_profile_repo": _Repo(), "emotional_state_repo": _EmoRepo()})())
+        assert state.user_id == "user_from_session"
+        get_settings.cache_clear()
