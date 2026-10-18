@@ -14,22 +14,30 @@ and maintainability. It handles:
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
-import logging
 from dataclasses import dataclass, field
 from typing import Any
+
 from fastapi import HTTPException
 
-from ..repositories.base_repository import utc_now_iso
-
-from ..schemas import ChatBody, ChatTurn, AppendMessageBody, MAX_HISTORY_TURNS, MessageRole, SourceType
 from ..config import get_settings
+from ..context_framing import frame_injected_context, frame_numbered_facts
+from ..memory_fact_retrieval import render_facts_narrative, select_facts_for_injection
+
 # Lazy imports to break circular dependency: llm_client -> services -> chat_session_service -> llm_client
 # estimate_tokens and LC_OllamaClient are imported inside functions where needed
 from ..persona_memory import build_system_prompt, get_persona_card, progression_key
-from ..context_framing import frame_injected_context
-from ..memory_fact_retrieval import select_facts_for_injection, render_facts_narrative
+from ..repositories.base_repository import utc_now_iso
+from ..schemas import (
+    MAX_HISTORY_TURNS,
+    AppendMessageBody,
+    ChatBody,
+    ChatTurn,
+    MessageRole,
+    SourceType,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -616,12 +624,39 @@ def _build_turn_prompt(state: ChatTurnState, deps: ChatDeps) -> None:
     # narrative (M4, supersedes the legacy profile blob). Capped by priority, wrapped
     # once in the non-echoable per-persona frame. Both default OFF pending live soak.
     _mem_settings = get_settings().memory
-    memory_blocks = []
-    if _mem_settings.facts_enabled and state.user_id:
+
+    # ADR-022: the NUMBERED recall frame replaces the prose rendering below when
+    # MEMORY_RECALL_NUMBERED is on. It is a different RENDERING of the same
+    # injection, not a second source, so it sits inside context_inject_enabled and
+    # every prose branch below is guarded on `not _numbered` — mixing a numbered
+    # list with the prose narrative would reintroduce the prose the measurement
+    # removed (arm C was numbered-only).
+    #
+    # ⚠️ This is a BRANCH and not an early return. Returning here looked correct
+    # and would have silently dropped the ADR-011 author's note (documented
+    # "always injected when set") and the whole summary-context block below.
+    _numbered = (_mem_settings.recall_numbered_facts
+                 and _mem_settings.context_inject_enabled
+                 and state.user_profile is not None)
+    if _numbered:
+        _recalled = state.user_profile.get_recall_facts()
+        state.extra_system_context = frame_numbered_facts(
+            state.persona_key, card, _recalled,
+        ) or ""
+        if state.extra_system_context:
+            logger.info(
+                f"[SessionContext] injecting {estimate_tokens(state.extra_system_context)} "
+                f"tokens as {len(_recalled)} NUMBERED recalled facts (ADR-022)"
+            )
+        else:
+            logger.info("[SessionContext] numbered recall frame: nothing to recall")
+
+    memory_blocks: list = []
+    if not _numbered and _mem_settings.facts_enabled and state.user_id:
         memory_blocks.append(_build_facts_narrative(deps, state.user_id, state.message, _mem_settings))
-    elif _mem_settings.context_inject_enabled and state.user_profile:
+    elif not _numbered and _mem_settings.context_inject_enabled and state.user_profile:
         memory_blocks.append(state.user_profile.get_narrative_context(max_facts=10, max_topics=5))
-    if _mem_settings.context_inject_enabled:
+    if not _numbered and _mem_settings.context_inject_enabled:
         memory_blocks.append(state.emotional_state.to_narrative_context())
     if any(memory_blocks):
         capped = _assemble_capped_context(memory_blocks, _mem_settings.context_max_tokens)
@@ -870,6 +905,21 @@ def _apply_post_turn_updates(state: ChatTurnState, deps: ChatDeps) -> None:
 
                 facts = fact_extractor.extract_facts(recent_messages, persona_key=state.persona_key)
 
+                # 🔴 A STABLE OPERATOR IDENTITY TAKES PRECEDENCE OVER BOTH PATHS BELOW.
+                # Identity used to be recovered by looking up an LLM-EXTRACTED NAME and
+                # minting a fresh uuid when that failed — so every time the roleplay
+                # changed what she called him, he became a NEW PERSON with an empty
+                # memory. Measured on the live database 2026-10-18: 397 profiles, every
+                # one with exactly ONE session; 389 with no extracted name; "Ben" holding
+                # 475 messages because he asked her to use it once; 130 of the 397
+                # holding real facts she could never reach again.
+                #
+                # No retrieval policy and no rendering could have fixed that: there was
+                # nothing to retrieve FROM across sessions.
+                _single = get_settings().memory.single_operator_user_id
+                if _single:
+                    state.user_id = _single
+
                 if not state.user_id and facts.get("user_name"):
                     state.user_id = deps.user_profile_repo.get_user_by_name(facts["user_name"])
 
@@ -880,6 +930,13 @@ def _apply_post_turn_updates(state: ChatTurnState, deps: ChatDeps) -> None:
                     logger.info(f"[Phase3] Created new user profile: {state.user_id}")
                 else:
                     state.user_profile = deps.user_profile_repo.get_or_create_profile(state.user_id)
+                    # Link here too. `link_session_to_user` only ran on the
+                    # mint-a-new-uuid branch, so with a stable operator id every new
+                    # session would resolve the right profile and never appear in
+                    # `user_sessions` — the table that maps a session back to its user.
+                    # `INSERT OR IGNORE`, so re-linking an existing pair is a no-op.
+                    deps.user_profile_repo.link_session_to_user(
+                        state.user_id, state.session_id)
 
                 state.user_profile.update_from_session(facts)
                 deps.user_profile_repo.update_profile(state.user_profile)
