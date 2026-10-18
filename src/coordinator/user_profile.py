@@ -217,6 +217,35 @@ class UserProfile:
 
         return "\n".join(summary_parts)
 
+    def get_recall_facts(self, max_facts: int = 32) -> List[str]:
+        """DISCRETE facts for the ADR-022 numbered recall frame.
+
+        The sibling of ``get_narrative_context``, and deliberately NOT built from
+        it: the numbered frame needs one fact per line so the model can do a
+        lookup, and a prose narrative has already welded them into sentences that
+        cannot be split back apart. Returns [] when there is nothing to recall, so
+        ``frame_numbered_facts`` injects nothing and the dormant path stays
+        byte-identical.
+
+        ``name`` is deliberately omitted — it is already in the prompt by every
+        other route, and spending numbered slot [1] on it displaces a real fact.
+
+        ⚠️ ``background`` is emitted BEFORE ``facts``. The curation pass
+        (2026-10-18) found background the higher-signal store of the two — 16
+        clean entries against 277 facts of which a hand pass admitted 32 — and
+        the cap truncates from the END.
+        """
+        out: List[str] = []
+        seen: set[str] = set()
+        for source in (self.data.get("background") or [], self.data.get("facts") or []):
+            for item in source:
+                text = str(item).strip()
+                key = text.lower()
+                if text and key not in seen:
+                    seen.add(key)
+                    out.append(text)
+        return out[:max_facts]
+
     def get_narrative_context(self, max_facts: int = 10, max_topics: int = 5) -> str:
         """Prose variant of ``get_context_summary`` for framed injection (ADR-006 P1).
 

@@ -1,0 +1,57 @@
+{
+  "_rubric": "scripts/research/facts/CURATION_RUBRIC.md",
+  "_labelled_on": "2026-10-18",
+  "_source": "union of facts+background over 397 user_profiles in data/chats.db",
+  "_counts": {"unique_extracted": 292, "machine_dropped": 191, "hand_labelled": 101, "kept": 32},
+  "facts": [
+    "Prefers to be called Ben",
+    "Is vegetarian and does not eat meat",
+    "Enjoys eggs benedict and apple juice for breakfast",
+    "Prefers Celsius for temperature",
+    "Likes gaming, especially RPGs like Witcher 3 and Cyberpunk 2077",
+    "Plays GTA 5",
+    "Reads general-interest books such as Animal Farm and Jordan Peterson's 12 Rules for Life",
+    "Goes to the gym",
+    "Enjoys beach activities and reading on the beach",
+
+    "Bought 2.5 BTC in 2021 and is a long-term holder",
+    "Holds about 2 BTC now",
+    "Sold his car in June or July 2026",
+    "Gets anxious when markets drop sharply",
+    "Wants to optimise his tax position on Bitcoin gains",
+    "Was deciding between a Ledger Nano X and a Trezor Model T as his first hardware wallet",
+
+    "Is thinking about quitting his job to start his own business",
+    "Is concerned about an eight-month money runway",
+    "His family thinks quitting would be reckless",
+    "Is analysing a dataset at work and finds the pattern elusive but close",
+
+    "Often feels misunderstood",
+
+    "Likes to be in control during sex",
+    "Prefers sex at home",
+    "Has a preference for deep-throating and being dominated",
+    "Likes rough, intense and primal sex",
+    "Is into deepthroating and anal",
+    "Enjoys being watched during sex",
+    "Enjoys detailed, explicit and lewd descriptions",
+    "Is into fantasies involving big black cocks",
+    "Calls her Daddy during sex",
+    "Enjoys romantic and intimate activities alongside explicit ones",
+    "Wanted to buy her a red dress and high heels",
+    "Is in a romantic relationship with her and talks about a future together"
+  ],
+  "excluded_with_reason": {
+    "wallet address 34zaDi6y…": "accuracy, not secrecy — a mis-recited address loses funds; wallet state has a ground-truth injection path",
+    "User does not have a Bitcoin wallet or cost basis information": "contradicted by the wallet-address fact; assert neither",
+    "New to Bitcoin investing": "contradicted by 'bought 2.5 BTC in 2021'",
+    "Prefers to be called Master": "conflicts with 'prefers to be called Ben'; scene address, not a standing preference",
+    "User might have powers and Six Eyes": "roleplay fiction (Gojo persona)",
+    "They have a beach house / romantic dinner at an Italian restaurant": "roleplay fiction invented in-scene",
+    "User had a rough day / is bored / feels lost lately / made a mistake": "momentary states, false when cited weeks later",
+    "User inquired about 2FA / capital gains / virtual tours of the Louvre": "one-off queries, not facts about him",
+    "User is fully dressed in sport pants, t-shirt, and socks": "scene state (ADR-021)",
+    "Mental health concerns are rising due to AI's intrusive behavior": "world fact with a pronoun that fooled the classifier",
+    "The user enjoys the feeling of being stretched wide…": "describes her body, not his preference"
+  }
+}
