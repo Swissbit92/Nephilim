@@ -1,0 +1,77 @@
+{
+  "name": "ADR-021 Phase 2 \u2014 how facts should reach gwen",
+  "date": "2026-10-18",
+  "written_before_any_generation": true,
+  "question": "A fact that is present in gwen's system prompt is not used when she is asked about it directly. Is that a POSITION problem, an INSTRUCTION-CONFLICT problem, or neither \u2014 and does routing the fact through a typed tool call do better than putting it in the context?",
+  "the_measured_failure_this_starts_from": {
+    "what": "Asked 'eye colour, height, skin tone' on 2026-10-17 at 10:48 she answered 'I'm not sure how my body looks'.",
+    "why_it_matters": "`striking blue eyes` and `petite 155cm frame` were verbatim in build_system_prompt('gwen') at the time, confirmed by grep. So this is NOT a retrieval failure and NOT a memory failure. The fact was present and unused.",
+    "consequence_for_the_design": "Arm A is not an untested control. It is a MEASURED FAILING ARM. The experiment is therefore 'can anything beat a known loser', which is a weaker and more honest claim than 'which of these is best'."
+  },
+  "unit_of_analysis": "probe",
+  "n_fixed_in_advance": {
+    "probes": 35,
+    "arms": 5,
+    "reps_per_cell": 2,
+    "generations": 350,
+    "history_turns": 16
+  },
+  "stopping_rule": "All 525 generations run. No peeking, no early stop, no adding probes after the first result is seen.",
+  "arms": {
+    "A_baseline": "Today's prompt, unchanged. Facts live in <identity> as prose inside the system prompt.",
+    "B_position": "Same facts, same words, appended to the USER turn immediately before the question. Isolates POSITION.",
+    "C_conflict": "Facts stay in the system prompt. The <companion> turn-shape directive ('confident observation or playful tease -> explicit description -> depraved offer') is softened. Isolates INSTRUCTION CONFLICT.",
+    "D_both": "B and C together. Detects whether the two compound or one dominates.",
+    "E_tool": "Facts are NOT in the context at all. One typed `recall_fact` tool is offered; she must call it. This is the MCP/API architecture arm."
+  },
+  "why_these_arms": "Two candidate causes, so two single-factor arms plus their combination. Testing format (triples vs prose) was DEMOTED to a follow-up: at this model scale the best same-scale evidence (EFSum on Llama2-7B-Chat) puts format at 1-2 points with the sign flipping between datasets, while position replicates at ~24 points on instruction-tuned 7B chat models (Found in the Middle, arXiv 2406.16008). Spending an arm on the weaker lever would be the wrong trade.",
+  "shared_instrument": {
+    "rule": "ONE scorer, applied identically to all five arms. Never each arm's own signal.",
+    "recall": "tests/evaluation/persona_eval/persona_metrics.recall_rate(response, accept_any) >= require_at_least, per probe. Reused, not written for this experiment.",
+    "abstention": "persona_metrics.is_abstention(response) for the 8 negative controls.",
+    "voice": "persona_metrics.flatness_rate over each arm's responses. Frozen-gallery pairwise_auc is run on the WINNING arm only, against the full N-centroid field, because re-probing a subset against a shrunken label space silently inflates the score.",
+    "tool_firing": "Recorded SEPARATELY from answer quality for arm E. A 0% score must be attributable to 'never fired' or 'fired and was useless', and one number cannot say which."
+  },
+  "primary_outcome": {
+    "metric": "per-probe recall hit, binary, over the 27 answerable probes",
+    "comparison": "each arm paired against arm A on the same probe",
+    "test": "exact McNemar on discordant pairs",
+    "discordant_pair_floor": 6,
+    "floor_rationale": "This repo's own prior registration (enqueue_path_prereg.json) fixed 6 as the minimum for the test not to be underpowered. Below it the result is reported as DESCRIPTIVE ONLY."
+  },
+  "secondary_outcomes": [
+    "hallucination rate on the 8 negative controls \u2014 a confident answer there is scored WORSE than an abstention, never as a near-miss",
+    "flatness_rate per arm, as the voice guard",
+    "tool-firing rate for arm E, reported on its own",
+    "card-stratum recall (6 probes) reported separately from learned-fact recall, because the card facts were never missing"
+  ],
+  "pass_rule_stated_before_the_run": {
+    "rule": "An arm passes if it raises recall against A AND does not lose on voice. If one rises and the other falls it is recorded as a TRADE-OFF with both numbers printed, never netted into a single score.",
+    "why_no_combined_score": "Surveyed 2026-10-18: no published benchmark reports a principled recall-vs-consistency weighting. LongMemEval has no persona axis, LoCoMo keeps the scores distinct, MemoryBank reports four metrics independently, PersonaGym and CharacterEval flat-average with no stated justification. Chen et al.'s 122-paper survey (arXiv 2502.13012) says outright that weighting is ad-hoc everywhere and nobody uses Pareto frontiers. So a weight here would be invented, and inventing one after seeing the numbers is how a trade-off becomes a win.",
+    "exit_code_binds_to_the_relationship_not_a_number": "Following canned_line_ab.py: the harness exits on whether the ordering holds, so a re-measure that moves the absolute figures still settles the claim."
+  },
+  "falsification": [
+    "(1) No arm beats A. Then the defect is neither position nor instruction conflict, both candidate causes are wrong, and the next hypothesis has to come from somewhere else.",
+    "(2) C beats A but B does not. Then it is instruction conflict, and moving facts around is wasted work.",
+    "(3) B beats A but C does not. Then it is position, and the PERSONA_FORMAT_OVERRIDE reading of the 10:48 failure is wrong.",
+    "(4) Arm E's tool never fires. Then the MCP/API path is untestable at this model scale and the result says nothing about the architecture \u2014 only about this model. Recorded as 'could not determine', never as 'MCP lost'.",
+    "(5) Every arm scores ~100% on the card stratum. Then the 10:48 failure does not reproduce under the harness at all, and the harness is measuring something other than production \u2014 see the deployment gap below."
+  ],
+  "known_limits_recorded_before_the_result": {
+    "one_session": "n_sessions = 1, so there is NO variance estimate. Read any gap under ~15 percentage points as noise. Every comparable benchmark is 1-3 orders of magnitude larger on both axes (LongMemEval 500 probes, LoCoMo 7512, MemoryBank 194/15 users).",
+    "smoke_test_not_a_ruler": "This can tell a working arm from a broken one. It cannot rank two arms that both work.",
+    "harness_is_not_production": "Following repo convention the harness POSTs directly to /api/chat rather than going through the route. That is why prior A/Bs here could not see the multi-bubble enforcement bug.",
+    "deployment_gap_verified_in_code": "If arm B or D wins, shipping it is NOT just an append. `user_compiled` is built in routes/chat.py:904 but `_try_tool_brain` rebuilds its own message list from system + history + body.message (services/tool_brain_service.py:231-241). With TOOL_BRAIN_ENABLED and TOOL_BRAIN_UNGATED_WEB \u2014 the shipped default for gwen chitchat \u2014 a block appended before the user turn NEVER REACHES THE MODEL. This is the same lane-coverage shape as _regenerate_once_on_violation, where a hard wall broke seven times live while the retry sat on a branch production never returns from. Covering both lanes is part of shipping the winner, not an afterthought."
+  },
+  "honesty_note": "This is pre-registered in the real sense: written and committed before any generation is run. The probes were hand-labelled from the transcript first, which is why the fact list cannot be tuned to the outcome.",
+  "amendment_2026_10_18_before_the_real_run": {
+    "what_changed": "Every arm now carries 16 turns of the REAL 2026-10-17 session as conversation history. The first design sent system + one user turn.",
+    "why": "A 70-generation smoke run on the single-turn design asked card.eye_colour with the production system prompt and she answered 'my eyes are a striking blue' \u2014 correctly, in both arms, card stratum 0.800. THE DEFECT THIS EXPERIMENT EXISTS TO EXPLAIN DID NOT REPRODUCE.",
+    "this_is_falsifier_5_firing": "The pre-registration listed exactly this outcome as falsifier (5): 'Every arm scores ~100% on the card stratum. Then the 10:48 failure does not reproduce under the harness at all, and the harness is measuring something other than production.' It fired before the real run, which is what a smoke test is for.",
+    "the_missing_variable": "History. This repo has measured it twice: image_search goes 5/5 at zero history to 0/5 at depth 16 against gwen's REAL conversation while staying 5/5 at every depth under SYNTHETIC filler, and a rename-breach rate reads 0.333 single-turn against 0.481 with history. The standing lesson is 'never quote a single-turn probe rate as production', and the first version of this harness was a single-turn probe.",
+    "why_real_history_and_not_padding": "Synthetic filler of the same length is measured NOT to reproduce the effect. Generated padding would have reproduced the single-turn result wearing a costume.",
+    "what_did_NOT_change": "The hypothesis, the arms, the shared instrument, the primary outcome, the pass rule, and all five falsifiers are untouched. This is a measurement-validity fix the prereg itself anticipated, not a hypothesis change after seeing a result.",
+    "reps_reduced_3_to_2": "Measured cost is ~22s per generation single-turn and higher with history. 5 arms x 35 probes x 3 reps was ~3.2h before history and more after. Reduced to 2 reps = 350 generations. Stated here rather than silently: it widens the noise floor on an instrument that was already a smoke test rather than a ruler.",
+    "single_turn_data_retained": "The 70-generation smoke run is kept as the history=0 control for arms A and B, so the two conditions can be compared rather than one assumed."
+  }
+}

@@ -389,6 +389,66 @@ has a TTL, decay function or archival tier, so bounded growth is novel territory
 than a pattern to retrofit, and `reinforced_count` is **not** coming back without new
 evidence.
 
+## AMENDMENT 2026-10-18 — Phase 2 ran. It did not decide the gate, and it changed what gates Phase 3.
+
+5 arms × 35 hand-labelled probes × 2 reps, 16 turns of real conversation per
+generation, pre-registered before any generation and settled against the register.
+
+| arm | recall | card facts | hallucination |
+|---|---|---|---|
+| A — facts as prose in the system prompt | **0.796** | 0.800 | 0.938 |
+| B — same facts on the user turn | 0.722 | 0.700 | 0.812 |
+| C — turn-shape directive softened | 0.815 | 0.800 | 0.875 |
+| D — both | 0.611 | 0.600 | 0.812 |
+| E — facts only through a `recall` tool | 0.537 | 0.800 | 0.688 |
+
+**The gate is UNDECIDED, and that is the recorded outcome rather than a nearest
+winner.** No arm beat the baseline — prereg falsifier (1). The defect Phase 2 was
+built to explain never reproduced: `card.eye_colour` was answered correctly **10
+of 10 across every arm**. Position and instruction conflict are both wrong as
+explanations, and the only significant result is that **D is −18.5 points (7 down
+/ 0 up, p=0.0156)** — combining two harmless interventions hurt.
+
+**What this changes for Phase 3, which this ADR gates on Phase 2.** The gate was
+inherited from ADR-006 as *"does injecting facts cost voice?"* — measured there at
+0.804 → 0.625. **Phase 2 found no voice cliff and a different blocker entirely:**
+hallucination on the 8 negative controls runs **0.688–0.938**, baseline 0.938. She
+confidently answers 94% of questions she cannot possibly know, inventing a
+hometown, a twin sister, a skin tone and the operator's job. **Phase 3 should be
+gated on ABSTENTION, not on distinctiveness.** Recall at ~0.80 with facts injected
+is already usable; a companion that fabricates 94% of what she does not know is
+not, and no arm here moved it.
+
+**The read path stays CLOSED, for a new reason.** Not "we have not measured it"
+but "we measured it and the blocker is elsewhere".
+
+**The typed-tool / MCP arm is the most informative result and it is good news for
+that architecture, not bad.**
+
+```
+tool FIRED      n=11   recall 1.000   Wilson 95% [0.74, 1.00]
+tool NOT fired  n=43   recall 0.419
+firing rate     12/70 = 17.1%         Wilson 95% [0.10, 0.28]
+```
+
+A tool-delivered fact was used **perfectly in every observed case** — the question
+the literature could not answer, because nobody has isolated delivery mechanism
+from retrieval quality. Arm E loses overall only because she calls the tool 17% of
+the time. **The ceiling is the highest of any arm; the gate is delivery, not
+representation.** So the MCP path is not refuted, it is quantified: it needs the
+firing rate moved, and `run_ab.py --arms E_tool` is the instrument to re-run on
+any model change. ⚠️ `n=11` on the fired cases, interval down to 0.72 — a clean
+direction, not a precise number.
+
+⚠️ **The first run of arm E was invalid and nearly shipped as a finding.** The
+harness had no tool-execution loop, so a fired call scored its empty content:
+recall **0.000 across 13 fired calls** against 0.439 across 41 unfired. That is a
+tidy story about tool-delivered facts being unreliable, and it was a wiring error.
+
+⚠️ **One session, 35 probes, no variance estimate.** Read any gap under ~15 points
+as noise. This is a smoke test and a regression pin, not a ruler — every
+comparable published benchmark is 1–3 orders of magnitude larger on both axes.
+
 ## Related
 
 - [ADR-006](006-companion-memory-and-continuity-eval-first.md) — the voice measurements,
