@@ -376,6 +376,37 @@ reopening change (a).
 ⚠️ One session, 20 probes, 8 unanswerable. The −78% is large enough to clear the
 ~15-point noise floor; the 0.208-vs-0.250 gap between C and D is not.
 
+## AMENDMENT 2026-10-18 (third) — the renderer ships dormant, and the voice question is deliberately open
+
+`context_framing.frame_numbered_facts` makes the measured-best rendering available
+to production. **Nothing calls it.** `MEMORY_CONTEXT_INJECT` and
+`MEMORY_FACTS_ENABLED` are both `false`, so the prompt is byte-identical until the
+operator flips a flag. The point is that when memory injection is switched on, it
+uses the format that was measured rather than the one that happened to be there.
+
+⚠️ **It contradicts ADR-006, and the contradiction is NOT resolved.**
+`context_framing`'s own docstring records Gate 0.1 (2026-07-03): identically
+formatted blocks are themselves a stylistic signal the model imitates, and
+structured injection dropped distinctiveness **0.768 → 0.643**. A numbered list is
+exactly that skeleton. ADR-022's measurement covered **accuracy** and did not
+measure voice; replies came back **31% shorter**, which is consistent with the
+same mechanism rather than independent of it.
+
+**The operator's decision, recorded rather than inferred:** the shorter replies
+are acceptable and the frozen-gallery distinctiveness run is deliberately skipped,
+on the grounds that he judges her voice in use. That is a better instrument than a
+proxy — he is the user — but it is a **judgement, not a measurement**, and the
+voice question should not be cited as settled by anyone reading this later.
+
+**Both renderers now exist side by side**, which is the honest state:
+`frame_injected_context` is the voice-safe prose frame ADR-006 built;
+`frame_numbered_facts` is the accuracy-best numbered frame ADR-022 measured. A
+test asserts the first still works, so this is an addition and not a replacement.
+
+One defence is built in and did hold in measurement: the frame names the persona
+and tells her never to recite the list or its numbers — **0 of 40 replies leaked a
+bracket number**.
+
 ## Related
 
 - [ADR-021](021-agentic-memory-is-one-graph-with-scoped-truth.md) — the memory design, and
