@@ -487,7 +487,19 @@ def _load_session_identity(state: ChatTurnState, deps: ChatDeps) -> None:
     """Phase 1 — load cross-session user profile (Phase 3) + emotional state (Phase 2.2)."""
     user_profile_repo = deps.user_profile_repo
 
-    state.user_id = user_profile_repo.get_session_user(state.session_id)
+    # The single operator IS the user, from turn one. Without this the read side
+    # resolves identity from `get_session_user`, which is EMPTY for a brand-new
+    # session — so turn 1 carried no profile and no memory at all, and the
+    # operator id applied in the POST-turn path below could only help later
+    # turns. Measured live 2026-10-18: with the numbered frame enabled and 32
+    # curated facts in the store, she still guessed at breakfast, because
+    # `state.user_profile` was None here and the only prose branch that does not
+    # need a profile (the emotional narrative) injected alone.
+    #
+    # ⚠️ This is the READ half of SINGLE_OPERATOR_USER_ID. Wiring only the write
+    # half fixes the fragmentation going forward and fixes nothing she can say.
+    _single = get_settings().memory.single_operator_user_id
+    state.user_id = _single or user_profile_repo.get_session_user(state.session_id)
     if state.user_id:
         state.user_profile = user_profile_repo.get_profile(state.user_id)
         if state.user_profile:
