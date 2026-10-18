@@ -59,6 +59,40 @@ class TestRecallFactExtraction:
         got = p.get_recall_facts(max_facts=5)
         assert got == [f"fact {i}" for i in range(5)]
 
+    def test_truncation_warns_because_silence_here_freezes_her(self, caplog):
+        """The cap keeps the OLDEST entries, so a full store can never show
+        anything new. Measured 2026-10-18: the curated merge wrote exactly 32,
+        the extractor appended two more, and both were silently dropped. They
+        were paraphrases of answers she had just recited, so nothing was lost —
+        a genuinely new fact would have been lost identically and as quietly.
+        """
+        import logging
+
+        p = _profile(facts=[f"fact {i}" for i in range(34)])
+        with caplog.at_level(logging.WARNING, logger="coordinator.user_profile"):
+            p.get_recall_facts(max_facts=32)
+        assert any("NOT shown" in r.message or "NOT shown" in r.getMessage()
+                   for r in caplog.records), (
+            "truncation must warn — this is the interim guard until ADR-021's "
+            "write policy exists"
+        )
+
+    def test_no_warning_when_nothing_is_dropped(self):
+        """The warning must mean something, so it cannot fire on every call."""
+        import logging
+
+        p = _profile(facts=["a", "b"])
+        logger = logging.getLogger("coordinator.user_profile")
+        seen = []
+        h = logging.Handler()
+        h.emit = lambda r: seen.append(r)
+        logger.addHandler(h)
+        try:
+            p.get_recall_facts(max_facts=32)
+        finally:
+            logger.removeHandler(h)
+        assert not seen, f"warned with nothing dropped: {seen}"
+
     def test_empty_profile_recalls_nothing(self):
         assert _profile().get_recall_facts() == []
 

@@ -33,6 +33,14 @@ Two consequences the sequencing makes concrete, both recorded in
 
 ## Next (this month)
 
+- [ ] 🔴 **She cannot learn a new fact, and the extractor is feeding her her own words.** Both measured 2026-10-18, within hours of the curated merge, and both are consequences of taking the frame live rather than pre-existing.
+
+  **(a) The store is frozen.** `get_recall_facts` caps at 32 and keeps the **oldest** entries — and the curated merge wrote exactly 32. So the store is full, and anything new is dropped. Verified directly: the two facts the extractor appended after the merge are both `TRUNCATED`, never shown. This contradicts the stated purpose of the programme (*she should evolve from shared interaction and "learn"*). ⚠️ **Raising the cap only moves the freeze** — the fix is a write policy, so the interim guard shipped instead is a WARNING when truncation drops anything, because the failure was silent and silence is what made it dangerous.
+
+  **(b) The extractor re-ingests her own recited answers.** She said *"Eggs benedict and apple juice"*; the extractor read her reply and wrote `User eats eggs benedict and apple juice for breakfast` as a new user fact. Same for the RPG list. This loop **did not exist before the frame went live**, because she never recited stored facts. Left alone the store fills with paraphrases of itself, each one consuming a numbered slot. ADR-021 Phase 0 already names the fix — `asserted_by` set from the SQLite `role` column, never by the LLM — and already cites this exact shape (*"one stored her phrasing back at the user"*); it is now systematic rather than incidental, which promotes it.
+
+  **Why these two interact dangerously.** Right now the freeze is accidentally *protecting* her: the self-ingested duplicates are the entries being truncated. Fix the cap without fixing the write policy and the duplicates start displacing real facts. **Order matters: write policy first.**
+
 - [ ] 🔴 **The capability-scope deflection eats questions the recall frame can answer.** Measured live 2026-10-18, immediately after the numbered frame went live: *"how much bitcoin did i buy and when?"* returned the canned *"Mm, no idea Daddy 😅 I can't go looking that up — I've only got pictures and clips"*, while the **same facts answered correctly** on *"whats my money situation?"* (*"you bought 2.5 BTC back in 2021 … worried about having enough money to last eight months"*). The log is unambiguous:
 
       [out-of-surface] persona=gwen intent=web missing=['brave_web_search', ...] — deflecting
