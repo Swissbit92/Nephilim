@@ -302,6 +302,80 @@ don't actually know"*, the shared scorer matches markers as substrings, and all
 five interventions scored as **fabrications** — the arm read 0.875 instead of
 0.562 until it was found.
 
+## AMENDMENT 2026-10-18 (second) — the gate is superseded by a free prompt change
+
+**The operator's argument against my framing was right, and it produced the best
+result in this ADR.** I had called invention and over-refusal a balance to be
+struck. He said: we have a fix that pins invention at zero — take it, and attack
+the other problem separately rather than trading them off.
+
+I argued against that on a hypothesis — that the two were one knob, a see-saw.
+**The hypothesis was false, and the mechanism says why it should have been
+obvious:**
+
+| failure | condition |
+|---|---|
+| invents | the fact is **absent** and she fills the gap |
+| wrongly refuses | the fact is **present** and she does not look |
+
+Different conditions, not two ends of one dial. The instruction never taught her
+to check — it taught her to **assume absence**. *"I don't know what kind of books
+you read"* was said with Animal Farm and Jordan Peterson sitting in her prompt.
+
+So the missing piece was never a softer instruction. It was the step absent from
+both failures: **looking**.
+
+### The result
+
+Numbered facts, plus *"find it in the numbered list first; if it is genuinely not
+there, say you don't know."* The decline clause is **byte-identical** to the
+instruction-only arm, so the difference is attributable to the lookup.
+
+| arm | invents | wrongly refuses |
+|---|---|---|
+| A — today | 0.875 | 0.375 |
+| B — instruction only | **0.000** | 0.708 |
+| **C — cite, don't guess** | **0.000** | **0.208** |
+| D — C plus the gate | 0.000 | 0.250 |
+
+**C beats the baseline on BOTH axes.** Total error 0.575 → 0.125, −78%, with
+**10 probes down and 0 up, p=0.0020** on all three exact tests — the only
+unambiguous win measured in this ADR. Invention stayed pinned at zero while
+refusals fell *below* the starting point.
+
+Voice holds: **0 of 40 replies** leaked a bracket number or mentioned "the list",
+and the register is intact (*"I don't know. But I do know that I want to ride you
+hard tonight."*).
+
+### What this does to the Decision above
+
+🔴 **Part 2 (the assertion gate) is SUPERSEDED and should not ship.** Arm D —
+citation plus the gate — is **worse** than citation alone (0.250 vs 0.208). The
+classifier adds a serialised model call, a dependency on its own prompt wording,
+and a new failure mode, to make the result slightly worse. It stays in the tree
+behind its flag as a measuring stick and as the thing arm D was run against; it
+is not a recommended path.
+
+**Part 1 (the unconditional read) still stands**, and matters more now, not less:
+citation only works if the numbered list is complete and current, which is
+exactly what a deterministic per-turn read provides.
+
+**The specialist-verifier question is MOOT for now.** The highest-value open item
+in the first amendment was adopting MiniCheck/AlignScore to fix the 24B's poor
+entailment. That was the right fix for a gate that is no longer the design. Do
+not spend a `torch` dependency on it.
+
+⚠️ **The one unmeasured cost: replies are 31% shorter** (118 vs 170 chars
+baseline). This repo has a recorded finding that a length shift is how a format
+instruction announces itself touching voice — the `PERSONA_FORMAT_OVERRIDE`
+signature, seen three times, each time as replies getting *longer*. This is the
+inverse and it is not measured. The frozen-gallery distinctiveness run is owed
+before this ships to prod, and it is the same measurement ADR-019 names for
+reopening change (a).
+
+⚠️ One session, 20 probes, 8 unanswerable. The −78% is large enough to clear the
+~15-point noise floor; the 0.208-vs-0.250 gap between C and D is not.
+
 ## Related
 
 - [ADR-021](021-agentic-memory-is-one-graph-with-scoped-truth.md) — the memory design, and
