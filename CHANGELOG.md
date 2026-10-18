@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the numbered recall frame is LIVE (ADR-022)
+
+- **`SINGLE_OPERATOR_USER_ID`** collapses all history onto one operator profile.
+  Identity was recovered from an LLM-extracted name with a fresh `user_{uuid4}`
+  minted on failure — measured **397 profiles, every one with exactly ONE
+  session**, 389 with no extracted name, 130 holding real facts none of which
+  the next session could reach. Memory injection could not have worked while
+  this held, whatever retrieval or rendering did.
+- **`MEMORY_RECALL_NUMBERED`** renders recalled memory as a numbered list with a
+  find-it-first instruction instead of the ADR-006 prose narrative. 160
+  generations, 16 turns of real conversation per probe: fabrication
+  **0.875 → 0.000** and wrong refusals **0.375 → 0.208** — better on *both*
+  axes, total error −78%, 10 probes down / 0 up, p=0.0020, zero citation
+  leakage. Requires `MEMORY_CONTEXT_INJECT`; it changes that injection's
+  rendering rather than adding a source.
+- **`scripts/utils/merge_user_profiles.py --curated`** with a frozen rubric and
+  a labelled fact file (`scripts/research/facts/`). A blind union writes 277
+  facts of which a hand pass admits **32**; the rest is world facts,
+  conversation state and the assistant's own self-description. Junk is not inert
+  under a numbered frame — it gets *cited*.
+- **`UserProfile.get_recall_facts()`** — discrete facts for the numbered frame,
+  deliberately not derived from the prose narrative, which has already welded
+  them into sentences that cannot be split apart again.
+
+### Fixed
+
+- The injection seam is a **branch**, not an early return. Returning once the
+  numbered context was set would have silently dropped ADR-011's author note
+  (documented "always injected when set") and the whole summary-context block.
+
+
 ### Added
 - **A typed query layer, and a read-only MCP server over it (2026-10-18).** The ecosystem defines 31 competency questions and **every one carried `query: null`** — the set stated what the graph must answer and nothing anywhere answered it, with `check.py` emitting "verified but query is null" for all 28 verified questions since it was written. `src/coordinator/graph_queries.py` is that field.
   **Ten functions, not 31, and the count is the finding.** Measured against the live graph the set splits four ways: **7 answerable** today, **3 degraded** (`tmp.cq01-03` target `:Fact`, which does not exist; implemented for `:Rule` and marked with the reason rather than silently retargeted), **16 need schema** ADR-021 designs and has not built, and **4 must never be written** — `wal/hab/wel.cq01` are `class: scoping` where a query is a hard error, and `idn.cq05` is deliberately uninstrumented since its own negative fixture says re-adding a counter to satisfy it is itself a failure. A test asserts the catalog never answers those four.
