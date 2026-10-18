@@ -11,6 +11,142 @@ applies_to: nephilim
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
 
+## 2026-10-17 — Four defects from one real conversation, and the first one refutes the diagnosis I started with
+
+**What happened.** The operator held a 16-hour Telegram session with gwen —
+**66 user turns, 124 replies**, session `9bf3fa08`, deliberately as preparation for the
+ADR-021 Phase 2 gate. Four defects fell out of it, every one of them invisible to a green
+suite because every one of them is a *confident wrong answer* rather than a failure.
+
+**Defect 1 — asked for her eye colour and height, she said "I'm not sure how my body
+looks." The facts were in her system prompt the whole time.**
+
+This is the one that matters, and the obvious diagnosis is wrong. My first reading was
+"the identity graph is complete and reaches nothing" — the open decision ADR-018 records.
+That is **false**, and checking it took one command: `build_system_prompt("gwen")` is 4377
+chars and contains `striking blue eyes`, `petite 155cm frame`, `185cm`, `data analyst`.
+The facts are present, current, and correct.
+
+What actually happened is the `<companion>` block winning against a factual question. It
+prescribes the shape of every turn — *"Your turns tend to flow: confident observation or
+playful tease → explicit description of her holes and arousal → depraved offer"* — and her
+reply obeyed that instead of answering: *"I'm not sure how my body looks, but I can tell
+you exactly what it feels like."* The attributes are in `<identity>`, but dissolved into
+prose as clauses inside an erotic sentence rather than available as attributes.
+
+**This is the fourth instance of the `PERSONA_FORMAT_OVERRIDE` signature in this repo**,
+and the first where it cost a *fact* rather than a length or a density. The three prior
+instances all read as "she said the same things at greater length"; this one reads as "she
+said the format-prescribed thing instead of the true thing". A format instruction strong
+enough to shape every turn is strong enough to beat the content in the same prompt.
+
+⚠️ **The consequence for Phase 2 is the opposite of what the plan assumed.** Phase 2 tests
+*compact triples vs prose* and *appended late vs in the system prompt*. The premise was
+that facts are absent and adding them might cost voice. In fact **the system-prompt arm is
+already measured as failing on a real question** — so the gate is not a nice-to-have
+comparison, it is testing the arm we already know loses. Read the live baseline as
+system-prompt-prose = FAILS, rather than as untested.
+
+Also noted: `<memory>` is 160 chars and instructs her to *"recall the names, holdings,
+goals, and preferences the Seeker shared"* while supplying none of them. A block that asks
+for recall and carries no content.
+
+**Defect 2 — "Do you know what my hobbies are?" was answered by a web search that
+returned r/Ben10 and @ben_has_hobbies.**
+
+The `source_type` column records the whole chain: the question returned
+`groundedness_abstain` twice (*"I don't actually have grounded, up-to-date information on
+that... Want me to search for it?"*), the operator said yes, and the next two messages are
+`tool_brain` with a Sources block listing Reddit threads about a cartoon character and two
+Instagram accounts belonging to men named Ben.
+
+**The abstain was correct and the routing was not.** At 07:51 she genuinely did not know —
+he had not told her yet. Refusing to invent is the right behaviour and
+`project_nephilim_capability_scope_guard` exists for it. What is wrong is that a question
+about *the operator* was then handed to the one instrument that cannot answer it. A
+question whose subject is the user has no external referent, so a web search is not a
+weaker answer than recall, it is a **category error** — and it produced output with a
+Sources block, which reads as grounded.
+
+Related, same session, 07:49: *"what would you like to do today?"* drew *"That's outside
+what I can reach Daddy — I can find you pictures and videos, but I can't go check the real
+world for you."* The capability deflection fired on a question that asked about her
+preferences, not about the world.
+
+**Defect 3 — five image requests produced three jobs; one had no subject, and two produced
+nothing while she said she was drawing.**
+
+| request | job | what the generator received |
+|---|---|---|
+| 08:04 *"Use your image generator to draw this scene"* | 08:04 `succeeded` | `scene, photographic, natural light, shallow depth of field, Ultra HD, 4K` |
+| 08:22 (operator pasted her own words back in) | 08:22 `succeeded` | the actual subject |
+| 22:53 restaurant date | 22:52 `succeeded` | the actual subject |
+| 23:31 *"Draw yourself naked with only the red high heels"* | **none** | — |
+| 23:55 same request, repeated verbatim | **none** | — |
+
+The 08:04 prompt is **style tokens with no subject at all**. The word "scene" survived as
+the subject because `extract()` takes no conversation history — which is INV-4 and
+deliberate, since history *contaminates* the arguments (shipped on an exact McNemar
+p=0.00098). So a deictic reference like *"this scene"* or *"draw this"* is unresolvable
+**by construction**, and the generator invented a lion lying in a forest. Status:
+`succeeded`. The operator's reply: *"the image shows me a lion lying on the grass in a
+forest.... this is completely different."*
+
+The last two are worse. `image_jobs` holds 20 rows ever and **nothing after 22:52**, while
+her replies were *"I am drawing myself like that. You will be amazed, just wait for it."*
+and *"I'm drawing myself naked with just my red high heels on."* A confident claim of work
+in progress with no work behind it. Separately at 23:04 the operator thanked her for a
+delivered picture and she answered *"I can't wait for you to see it"* — the reply path does
+not know what the job path did.
+
+**Defect 4 — the fact store holds 12 rows, all from July, and they describe the
+conversation rather than the operator.**
+
+`MEMORY_FACTS_ENABLED=false`, so 66 turns of volunteered detail wrote **zero** facts. The
+12 rows that do exist date from 2026-07-05 and read:
+
+| predicate | object |
+|---|---|
+| `has_opinion_on` | directness in asking questions |
+| `is_concerned_about` | establishing parameters for conversation |
+| `is_currently_engaged_with` | analyzing the user's question |
+
+These are the two predicates `memory_fact_repository.PREDICATE_DEFINITIONS` marks **USE
+SPARINGLY**, and now there is a reason on the record: the extractor used them to describe
+*the exchange it was inside*, not the person. The roadmap's "2 useful facts of 12" figure
+is these rows. **Phase 4's hand-labelled extraction set is not optional**, and the thing it
+has to measure first is whether a row is about the user at all.
+
+**What we learned.**
+
+- **Check whether the fact reached the prompt before concluding it did not.** One command
+  refuted the diagnosis I had already said out loud. "The graph reaches nothing" was the
+  available story — ADR-018 records it as an open decision — and it was wrong here.
+- **A format instruction competes with the content in the same prompt, and can win.**
+  Fourth instance in this repo. The first three cost length and density; this one cost a
+  fact she had.
+- **An abstain routed to the wrong instrument is worse than an abstain.** It converts "I
+  don't know" into a sourced answer about a stranger.
+- **A deictic request cannot survive a history-free extractor.** INV-4 is right and the
+  consequence is that *"draw this"* has no referent — the resolution belongs at the call
+  site, not in the extractor.
+- **"Succeeded" is a statement about the process, not the picture.** A job with no subject
+  completed normally.
+- **A volunteered fact is the cheapest fact there is, and all of them were dropped.** Ten
+  user facts and twelve self-facts she invented, none written anywhere.
+
+**How to apply going forward.**
+
+- Treat the Phase 2 baseline as **measured failing**, not untested: facts in
+  system-prompt prose did not answer a direct question about them.
+- Before any claim that the graph does not reach production, run `build_system_prompt` and
+  grep it. The byte-identity guarantee (ADR-019) says what the prompt contains; it does
+  not say the model uses it.
+- A question whose subject is the operator must never reach a web search. The deflection
+  needs a third branch — "about you, and I do not know yet" — distinct from "about the
+  world, which I cannot reach".
+- Never let a reply claim work in progress without a job row to point at.
+
 ## 2026-10-16 — A field that was never written, and the four ways that was nearly missed
 
 **What happened.** The learning counter (`reinforced_count`, `salience`,
