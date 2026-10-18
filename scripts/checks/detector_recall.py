@@ -114,6 +114,14 @@ REGISTRY: list[Detector] = [
         "metadata.rule_violations. A recall gap here is a wall that silently stops "
         "being enforced -- check_address could not see an adopted honorific for weeks.",
     ),
+    Detector(
+        name="assertion_prefilter",
+        module="src.coordinator.services.assertion_gate",
+        sources=["src/coordinator/services/assertion_gate.py"],
+        classify=lambda mod, cat, reply, q: bool(mod.looks_like_an_assertion(reply)),
+        self_test=None,
+        categories=("assertion_grounding",),
+    ),
 ]
 
 
