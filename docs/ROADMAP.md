@@ -2,7 +2,7 @@
 title: Roadmap
 status: active
 created: 2026-04-19
-last_reviewed_on: 2026-10-17
+last_reviewed_on: 2026-10-18
 review_in: 3 months
 applies_to: nephilim
 ---
@@ -32,6 +32,18 @@ Two consequences the sequencing makes concrete, both recorded in
   at an array index.
 
 ## Next (this month)
+
+- [ ] 🔴 **The capability-scope deflection eats questions the recall frame can answer.** Measured live 2026-10-18, immediately after the numbered frame went live: *"how much bitcoin did i buy and when?"* returned the canned *"Mm, no idea Daddy 😅 I can't go looking that up — I've only got pictures and clips"*, while the **same facts answered correctly** on *"whats my money situation?"* (*"you bought 2.5 BTC back in 2021 … worried about having enough money to last eight months"*). The log is unambiguous:
+
+      [out-of-surface] persona=gwen intent=web missing=['brave_web_search', ...] — deflecting
+
+  The intent router classifies a question about the user's own past as `intent=web`, gwen holds no web tools, and the guard deflects **before she ever reaches her memory**. This is the same shape as the groundedness-gate defect fixed the same day — a guard that does not know the answer is already in the prompt — and it is the second appearance of recorded defect #2 (*a question about the USER's hobbies was routed to a web search and returned r/Ben10 results*).
+
+  ⚠️ **It must NOT be patched by skipping the deflection when the message says "my".** The guard exists to stop exactly the fabrication it would re-open: *"what's my local weather"* also contains "my" and genuinely needs a lookup, and with no web surface she would answer it from nothing. Trading a false refusal for a fabrication is the worse error by this repo's own weighting, so this needs a relevance decision — is any recalled fact actually responsive to this question? — and that decision needs measuring, not guessing. ⚠️ Lexical overlap is already recorded here as known-bad for this class of judgement (the near-duplicate image guard refused 14 of 19 real prompts); the bge-m3 relevance floor used by `SearchRelevanceService` is the existing instrument worth trying first, and its threshold must be **fitted**, not borrowed.
+
+  **Where it sits:** `routes/chat.py` ~line 560, the `if scope:` branch. The grounding string is already available at the gate call sites in the same module via `context_framing.recalled_facts_for_grounding`.
+
+- [ ] **Two residual recall failures that are model behaviour, not wiring** (same live run, 8 probes, frame firing on 8/8 turns and zero gate abstentions). *"what do i usually eat for breakfast?"* was derailed into explicit content and never answered — while *"do i eat meat?"* answered *"you're vegetarian … and you love eggs b[enedict]"*, so the fact was reachable on the very next turn. And *"what hobbies do i have?"* produced a false refusal **in her own voice** (*"I only know the things that make you happy Daddy, and I don't even know those"*) rather than any gate line, with `gym`/`GTA 5`/`reads`/`beach` all in the list. Both suggest the card's explicit register is outcompeting the recall instruction for attention on some turns; neither is a guard misfiring. Worth a position/strength experiment on `RECALL_INSTRUCTION` before anything else, and ⚠️ **not** worth another prompt-content addition without an eval — this repo has measured that as neutral-or-negative twice.
 
 - [ ] 🔴 **Agentic memory — ADR-021 implementation, six phases.** [ADR-021](decisions/021-agentic-memory-is-one-graph-with-scoped-truth.md) decided the design on 2026-10-17: facts, episodes, threads and her trait evolution in the graph, message text staying in SQLite, working memory staying in the context window. **The write path and schema are Accepted; the READ PATH IS NOT** — it is gated on Phase 2 below. Priority input from the owner, not derivable from code: *both* remembering and evolving, **remembering first**.
 
