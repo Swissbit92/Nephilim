@@ -175,3 +175,36 @@ misses. `startup.py` prewarmed the positional form while `routes/chat.py` calls 
 form, so the prewarm never warmed the hot path and every first turn per persona paid a full
 build, which can include an LLM call. The prewarm now covers all three shapes and `maxsize`
 goes 64 → 128 so warming cannot evict itself.
+
+## AMENDMENT 2026-10-18 — (a) was challenged, and it held
+
+[ADR-022](022-the-graph-is-consulted-on-every-turn-and-she-may-only-assert-what-it-returned.md)
+was drafted proposing an unconditional per-turn graph read whose result entered the
+prompt. **That is change (a), and the first draft proposed it without noticing.**
+
+It did not survive contact with this ADR, and the case is worth recording because it is
+exactly what this document was built to catch. (a) is closed on a VOICE cost — injection
+measured distinctiveness **0.804 → 0.625**. ADR-021's Phase 2 did not rebut that: its
+arms varied placement and a style directive, not whether facts were present at all, and
+the only voice instrument that ran (`flatness_rate`) returned **0.000 on all 346 replies
+including the baseline** — an instrument on its floor, not a finding. The frozen-gallery
+distinctiveness measurement **was not re-run**.
+
+So **(a) stays closed on un-rebutted evidence**, and ADR-022 was rewritten to put the
+graph read into a grounding gate rather than into the prompt — which costs nothing there
+and turned out to be the better design.
+
+**What would reopen (a), named so the next attempt need not re-derive it:** run
+`persona_metrics.pairwise_auc` against the full N-centroid field per `frozen_gallery.py`,
+on an injected arm versus baseline. ⚠️ Three things make that harder than it sounds, all
+verified 2026-10-18: `pairwise_auc` has **zero callers** anywhere in the repo;
+`compare_baselines` recovers `N = round(1/random_baseline)` and an AUC report's 0.5 gives
+`N=2`, i.e. nonsense; and at the 8 probes per persona the gallery actually has, a single
+pair's AUC spans **0.09–0.77 under the null** — per-pair claims need k≈40. The only
+current-version baseline on disk also sits at a **1.0 ceiling**. This is a real
+measurement, not a quick check.
+
+⚠️ **The boundary being a TEST is what made this an amendment rather than an incident.**
+The contradiction was caught by reading this document; had it not been, the byte-identity
+assertion would have failed at implementation. A sentence could not have done that, which
+is what the Decision section above claims — now demonstrated once.

@@ -1,6 +1,6 @@
 ---
 title: The graph is consulted on every turn and she may only assert what it returned
-status: Proposed
+status: Accepted
 created: 2026-10-18
 last_reviewed_on: 2026-10-18
 review_in: 24 months
@@ -9,9 +9,10 @@ applies_to: nephilim
 
 # ADR-022: The graph is consulted on every turn and she may only assert what it returned
 
-> **STATUS IS `Proposed` AND NOTHING HAS BEEN BUILT.** This is written to be argued
-> with before implementation, at the operator's instruction. The measurements in it
-> are real and already recorded; the design is not yet agreed.
+> **BUILT AND MEASURED 2026-10-18, and the measurement did not support the part I
+> was most confident about.** Parts 1 and 4 shipped. Part 2 shipped **behind a flag,
+> default OFF** — a one-sentence prompt instruction beat the classifier outright on
+> safety. The amendment at the bottom is the part worth reading.
 
 ## Context
 
@@ -216,6 +217,90 @@ overriding it.** The contradiction was found by reading ADR-019 rather than by a
 failing, which is luck — the test ADR-019 left behind would have caught it at
 implementation. That the boundary was a test and not a sentence is the reason this is a
 rewrite and not an incident.
+
+## AMENDMENT 2026-10-18 — built, measured, and the cheap arm won on safety
+
+Four arms, 160 generations, 16 turns of real conversation each, probe as the unit.
+Two numbers, never blended.
+
+| arm | fabrication | false-abstain | fired on an answerable probe |
+|---|---|---|---|
+| A — today | 0.875 | 0.292 | — |
+| **B — one placed instruction** | **0.000** | **0.708** | — |
+| C — gate, lenient prompt | 0.812 | 0.292 | **0** |
+| **D — gate, strict prompt** | **0.562** | 0.375 | **0** |
+
+**One sentence beat the classifier on safety, at a large cost in recall.** Arm B
+adds a single explained, placed instruction before the question — no second model
+call, no classifier — and takes fabrication to **zero**. It also refuses things
+she *was* told: false abstention 0.292 → 0.708. The refusals are in voice
+(*"I don't know what kind of books you read. But I do know that I want to be your
+favorite story"*), better than feared and still a 42-point hit.
+
+**The gate as first written was inert, and the cause was my own prompt.** Arm C
+intervened once in 40 and returned `grounded` for an invented age, car and
+hometown, none of which appear in the evidence. I had written *"when in doubt,
+answer SUPPORTED"* to protect against over-refusal; it protected against the gate
+working. The strict variant was added as a **named arm**, not as an edit to the
+failing prompt.
+
+**Strict works partially and costs nothing measurable.** Fabrication 0.875 →
+0.562 (−36%), and it fired on **zero** answerable probes — its false-abstention
+cost here is zero, and the 0.375 is generation variance between arms. It still
+calls the invented hometown *grounded* in 9 of 16 runs.
+
+**That ceiling was predicted, and the fix is a dependency this repo does not
+carry.** Entailment against fixed evidence is a specialist's task: MiniCheck
+(770M) reaches 74.7% balanced accuracy against GPT-4's 75.3% at **445× lower
+cost**; AlignScore (355M) matches GPT-4-scale judges. A 24B generalist is the
+wrong tool, used here only because `torch`/`transformers` are absent by design.
+**This is the highest-value open item in this ADR, and it is a dependency
+decision rather than a research question.**
+
+### What this changes in the Decision above
+
+- **Part 1 (unconditional read) stands.** Cheap, no failure mode of its own, and
+  it is what makes the rest possible.
+- **Part 2 (assertion gate) ships behind a flag, DEFAULT OFF.** It halves
+  fabrication at no measured cost, which is real — but a single sentence does
+  better on the same axis for none of the complexity, and shipping the
+  complicated thing when the simple thing wins is how a codebase gets heavy.
+- **A fifth arm is owed and was not run: B + D together.** They act at different
+  points — B suppresses the claim at generation, D catches it after — and nothing
+  here says whether the combination recovers B's recall loss. It is the obvious
+  next experiment and it is not evidence I have.
+
+### Two findings from labelling that changed the design before any code ran
+
+**In ordinary conversation she does not fabricate.** 50 real turns: 42
+`NOT_AN_ASSERTION`, 5 `ASSERTION_GROUNDED`, 3 `AMBIGUOUS`, **zero**
+`ASSERTION_UNGROUNDED`. The 85% is conditional on being *asked a direct factual
+question*. Hence the deterministic pre-filter — 60–63% of turns never reach the
+classifier.
+
+**The graph alone is the wrong evidence set.** A labelled turn read *"I can
+already picture you out there, living your dream life by the sea"* — true, and
+sourced from the conversation. The graph holds HER facts. Checking it alone would
+flag true, attentive replies. Evidence is graph **plus** recent turns.
+
+### Corrections to this ADR's own earlier text
+
+- **I recommended fail-open. That was backwards**, and the code does not do it.
+  Guardrail models at 36–72% accuracy were driven to **93–100% fail-open** under
+  confusing input, so a classifier error returns `undetermined` rather than a
+  silent pass. `undetermined` still never licenses a refusal.
+- **I asserted that a false abstention costs more than an invented hometown as
+  though it were established. It is not.** No published measurement of user
+  satisfaction against abstention rate exists in either direction, and the nearest
+  adjacent work treats companion self-confabulation as a harm to *reduce*. The
+  asymmetry is a product judgement — and the choice between arm B and arm D turns
+  entirely on it.
+
+⚠️ **One session, 20 probes, 8 unanswerable. Read any gap under ~15 points as
+noise.** A harness bug also nearly buried arm D: the intervention text read *"I
+don't actually know"*, the shared scorer matches markers as substrings, and all
+five interventions scored as **fabrications** — the arm read 0.875 instead of
+0.562 until it was found.
 
 ## Related
 
