@@ -154,6 +154,99 @@ def overlay_from_graph(card: Optional[Dict[str, Any]],
         return card, SOURCE_CARD
 
 
+def self_facts_from_graph(card: Optional[Dict[str, Any]],
+                          selector: Optional[str],
+                          *, include_expertise: bool = False,
+                          max_facts: int = 16) -> list[str]:
+    """Atomic, subject-marked facts about HER, for the numbered recall frame.
+
+    The graph is the source: this reads `IdentityRepository.identity()` through
+    the same flag gate, the same driver and the same `_passes_floor` guard as
+    `overlay_from_graph`, then filters to the kinds that answer a direct question
+    about herself. One read, filtered in Python — not a second query — because
+    `identity()` already projects `kind` and `level`.
+
+    **Why `appearance` only by default.** It is the MEASURED gap: 3 reps on the
+    live backend 2026-10-21 scored self-recall 8/15 with 5 outright refusals, and
+    all 5 were her hair colour, eye colour and height. Expertise is not a
+    measured gap — `idn.cq02` is documented as "the one question the existing
+    identity() read already fully satisfies", and her expertise already renders
+    in a dedicated prompt block. `include_expertise` exists so the A/B can test
+    adding it rather than assuming it helps.
+
+    ⚠️ **The cap is a balance constraint, not a budget.** CAVI (arXiv 2605.09443)
+    finds that when two information sources share a context the larger dominates
+    the smaller, and here the other section holds 32 user facts — the section that
+    is measured to work. Dumping all 136 identity nodes opposite it is the shape
+    that paper warns about, and separately it would be ADR-019's CLOSED change
+    (identity content as extra prompt text, voice 0.804 -> 0.625).
+
+    ⚠️ **`level: avoid` is NOT a strength.** `graph_queries.what_are_you_good_at`
+    documents the trap: the vocabulary is `{strong, familiar, avoid}` and `avoid`
+    means "do not go here", so a caller rendering strengths must filter it rather
+    than assume. 10 of her 26 expertise nodes are `avoid`.
+
+    Returns [] on every failure path — flag off, no driver, empty read, rejected
+    floor — so the caller injects nothing and the dormant path stays unchanged.
+    """
+    if not card:
+        return []
+    # Function-local, matching `overlay_from_graph`: this module must stay
+    # importable without a configured environment.
+    from .config import get_settings
+
+    cfg = get_settings().graph
+    if not (cfg.enabled and cfg.identity_source):
+        return []
+    try:
+        from . import startup
+
+        driver = startup.get_neo4j_driver()
+        if driver is None:
+            return []
+
+        from .repositories.identity_repository import IdentityRepository
+
+        persona_id = card.get("key") or selector
+        limit = _read_limit(card)
+        nodes = IdentityRepository(driver, cfg.database).identity(
+            persona_id, limit=limit
+        )
+        if not nodes:
+            return []
+        ok, why = _passes_floor(card, nodes, limit)
+        if not ok:
+            # Same reasoning as the overlay: a PARTIAL read is the dangerous
+            # case, not an absent one. Here it would quietly hand her a subset
+            # of herself and present it as complete.
+            logger.error("[Graph] self-facts read REJECTED for %s: %s", selector, why)
+            return []
+    except Exception as e:  # noqa: BLE001 - never break a turn over this
+        logger.warning("[Graph] self-facts read skipped for %s (non-fatal): %s",
+                       selector, e)
+        return []
+
+    out: list[str] = []
+    for n in nodes:
+        if n.get("kind") == "appearance":
+            text = (n.get("text") or "").strip()
+            if text:
+                out.append(text)
+    if include_expertise:
+        # ⚠️ Expertise node text carries NO subject — it is a bare skill phrase
+        # ("expert deepthroating technique"), unlike the appearance lines which
+        # are authored subject-first. Rendering it raw would reintroduce exactly
+        # the attribution failure this section exists to avoid, so the subject is
+        # supplied here. The name comes from the card, never hardcoded.
+        who = (card.get("display_name") or card.get("key") or "She").strip()
+        for n in nodes:
+            if n.get("label") == "Expertise" and n.get("level") == "strong":
+                text = (n.get("text") or "").strip()
+                if text:
+                    out.append(f"{who} is good at {text}")
+    return out[:max_facts]
+
+
 def _read_limit(card: Dict[str, Any]) -> int:
     """A limit that cannot silently truncate this persona's identity.
 

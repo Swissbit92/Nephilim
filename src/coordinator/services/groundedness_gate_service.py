@@ -31,6 +31,7 @@ fabricated real-world claims.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -163,12 +164,56 @@ _ABSTAIN_MESSAGE = (
 )
 
 
+# Numbers and years are what the classifier's FIRST flag rule reaches for ("a
+# SPECIFIC, FALSIFIABLE, TIME-SENSITIVE claim — a score, date, price") and they
+# are also the only part of a draft that is cheaply CHECKABLE against grounding.
+_FIGURE = re.compile(r"\d[\d,.]*")
+
+
+def _figures_are_all_in_the_grounding(draft: str, grounding: str) -> bool:
+    """True when every number in the draft also appears in the grounding.
+
+    🔴 WHY THIS IS A HARD RULE AND NOT MORE PROMPT TEXT. Handing the classifier
+    the recalled facts (2026-10-18) stopped it destroying non-temporal recitals,
+    and it kept destroying DATED ones. Measured 2026-10-21, both drafts correct
+    and both replaced with "I don't know":
+
+        "Daddy bought 2.5 BTC back in 2021, now down to about 2 BTC"
+        "You sold your car in June or July 2026"
+
+    against grounding that literally contained "Ben bought 2.5 BTC in 2021" and
+    "Ben sold his car in June or July 2026". The exclusion is in the prompt; it
+    simply loses to the flag rule above it, because this is a 24B generalist and
+    entailment against fixed evidence is a specialist's task — MiniCheck at 770M
+    reaches 74.7% balanced accuracy against GPT-4's 75.3% at 445x lower cost.
+    The research on provenance found the same shape: Mem0 is the one production
+    system with an `attributed_to` field and its LLM-judged version failed
+    (mem0ai/mem0#5642), so a deterministic rule beats a softer prompt.
+
+    ⚠️ This is CONTAINMENT, not similarity. Lexical overlap is recorded in this
+    repo as known-bad for judging "same request" — the near-duplicate image
+    guard refused 14 of 19 real prompts on it. Asking whether the exact figure
+    "2021" occurs in the grounding is a different question with a verifiable
+    answer, and it is deliberately narrow: it can only SKIP the gate, never
+    force an abstention, and it says nothing about any non-numeric claim.
+
+    Returns False when the draft has no figures at all — there is then nothing
+    for this rule to vouch for, so the classifier decides as before.
+    """
+    if not grounding:
+        return False
+    figures = _FIGURE.findall(draft)
+    if not figures:
+        return False
+    return all(f.rstrip(".,") in grounding for f in figures)
+
+
 @dataclass(frozen=True)
 class GroundednessVerdict:
     """Result of a groundedness check."""
 
     should_abstain: bool
-    reason: str  # "flag_off" | "grounded" | "ungrounded" | "classifier_error_fail_open"
+    reason: str  # "flag_off" | "grounded" | "ungrounded" | "recited" | "classifier_error_fail_open"
 
 
 class GroundednessGateService:
@@ -225,6 +270,12 @@ class GroundednessGateService:
                 f"Draft response:\n{drafted_response}\n\n"
                 "Answer (YES/NO):"
             )
+            if _figures_are_all_in_the_grounding(drafted_response, grounding):
+                logger.info(
+                    "[GroundednessGate] every figure in the draft is present in "
+                    "the recalled facts — reciting, not asserting; gate skipped"
+                )
+                return GroundednessVerdict(should_abstain=False, reason="recited")
             system = _classifier_system(
                 live_state=get_settings().groundedness.live_state_claims_enabled,
                 grounding=grounding,

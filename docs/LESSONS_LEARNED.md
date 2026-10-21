@@ -2,7 +2,7 @@
 title: Lessons Learned
 status: active
 created: 2026-04-19
-last_reviewed_on: 2026-10-18
+last_reviewed_on: 2026-10-21
 review_in: 12 months
 applies_to: nephilim
 ---
@@ -10,6 +10,87 @@ applies_to: nephilim
 # Lessons Learned
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
+
+## 2026-10-21 — Every guard I added created the next defect, and the measurement found each one
+
+Four milestones, all shipped, all measured. The through-line is not any single
+fix: it is that **each guard I added made the next layer wrong, and nothing
+failed loudly at any step.**
+
+**The chain, in order.**
+
+1. The numbered recall frame made her *recite* stored facts. Good — fabrication
+   0.875 → 0.000.
+2. Reciting meant the extractor could read her own words back. It wrote
+   *"User eats eggs benedict and apple juice for breakfast"* from her reply. The
+   loop **did not exist** before the frame, so no prior test could have caught it.
+3. Giving her a self-facts section (self-recall 8/15 → **15/15**) made her recite
+   facts about *herself*, which the extractor then filed under **him**:
+   `Assistant's eyes are a deep ocean blue` sat in the operator's fact list.
+   38 such rows appeared in ~20 minutes — **during my own A/B runs.**
+4. The curated merge wrote exactly 32 facts and the read cap was exactly 32,
+   keeping the *oldest*, so the store was permanently full and she could never
+   learn anything new. The cap was accidentally *protecting* her by truncating
+   the junk from (3).
+
+Each step was individually correct. The composition was not.
+
+**The generalisable lesson.** A guard's correctness is conditional on what the
+layers around it do, and shipping a new capability silently invalidates the
+guards downstream of it. The only reason any of this was found is that each
+milestone was measured live rather than reasoned about — and three of the four
+defects were found by a probe I wrote for a *different* purpose.
+
+**The corollary that cost the most time: my instruments were wrong as often as
+my code.**
+
+- My first routing check reported 3 of 6 world questions as a regression I had
+  caused. Measured against the unmodified router, all three already behaved that
+  way — a pre-existing gap in a crypto-heavy example set. The check asserted an
+  *assumed ideal* instead of the *measured baseline*, and I nearly "fixed" my
+  examples against a fault they did not cause.
+- `graph_tests.sh` reported **101 passed while three tests were failing**,
+  because its module list is hardcoded and I had not added mine. That is the
+  exact shape the script's own header warns about.
+- My self-knowledge probe **saturated**: arms B and C were identical at 15/15,
+  so it could not discriminate 8 self-facts from 16. I shipped the smaller arm on
+  a judgement, and said so, rather than claiming the measurement decided it.
+- A positional mock handed `wallet` the web intent's vector when I inserted a new
+  intent first, failing a margin-gate test with `assert None == 'wallet'` — a
+  failure pointing at the wrong file entirely.
+- And I hit the assert-the-string trap a **third** time in four days: a test
+  matching `"_recalled, _self,"` broke when a reformat dropped the comma. It now
+  parses the call with AST and counts arguments.
+
+**What went right, and is worth repeating.** Three defects were caught *before*
+they could ship, all by the same move — running the check against the unchanged
+tree first:
+
+- the CV-fingerprint trap, which rewrote her `<identity>` paragraph the instant I
+  added a card field (the ADR-016 `sliders` drift, verbatim). `personas/_summaries/`
+  being tracked in git is the only reason it was visible: a one-file diff.
+- `idn.cq04` going red between the card edit and the seed — the completeness
+  check doing precisely its job.
+- my own `link_chronology` writes passing no owner parameter, which made them
+  invisible to the test write-guard. Found by asking the question rather than by
+  being bitten.
+
+**On the architecture.** Every piece of this landed as *more use of the graph*,
+not as a new mechanism beside it: `appearance` is a vocabulary value on a label
+that already existed; the operator facts and episodes were **demanded by
+competency questions and simply unbuilt** — 19 labels demanded, 11 built when I
+started. C17 running backwards turned out to be a backlog, not an obstacle. The
+build went 11 labels → 14 with **0 undemanded**, and executable questions 10 → 12.
+
+**And one refusal worth recording as a result.** `prf.cq03` demands `Thread` and
+`PART_OF`, and I did not build them. Grouping sessions into threads needs
+scene-boundary detection, which this phase excluded; the only groupings available
+without it are the two the question's own negative fixture forbids. Declining
+costs nothing — C17 errors on a label *built* and undemanded, never on one
+demanded and unbuilt — while inventing would have cost correctness. A test
+asserts the refusal, so building it later has to argue past that.
+
+---
 
 ## 2026-10-18 — The gate destroyed three CORRECT answers, and the A/B could not have seen it
 

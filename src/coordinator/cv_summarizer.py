@@ -166,7 +166,18 @@ def _summary_dir() -> Path:
 # a hash derived from the temporarily-modified card. The harness restored the card in
 # its `finally`; it could not restore the summary. Only tracking the summaries in git
 # made this visible at all — it showed up as a one-file diff.
+# `appearance` (2026-10-21) is graph-and-recall-only: it exists so `idn.cq01`
+# ("What do you look like?") is answerable and so the numbered self-facts section
+# has atomic, subject-marked lines to look up. It must NOT reach the prose prompt
+# — ADR-019 CLOSED "add identity content as extra prompt text" on a measured voice
+# cost (0.804 -> 0.625, three reframes 0.708/0.542/0.500). Leaving it in the
+# fingerprint reproduced the ADR-016 drift immediately and in exactly the same
+# shape: adding the field re-fingerprinted the card, an LLM rewrote <identity>,
+# and the prompt grew 4246 -> 4435 chars with her self-description silently
+# replaced. Because the field is NEW, excluding it leaves the fingerprint byte-
+# identical to before it existed, so no cached summary is invalidated.
 _FINGERPRINT_EXCLUDE = frozenset({
+    "appearance",
     "emoji",
     "voice_signature",
     "dials_in_prompt",

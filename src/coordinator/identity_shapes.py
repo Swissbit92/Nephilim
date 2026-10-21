@@ -62,7 +62,7 @@ IDENTITY_ORIGINS: FrozenSet[str] = frozenset({"card", "learned", "conversation",
 # broader/narrower edge would be pure overhead: extra hops, no parent-uniqueness
 # constraint available on Community to keep it honest, and one more thing to keep
 # consistent on every rebuild. Revisit when a single `kind` passes ~15-20 nodes.
-LORE_KINDS: FrozenSet[str] = frozenset({"lore", "signature_move"})
+LORE_KINDS: FrozenSet[str] = frozenset({"lore", "signature_move", "appearance"})
 
 # ── definitions ───────────────────────────────────────────────────────────────
 # MANDATORY for every term, enforced by scripts/checks/every_declared_term_has_a
@@ -92,8 +92,22 @@ IDENTITY_ORIGIN_DEFINITIONS: dict[str, str] = {
 }
 
 LORE_KIND_DEFINITIONS: dict[str, str] = {
-    "lore": "A fact about her history, world or appearance — something true of her that "
-            "she did not choose. Describes what IS, not what she does.",
+    "lore": "A fact about her history or her world — something true of her that she did "
+            "not choose. Describes what IS, not what she does. NARROWED 2026-10-21: "
+            "appearance was carved out into its own kind, because this definition "
+            "claimed it while nothing could retrieve it.",
+    "appearance": "A physical, checkable attribute of her body or presentation — eye "
+                  "colour, hair, height, build, what she is wearing. A SPECIES of "
+                  "`lore`, not a sibling of it: it is still something true of her she "
+                  "did not choose, but it is the subset a direct question can ask for "
+                  "and a reader can verify. Split out because `idn.cq01` (\"What do you "
+                  "look like?\") was unanswerable without it — its own docstring "
+                  "recorded the gap as the DATA's, not the query's: her appearance sat "
+                  "embedded inside 21 free-text lore strings whose median length is 188 "
+                  "characters and which mostly describe what she DOES. Measured "
+                  "2026-10-21: she refused her own hair colour, eye colour and height "
+                  "on 5 of 15 probes while `blue eyes`, `155`, `petite` and `red hair` "
+                  "were all already in the built prompt.",
     "signature_move": "A recurring thing she DOES on purpose, recognisable as hers. If "
                       "it is a disposition rather than an act, it is a Trait instead.",
 }

@@ -146,3 +146,96 @@ class TestTheRouteWiresAllThreeCallSites:
         assert src.count("extra_system_context', None))") == 3, (
             "every call site must forward the injected context"
         )
+
+
+class TestTheHardContainmentPreCheck:
+    """🔴 Handing the classifier the grounding was NOT enough for DATED facts.
+
+    Measured 2026-10-21, after the 2026-10-18 grounding fix was already live.
+    Both drafts correct, both replaced with "I don't know":
+
+        "Daddy bought 2.5 BTC back in 2021, now down to about 2 BTC"
+        "You sold your car in June or July 2026"
+
+    against grounding literally containing "Ben bought 2.5 BTC in 2021" and
+    "Ben sold his car in June or July 2026". The exclusion is in the prompt; it
+    loses to the flag rule above it ("a SPECIFIC, FALSIFIABLE, TIME-SENSITIVE
+    claim — a score, date, price"), because this is a 24B generalist and
+    entailment against fixed evidence is a specialist's task: MiniCheck at 770M
+    reaches 74.7% balanced accuracy vs GPT-4's 75.3% at 445x lower cost.
+
+    So the fix is a HARD rule, not more prompt text — the same conclusion the
+    provenance research reached from Mem0, whose LLM-judged `attributed_to`
+    failed in exactly this way (mem0ai/mem0#5642).
+    """
+
+    GROUNDING = (
+        " [1] Ben bought 2.5 BTC in 2021 and is a long-term holder\n"
+        " [2] Ben holds about 2 BTC now\n"
+        " [3] Ben sold his car in June or July 2026"
+    )
+
+    @pytest.mark.parametrize("draft,expected,why", [
+        ("Daddy bought 2.5 BTC back in 2021, now down to about 2 BTC.",
+         True, "the real destroyed draft"),
+        ("You sold your car in June or July 2026 and I loved it.",
+         True, "the other real destroyed draft"),
+        ("You bought 7.5 BTC in 2019.",
+         False, "wholly fabricated figures must never skip the gate"),
+        ("You bought 2.5 BTC in 2019.",
+         False, "one right figure and one wrong must not skip — all or nothing"),
+        ("You are vegetarian.",
+         False, "no figures means nothing for this rule to vouch for"),
+        ("Bitcoin closed at 91204 today.",
+         False, "a world figure absent from the grounding must still be judged"),
+    ])
+    def test_containment(self, draft, expected, why):
+        from coordinator.services.groundedness_gate_service import (
+            _figures_are_all_in_the_grounding,
+        )
+
+        assert _figures_are_all_in_the_grounding(draft, self.GROUNDING) is expected, why
+
+    def test_it_never_skips_without_grounding(self):
+        from coordinator.services.groundedness_gate_service import (
+            _figures_are_all_in_the_grounding,
+        )
+
+        assert _figures_are_all_in_the_grounding("You bought 2.5 BTC.", "") is False
+
+    def test_the_precheck_can_only_skip_never_abstain(self):
+        """It is a fail-open shortcut. It must not be able to CAUSE an
+        abstention, or a numeric draft becomes less safe than a prose one."""
+        c = _Client("NO")
+        v = GroundednessGateService(c).check(
+            "how much bitcoin did i buy?",
+            "You bought 2.5 BTC in 2021.",
+            grounding=self.GROUNDING,
+        )
+        assert v.should_abstain is False
+        assert v.reason == "recited"
+        assert c.system is None, "the classifier must not even be called"
+
+    def test_a_fabricated_figure_still_reaches_the_classifier(self):
+        c = _Client("YES")
+        v = GroundednessGateService(c).check(
+            "how much bitcoin did i buy?",
+            "You bought 7.5 BTC in 2019.",
+            grounding=self.GROUNDING,
+        )
+        assert v.should_abstain is True
+        assert v.reason == "ungrounded"
+        assert c.system is not None, "the classifier MUST be consulted here"
+
+    def test_it_is_containment_not_similarity(self):
+        """⚠️ Lexical overlap is recorded here as known-bad for judging "same
+        request" — the near-duplicate image guard refused 14 of 19 real prompts
+        on it. This asks whether an exact figure OCCURS in the grounding, which
+        is a different question with a verifiable answer. A draft that is
+        lexically similar but numerically wrong must not skip."""
+        from coordinator.services.groundedness_gate_service import (
+            _figures_are_all_in_the_grounding,
+        )
+
+        similar_but_wrong = "Ben bought 3.5 BTC in 2021 and is a long-term holder"
+        assert _figures_are_all_in_the_grounding(similar_but_wrong, self.GROUNDING) is False
