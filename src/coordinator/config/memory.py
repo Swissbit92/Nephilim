@@ -167,6 +167,42 @@ class MemorySettings(BaseSettings):
         alias="MEMORY_RECALL_NUMBERED",
     )
 
+    #: ADR-022 + the identity graph. Populate the numbered frame's SECOND
+    #: section, "Things you have told him about yourself", from the identity
+    #: graph. That section has existed in `context_framing.frame_numbered_facts`
+    #: since the frame was written and NO call site has ever passed it anything —
+    #: verified, one call site, three positional args.
+    #:
+    #: Measured on the live backend 2026-10-21, 3 reps: self-recall 8/15 with 5
+    #: outright REFUSALS, all of them her own hair colour, eye colour and height.
+    #: `blue eyes`, `155`, `petite` and `red hair` were ALL already in the
+    #: 4377-char prompt, so this is not missing data — it is the same
+    #: present-but-unfindable condition the numbered frame fixed for user facts.
+    #: One of those 5 refusals came from the GROUNDEDNESS GATE abstaining on a
+    #: question about her own height, which is why the gate is given these facts
+    #: as grounding too.
+    #:
+    #: ⚠️ Requires `recall_numbered_facts`, which requires
+    #: `context_inject_enabled`. It populates a section of that frame; it is not
+    #: an independent injection.
+    self_facts_from_graph: bool = Field(
+        default=False,
+        alias="MEMORY_SELF_FACTS",
+    )
+
+    #: Arm C of the self-facts A/B: also list her STRONG expertise, not just
+    #: appearance. OFF because appearance is the measured gap and expertise is
+    #: not — `idn.cq02` is documented as "the one question the existing
+    #: identity() read already fully satisfies", and expertise already renders in
+    #: a dedicated prompt block. ⚠️ CAVI (arXiv 2605.09443) finds the larger of
+    #: two information sources dominates the smaller, and the other section holds
+    #: 32 user facts, so this doubles the self section against a measured-working
+    #: one. Flag exists so the A/B can test it rather than assume it.
+    self_facts_include_expertise: bool = Field(
+        default=False,
+        alias="MEMORY_SELF_FACTS_EXPERTISE",
+    )
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

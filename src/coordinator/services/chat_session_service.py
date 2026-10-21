@@ -652,13 +652,27 @@ def _build_turn_prompt(state: ChatTurnState, deps: ChatDeps) -> None:
                  and state.user_profile is not None)
     if _numbered:
         _recalled = state.user_profile.get_recall_facts()
+        # The frame's SECOND section, sourced from the identity graph. It has
+        # existed since the frame was written and nothing ever passed it
+        # anything. Appearance is the measured gap: 5 of 15 probes were outright
+        # refusals about her own hair, eyes and height, all of which were already
+        # in the prose prompt.
+        _self: list[str] = []
+        if _mem_settings.self_facts_from_graph:
+            from ..identity_source import self_facts_from_graph
+
+            _self = self_facts_from_graph(
+                card, state.persona_key,
+                include_expertise=_mem_settings.self_facts_include_expertise,
+            )
         state.extra_system_context = frame_numbered_facts(
-            state.persona_key, card, _recalled,
+            state.persona_key, card, _recalled, _self,
         ) or ""
         if state.extra_system_context:
             logger.info(
                 f"[SessionContext] injecting {estimate_tokens(state.extra_system_context)} "
-                f"tokens as {len(_recalled)} NUMBERED recalled facts (ADR-022)"
+                f"tokens as {len(_recalled)} NUMBERED recalled facts "
+                f"+ {len(_self)} self-facts (ADR-022)"
             )
         else:
             logger.info("[SessionContext] numbered recall frame: nothing to recall")

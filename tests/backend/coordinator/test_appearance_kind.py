@@ -147,3 +147,108 @@ class TestItNeverReachesTheProsePrompt:
             f"{h(without_field)} ({len(without_field)}) -> "
             f"{h(with_field)} ({len(with_field)})"
         )
+
+
+class TestTheSelfFactsReader:
+    """`self_facts_from_graph` — the graph IS the source of the self section."""
+
+    def test_it_returns_nothing_when_the_flags_are_off(self, monkeypatch):
+        """The dormant path must inject nothing, so it stays byte-identical."""
+        from coordinator.config import get_settings
+        from coordinator.identity_source import self_facts_from_graph
+
+        get_settings.cache_clear()
+        monkeypatch.delenv("GRAPH_IDENTITY_SOURCE", raising=False)
+        monkeypatch.delenv("GRAPH_ENABLED", raising=False)
+        get_settings.cache_clear()
+        try:
+            assert self_facts_from_graph(_card(), "gwen") == []
+        finally:
+            get_settings.cache_clear()
+
+    def test_it_returns_nothing_without_a_card(self):
+        from coordinator.identity_source import self_facts_from_graph
+
+        assert self_facts_from_graph(None, "gwen") == []
+
+    def test_the_cap_is_a_balance_constraint(self):
+        """CAVI (arXiv 2605.09443): the larger of two sources dominates the
+        smaller. The other section holds 32 user facts — the one measured to
+        work — so the self section must not be the 136-node dump."""
+        import inspect
+
+        from coordinator import identity_source
+
+        sig = inspect.signature(identity_source.self_facts_from_graph)
+        assert sig.parameters["max_facts"].default == 16
+        doc = identity_source.self_facts_from_graph.__doc__
+        assert "2605.09443" in doc, "the constraint must name its evidence"
+
+    def test_expertise_is_off_by_default_and_documented_as_an_arm(self):
+        import inspect
+
+        from coordinator import identity_source
+
+        sig = inspect.signature(identity_source.self_facts_from_graph)
+        assert sig.parameters["include_expertise"].default is False
+
+
+class TestTheSeamPassesBothSections:
+    def test_the_frame_is_called_with_four_arguments(self):
+        """🔴 THE DEFECT THIS PINS. `about_self` existed since the frame was
+        written and NO call site ever passed it anything — one call site, three
+        positional args, so the "Things you have told him about yourself"
+        branch was unreachable in production."""
+        import inspect
+
+        from coordinator.services import chat_session_service as css
+
+        src = inspect.getsource(css._build_turn_prompt)
+        i = src.index("frame_numbered_facts(")
+        call = src[i:i + 200]
+        assert "_recalled, _self," in call, (
+            f"the frame must receive both sections; got: {call[:120]!r}"
+        )
+
+    def test_both_flags_default_off(self):
+        from coordinator.config import get_settings
+
+        f = type(get_settings().memory).model_fields
+        assert f["self_facts_from_graph"].default is False
+        assert f["self_facts_include_expertise"].default is False
+
+
+class TestTheGateSeesHerOwnFacts:
+    """One of the 5 measured refusals was the GROUNDEDNESS GATE abstaining on a
+    question about her own height. The grounding extractor must carry the self
+    section, or the gate keeps destroying correct answers about her."""
+
+    def test_self_facts_reach_the_gate_as_grounding(self):
+        from coordinator.context_framing import (
+            frame_numbered_facts,
+            recalled_facts_for_grounding,
+        )
+
+        frame = frame_numbered_facts(
+            "gwen", None, ["Ben is vegetarian"], ["Gwen is 155cm tall"]
+        )
+        grounding = recalled_facts_for_grounding(frame)
+        assert "155cm" in grounding, (
+            "the gate cannot tell a recited self-fact from an invented one "
+            "unless the self section is in the grounding it is handed"
+        )
+
+    def test_both_section_headings_survive_extraction(self):
+        from coordinator.context_framing import (
+            frame_numbered_facts,
+            recalled_facts_for_grounding,
+        )
+
+        g = recalled_facts_for_grounding(
+            frame_numbered_facts("gwen", None, ["Ben x"], ["Gwen y"])
+        )
+        assert "know about him" in g and "about yourself" in g, (
+            "Instructional Segment Embedding (arXiv 2410.09102) measures "
+            "15-19pp gains from explicit segment marking; the headings are the "
+            "marking and must not be stripped"
+        )
