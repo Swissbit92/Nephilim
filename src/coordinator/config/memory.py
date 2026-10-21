@@ -203,6 +203,30 @@ class MemorySettings(BaseSettings):
         alias="MEMORY_SELF_FACTS_EXPERTISE",
     )
 
+    #: ADR-021: read the operator's facts from the GRAPH rather than from
+    #: `user_profiles.profile_data["facts"]`.
+    #:
+    #: The SQLite store is a JSON blob of BARE STRINGS, so there is nowhere to
+    #: record who a fact is ABOUT or who ASSERTED it. Measured 2026-10-21: after
+    #: the self-facts section shipped she recited her own appearance and the
+    #: extractor filed it under HIM — `Assistant's eyes are a deep ocean blue`
+    #: sat in the operator's fact list and would have been read back as "things
+    #: you know about him". 38 such rows in ~20 minutes. With no subject field
+    #: that contamination is unrepresentable, let alone preventable.
+    #:
+    #: In the graph each fact carries `origin` and `asserted_by` and points at an
+    #: `:Operator` through `ABOUT` — the schema `cmp.cq01`/`cmp.cq02` already
+    #: demanded and nothing built. `asserted_by` comes from the SQLite `role`
+    #: column and never from a model (ADR-021 Phase 0).
+    #:
+    #: ⚠️ Falls back to SQLite on ANY failure — flag off, no driver, empty read.
+    #: The graph becoming the system of record for facts is a migration, not a
+    #: big bang, and a turn must never fail because a read did.
+    facts_from_graph: bool = Field(
+        default=False,
+        alias="MEMORY_FACTS_FROM_GRAPH",
+    )
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

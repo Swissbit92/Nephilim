@@ -76,6 +76,12 @@ _RULE_PATH_LABELS: dict[str, str] = {
     "CurrentRule": "neo4j_rule_repository.seed_rules (secondary label)",
     "CurrentIdentity": "identity_repository.apply_card (secondary label)",
     "ProposedRule": "rule_proposals.propose",
+    # ADR-021 operator facts. Both labels were ALREADY DEMANDED and unbuilt —
+    # cmp.cq01 ("What do you know about me?") covers [Operator, Fact] and
+    # cmp.cq02 partitions them by origin. C17 runs backwards, so this is the
+    # question set's own backlog rather than a new demand.
+    "Operator": "operator_fact_repository.add_fact",
+    "Fact": "operator_fact_repository.add_fact",
     "_PropertyKeyRegistry": "neo4j_rule_repository._REGISTER_KEYS (created and DELETEd "
                             "in the same statement; never survives the transaction)",
 }
@@ -84,6 +90,7 @@ _RULE_PATH_LABELS: dict[str, str] = {
 _RULE_PATH_RELS: dict[str, str] = {
     "HAS_RULE": "neo4j_rule_repository.seed_rules — (:Persona)->(:Rule)",
     "HAS_PROPOSAL": "rule_proposals.propose — (:Persona)->(:ProposedRule)",
+    "ABOUT": "operator_fact_repository.add_fact — (:Fact)->(:Operator)",
     "SUPERSEDES": "neo4j_rule_repository.supersede_rule — new->old, per ADR-017",
     "CORRECTS": "neo4j_rule_repository.correct_rule — new->old, operator rewrite",
 }

@@ -171,7 +171,13 @@ class TestSheCanLearnAgain:
         assert "_mem_settings.context_max_tokens" in src, (
             "the numbered path must use the same token knob as the prose path"
         )
-        assert "get_recall_facts()" in src, (
+        # The unbounded read moved into `_operator_facts` when the graph read
+        # path landed; what matters is that NOBODY passes a count bound.
+        both = src + inspect.getsource(css._operator_facts)
+        assert "get_recall_facts()" in both, (
             "the seam must take an unbounded read and trim by budget, not ask "
             "the data layer for a truncated one"
+        )
+        assert "get_recall_facts(max_facts" not in both, (
+            "a count bound here is what froze her — budget in tokens instead"
         )

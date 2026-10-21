@@ -549,6 +549,48 @@ def _append_author_note(state: ChatTurnState, deps: ChatDeps) -> None:
     logger.info(f"[AuthorNote] injected note for session {state.session_id[:8]}")
 
 
+def _operator_facts(state: ChatTurnState, mem) -> list[str]:
+    """The operator's facts, from the GRAPH when enabled, else SQLite.
+
+    ⚠️ Falls back on ANY failure — flag off, no driver, empty read, outage. The
+    graph becoming the system of record for facts is a migration, not a big
+    bang, and a turn must never fail because a read did. An EMPTY graph is the
+    normal state before `seed_operator_facts.py` has run, so it falls back
+    rather than showing her nothing.
+    """
+    if mem.facts_from_graph and state.user_id:
+        try:
+            from .. import startup
+            from ..config import get_settings
+            from ..repositories.operator_fact_repository import (
+                OperatorFactRepository,
+            )
+
+            cfg = get_settings().graph
+            driver = startup.get_neo4j_driver() if cfg.enabled else None
+            if driver is not None:
+                rows = OperatorFactRepository(driver, cfg.database).current_facts(
+                    state.user_id
+                )
+                texts = [r["text"] for r in rows if (r.get("text") or "").strip()]
+                if texts:
+                    logger.info(
+                        "[RecallFacts] %d operator facts read from the GRAPH",
+                        len(texts),
+                    )
+                    return texts
+                logger.info(
+                    "[RecallFacts] graph holds no facts for %s — falling back to "
+                    "SQLite (normal before seed_operator_facts.py has run)",
+                    state.user_id,
+                )
+        except Exception as e:  # noqa: BLE001 - never break a turn over a read
+            logger.warning(
+                "[RecallFacts] graph fact read failed (non-fatal, using SQLite): %s", e
+            )
+    return state.user_profile.get_recall_facts()
+
+
 def _build_turn_prompt(state: ChatTurnState, deps: ChatDeps) -> None:
     """Phase 2 — load history/summaries and assemble the system prompt + token budget.
 
@@ -651,7 +693,7 @@ def _build_turn_prompt(state: ChatTurnState, deps: ChatDeps) -> None:
                  and _mem_settings.context_inject_enabled
                  and state.user_profile is not None)
     if _numbered:
-        _recalled = state.user_profile.get_recall_facts()
+        _recalled = _operator_facts(state, _mem_settings)
         # The frame's SECOND section, sourced from the identity graph. It has
         # existed since the frame was written and nothing ever passed it
         # anything. Appearance is the measured gap: 5 of 15 probes were outright
