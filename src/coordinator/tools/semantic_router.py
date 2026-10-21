@@ -88,6 +88,63 @@ _CONFIDENCE_THRESHOLD = 0.75
 # Kept SEPARATE from _INTENT_EXAMPLES so the legacy (flag-off) path is unchanged.
 # ---------------------------------------------------------------------------
 _INTENT_EXAMPLES_PRIMARY: Dict[str, List[str]] = {
+    # 🔴 operator_memory — a question about the OPERATOR'S OWN past, which has no
+    # external referent and must never be routed to a web search.
+    #
+    # WHY IT EXISTS. Every "about the user" phrasing in this repo lived in the
+    # `wallet` set below ("how much sol do I have", "I might buy some more") and
+    # in WALLET_FASTPATH — both CAPABILITY-GATED. gwen holds no wallet, so they
+    # were filtered out by capability rather than by meaning, leaving `web_search`
+    # as the ONLY usable intent. With one candidate the margin gate cannot fire
+    # (it needs >= 2 scores), so a question about his own Bitcoin purchase scored
+    # against "what's the current price of bitcoin" and routed to the web.
+    # Downstream, `check_scope` deflected it with a canned "I can't go looking
+    # that up" BEFORE she ever reached her memory. Measured 2026-10-18: "how much
+    # bitcoin did i buy and when?" deflected while "whats my money situation?"
+    # answered "you bought 2.5 BTC back in 2021" from the SAME facts in the SAME
+    # session — which is what identifies the guard, not the store, as the cause.
+    #
+    # THIS INTENT IS DELIBERATELY NOT CAPABILITY-GATED. Gating it would reproduce
+    # the exact defect: whether a question is about the operator is a fact about
+    # the QUESTION, not about which tools the persona happens to hold.
+    #
+    # Winning routes to NEEDS_NEITHER (`route_by_embedding` returns None), where
+    # `INTENT_REQUIREMENTS[NEEDS_NEITHER]` is empty so `check_scope` returns
+    # IN_SURFACE and nothing deflects. Fabrication is then handled by the
+    # mechanism already measured to handle it — `RECALL_INSTRUCTION`'s "if it is
+    # genuinely not in the list, say you don't know", which took fabrication
+    # 0.875 -> 0.000 over 160 generations.
+    #
+    # ⚠️ Examples are about HIS PAST, never about current world state. "what's my
+    # local weather" and "what did my portfolio close at today" are about him AND
+    # about the world; they must keep routing to web_search, and the probe's
+    # `WORLD` stratum exists to catch it if they stop.
+    "operator_memory": [
+        # His stated preferences and tastes
+        "what do i eat for breakfast",
+        "do i eat meat",
+        "what books do i read",
+        "what games do i play",
+        "what temperature scale do i prefer",
+        "what do i like in bed",
+        # His possessions and history, as he told her
+        "how much bitcoin did i buy and when",
+        "what car did i sell",
+        "what hardware wallet was i deciding on",
+        "how much bitcoin do i hold",
+        # His situation and plans, as he told her
+        "what am i thinking about doing with my job",
+        "how long is my money runway",
+        "what does my family think about it",
+        "what am i worried about",
+        # Shared past and her own self-knowledge
+        "what did i tell you about myself",
+        "what do you remember about me",
+        "what do you know about me",
+        "what colour are your eyes",
+        "how tall are you",
+        "what do you look like",
+    ],
     "wallet": [
         # Commands
         "swap my sol to usdc",
@@ -386,6 +443,10 @@ def route_by_embedding(
 
     # Filter to only intents this persona can actually use
     usable: List[str] = []
+    # NOT capability-gated, on purpose — see the set's own comment. Whether a
+    # question is about the operator is a property of the question.
+    if "operator_memory" in source:
+        usable.append("operator_memory")
     if can_use_wallet and "wallet" in source:
         usable.append("wallet")
     if can_use_brave and "web_search" in source:
@@ -429,8 +490,17 @@ def route_by_embedding(
             )
             return None
 
-    if best_intent == "llm_only":
-        return None  # Treat as NEEDS_NEITHER — no MCP needed
+    if best_intent in ("llm_only", "operator_memory"):
+        # NEEDS_NEITHER. For operator_memory that is the whole point: no tool can
+        # answer a question about his own past, and NEEDS_NEITHER is the one
+        # intent `check_scope` never deflects.
+        if best_intent == "operator_memory":
+            logger.info(
+                "[SemanticRouter] operator_memory (confidence=%.3f) — about the "
+                "operator, answering from memory rather than deflecting",
+                best_score,
+            )
+        return None
 
     logger.info(
         f"[SemanticRouter] Semantic route: '{best_intent}' (confidence={best_score:.3f})"

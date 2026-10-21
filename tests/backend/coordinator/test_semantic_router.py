@@ -37,6 +37,7 @@ def _unit(v: List[float]) -> List[float]:
 VEC_WALLET    = _unit([1.0, 0.0, 0.0])   # points along x
 VEC_WEB       = _unit([0.0, 1.0, 0.0])   # points along y
 VEC_LLM_ONLY  = _unit([0.0, 0.0, 1.0])   # points along z
+VEC_OPERATOR  = _unit([0.0, 0.0, -1.0])  # operator_memory: distinct from all three
 
 
 def _make_mock_model(query_vec: List[float]) -> MagicMock:
@@ -52,21 +53,41 @@ def _make_mock_model(query_vec: List[float]) -> MagicMock:
     """
     model = MagicMock()
 
-    # Build a side_effect that rotates through per-intent vectors.
-    # The module iterates _INTENT_EXAMPLES in dict insertion order:
-    # wallet → web_search → llm_only
-    per_intent = {
-        "wallet":     [VEC_WALLET]    * 10,
-        "web_search": [VEC_WEB]       * 10,
-        "llm_only":   [VEC_LLM_ONLY]  * 10,
+    # ⚠️ KEYED BY CONTENT, NOT BY CALL ORDER.
+    #
+    # This mock used to rotate through [VEC_WALLET, VEC_WEB, VEC_LLM_ONLY] by
+    # call index, with a comment asserting the module iterates
+    # "wallet → web_search → llm_only". That is dict INSERTION order, so adding
+    # `operator_memory` at the top of _INTENT_EXAMPLES_PRIMARY silently handed
+    # wallet the web vector and web the llm_only vector. The margin-gate test
+    # then failed with `assert None == 'wallet'` — a failure that says nothing
+    # about the thing under test and points at the wrong file.
+    #
+    # Same shape as this repo's recorded positional-MERGE-key defect: a reorder
+    # moved every annotation. The fix is the same — key on identity, not index.
+    _VEC_FOR_INTENT = {
+        "wallet":          VEC_WALLET,
+        "web_search":      VEC_WEB,
+        "llm_only":        VEC_LLM_ONLY,
+        "operator_memory": VEC_OPERATOR,
     }
-    call_order = list(per_intent.values())
-    call_counter = {"n": 0}
 
     def embed_documents(phrases):
-        idx = call_counter["n"] % len(call_order)
-        call_counter["n"] += 1
-        return call_order[idx]
+        # Reverse-map the phrase list back to its intent, so insertion order is
+        # irrelevant and a NEW intent without a vector fails loudly here rather
+        # than corrupting another intent's score.
+        for intent, examples in sr._INTENT_EXAMPLES_PRIMARY.items():
+            if list(phrases) == list(examples):
+                vec = _VEC_FOR_INTENT.get(intent)
+                assert vec is not None, (
+                    f"intent {intent!r} has no mock vector; add one to "
+                    f"_VEC_FOR_INTENT rather than letting it borrow another's"
+                )
+                return [vec] * len(examples)
+        for intent, examples in sr._INTENT_EXAMPLES.items():  # legacy centroid set
+            if list(phrases) == list(examples):
+                return [_VEC_FOR_INTENT[intent]] * len(examples)
+        raise AssertionError(f"unrecognised example phrase list: {phrases[:2]}")
 
     model.embed_documents.side_effect = embed_documents
     model.embed_query.return_value = query_vec
@@ -619,7 +640,15 @@ class TestRouteByEmbeddingPrimaryParams:
 
 class TestModuleConstantsPrimary:
     def test_primary_examples_keys(self):
-        assert set(sr._INTENT_EXAMPLES_PRIMARY.keys()) == {"wallet", "web_search"}
+        """`operator_memory` added 2026-10-21. It is NOT capability-gated, which
+        is the point: every "about the user" phrasing previously lived in the
+        capability-gated `wallet` set, so for a persona without a wallet they
+        were filtered out by capability rather than by meaning — leaving
+        `web_search` as the only usable intent, which also disables the margin
+        gate (it needs >= 2 scores)."""
+        assert set(sr._INTENT_EXAMPLES_PRIMARY.keys()) == {
+            "operator_memory", "wallet", "web_search",
+        }
 
     def test_primary_examples_no_llm_only(self):
         assert "llm_only" not in sr._INTENT_EXAMPLES_PRIMARY
