@@ -5,7 +5,68 @@ All notable changes to the NEPHILIM project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.0] - 2026-10-21
+
+Minor rather than patch: the graph gained three new node types and became the
+read path for the operator's facts. Four node types and two relationship types
+that competency questions had demanded since the set was written are now built.
+
+### Added — graph-first memory (ADR-021 Phase 1 + 4, ADR-022 extension)
+
+- **`appearance` as a lore KIND** so `idn.cq01` ("What do you look like?") is
+  answerable. Its own docstring had recorded the gap as the DATA's, not the
+  query's: her appearance sat inside 21 free-text lore strings of median length
+  188 chars. A vocabulary value, not a new label — C17 and the declared-surface
+  check are untouched. 8 atomic, subject-marked facts; `lore` narrowed because
+  its definition already claimed appearance while nothing could retrieve it.
+- **A self-facts section in the numbered frame**, sourced from the identity
+  graph. `about_self` had existed since the frame was written and no call site
+  ever passed it anything. **Self-recall 8/15 → 15/15, refusals 5 → 0**, and
+  user-fact recall *improved* 8/9 → 9/9. `MEMORY_SELF_FACTS`.
+- **`operator_memory` intent**, deliberately NOT capability-gated. Every "about
+  the user" phrasing lived in the capability-gated `wallet` set, so for a persona
+  without a wallet they were filtered out by capability rather than meaning —
+  leaving one candidate, which also disables the margin gate. **Wrongly deflected
+  4/12 → 1/12, answered 6/12 → 11/12**, with the world control *improving*
+  (leaked 2/6 → 1/6).
+- **A hard figure-containment pre-check on the groundedness gate.** Handing it
+  the grounding was not enough for DATED facts: it destroyed *"bought 2.5 BTC
+  back in 2021"* against grounding containing that figure. Entailment is a
+  specialist's task (MiniCheck 770M ≈ GPT-4 at 445× less cost), so this is a
+  deterministic rule that can only SKIP the gate, never cause an abstention.
+- **`(:Fact)-[:ABOUT]->(:Operator)`** with `origin` and `asserted_by` — ADR-021's
+  write path, answering `cmp.cq01`/`cmp.cq02`. `asserted_by` comes from the
+  SQLite `role` column and never from a model. `:Fact` is deliberately NOT a
+  `Shape`, because `apply_card` expires everything absent from the card and a
+  learned fact is absent by definition. `MEMORY_FACTS_FROM_GRAPH`.
+- **`:Episode` + `CONTINUES`** — 229 episodes, 228 ordered edges, backfilled from
+  1963 messages. Pointers only; no message text, because `idn.cq06` requires the
+  graph to refuse "what did she say three weeks ago". `Thread`/`PART_OF`
+  deliberately NOT built: grouping needs boundary detection, and the only
+  groupings available without it are the two `prf.cq03`'s negative fixture forbids.
+- `scripts/utils/seed_operator_facts.py`, `scripts/utils/backfill_episodes.py`,
+  `scripts/research/selfknowledge/self_recall_probe.py`,
+  `scripts/research/recall/{deflection_probe,fit_operator_memory_route}.py` —
+  all dry-run or read-only by default.
+
+### Fixed
+
+- **Her own words are never facts about him.** Both extraction paths redact
+  assistant content, keeping the turn position. The rule is physical, not judged
+  — Mem0's LLM-judged `attributed_to` failed in exactly this shape (#5642), and
+  the other five surveyed systems have no fact-level attribution at all. This
+  also *repairs* the quote-span guard, which had been validating against a
+  transcript that included her turns.
+- **She can learn again.** `get_recall_facts` capped at 32 keeping the oldest and
+  the curated merge wrote exactly 32, so the store was permanently full. Not
+  replaced with a smarter eviction rule — nothing published has a non-null
+  effect; the seam now budgets in tokens via `MEMORY_CONTEXT_MAX_TOKENS`.
+- `appearance` excluded from the CV-summary fingerprint, or adding the field
+  re-fingerprints the card and an LLM rewrites `<identity>` (the ADR-016
+  `sliders` drift). Prompt asserted byte-identical at 4377 chars.
+- The test write-guard now covers `operator_id`, the second parameter spelling to
+  need adding after `pid`.
+
 
 ### Added — the numbered recall frame is LIVE (ADR-022)
 

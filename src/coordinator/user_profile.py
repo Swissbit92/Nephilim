@@ -217,7 +217,7 @@ class UserProfile:
 
         return "\n".join(summary_parts)
 
-    def get_recall_facts(self, max_facts: int = 32) -> List[str]:
+    def get_recall_facts(self, max_facts: Optional[int] = None) -> List[str]:
         """DISCRETE facts for the ADR-022 numbered recall frame.
 
         The sibling of ``get_narrative_context``, and deliberately NOT built from
@@ -245,7 +245,28 @@ class UserProfile:
                     seen.add(key)
                     out.append(text)
 
-        # 🔴 TRUNCATION IS LOUD, because silent truncation here FREEZES her.
+        # 🔴 NO COUNT CAP BY DEFAULT — a count cap here FROZE her.
+        #
+        # This capped at 32 and kept the OLDEST entries, and the curated merge
+        # wrote exactly 32, so the store was full and nothing new could ever be
+        # shown. Verified: the two facts the extractor appended afterwards were
+        # both truncated and never reached her.
+        #
+        # ⚠️ The cap is NOT replaced with a better eviction rule, because no
+        # eviction policy in this space has published support. The one clean
+        # ablation (arXiv 2608.28978) reports a recency+frequency+centrality
+        # pruner at +0.001 token F1 with CI [-0.015, +0.016] and judged
+        # correctness DROPPING 1.6 points — and its graph approach underperforms
+        # a flat vector baseline (0.417 vs 0.468). MemGPT's "paging" is
+        # working-memory management, not store eviction; Generative Agents keeps
+        # a complete record and RANKS at retrieval; Graphiti/Zep's
+        # invalid_at/expired_at is temporal correctness, not deletion. So:
+        # return everything, and let the TOKEN BUDGET at the injection seam
+        # decide what fits, which is the knob the rest of the injection path
+        # already uses (`MEMORY_CONTEXT_MAX_TOKENS`).
+        #
+        # `max_facts` is retained for tests and for a caller that genuinely
+        # wants a bound; it is no longer the production path.
         # The cap keeps the OLDEST entries, so once the store reaches it she can
         # never be shown anything new — which is the opposite of the point.
         # Measured 2026-10-18, hours after the curated merge wrote exactly 32:
@@ -261,14 +282,16 @@ class UserProfile:
         # column so her own recited output cannot re-enter as a user fact — and
         # that is deliberately deferred, so this warning is the interim guard
         # rather than a new magic number chosen here.
-        if len(out) > max_facts:
+        if max_facts is not None and len(out) > max_facts:
             logger.warning(
-                "[RecallFacts] %d facts stored, cap is %d — %d NOT shown. The cap "
-                "keeps the oldest, so new facts are being dropped. See ADR-021 "
-                "Phase 0 (write policy / asserted_by).",
+                "[RecallFacts] %d facts stored, caller bound is %d — %d NOT "
+                "shown. A count bound keeps the OLDEST, so new facts are "
+                "dropped; production passes no bound and budgets in tokens "
+                "instead.",
                 len(out), max_facts, len(out) - max_facts,
             )
-        return out[:max_facts]
+            return out[:max_facts]
+        return out
 
     def get_narrative_context(self, max_facts: int = 10, max_topics: int = 5) -> str:
         """Prose variant of ``get_context_summary`` for framed injection (ADR-006 P1).

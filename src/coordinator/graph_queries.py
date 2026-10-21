@@ -263,6 +263,82 @@ def can_she_quote_a_past_message(driver, database: str, persona_id: str) -> dict
     }
 
 
+# ---------- companion: facts about the operator -------------------------------
+
+
+@answers("cmp.cq01", "What do you know about me?")
+def what_do_you_know_about_me(driver, database: str, persona_id: str,
+                              limit: int = _DEFAULT_LIMIT) -> list[dict[str, Any]]:
+    """Currently-valid facts about the operator. ADR-021's read path.
+
+    ⚠️ `persona_id` is the OPERATOR id here, not a persona. The parameter name is
+    shared across the catalog so the MCP tool surface can be generated from one
+    signature; it is the subject of the question either way.
+
+    ⚠️ **`f.valid_to IS NULL` is load-bearing and its absence is SILENT.** Every
+    still-valid fact has a null `valid_to`, and `f.valid_to > $t` yields NULL
+    rather than false, so WHERE drops the row. This repo shipped that bug once
+    (`NOT [field, null] IN $live` left 128 stale nodes live and reported
+    `expired: 0`, no error), and Graphiti's tracker carries the same class twice
+    (#769, #2012). The test exercises it against a NEVER-superseded fact, which
+    is the case a green suite cannot see.
+
+    The other half of `cmp.cq01`'s negative fixture: an expired fact must NOT
+    appear, or the answer becomes "the union of everything ever believed".
+    """
+    return read(
+        driver,
+        """
+        MATCH (f:Fact)-[:ABOUT]->(o:Operator {operator_id: $persona_id})
+        WHERE f.valid_to IS NULL
+        RETURN f.fact_id           AS fact_id,
+               f.text              AS text,
+               f.origin            AS origin,
+               f.asserted_by       AS asserted_by,
+               f.source_session_id AS source_session_id,
+               f.valid_from        AS valid_from
+        ORDER BY f.valid_from ASC, f.fact_id ASC
+        LIMIT $limit
+        """,
+        database, persona_id=persona_id, limit=limit,
+    )
+
+
+@answers("cmp.cq02",
+         "Which of those things did you learn from me, and which did you always know?")
+def what_did_you_learn_from_me(driver, database: str, persona_id: str,
+                               limit: int = _DEFAULT_LIMIT) -> list[dict[str, Any]]:
+    """The cq01 answer partitioned by `origin`.
+
+    ⚠️ The negative fixture is load-bearing and the question says why: "if the
+    two origins are indistinguishable, a graph rebuild cannot tell what she was
+    given from what she was told, and re-seeding the card silently overwrites
+    months of learned facts with shipped defaults." `origin` is recorded at
+    WRITE time from the caller and never inferred from recency — this repo has a
+    standing rule against inferring contradiction from recency, and provenance
+    deserves the same.
+
+    `asserted_by` rides along because it answers the next question: not only
+    where a fact came from, but who said it. Set from the SQLite `role` column,
+    never by a model.
+    """
+    return read(
+        driver,
+        """
+        MATCH (f:Fact)-[:ABOUT]->(o:Operator {operator_id: $persona_id})
+        WHERE f.valid_to IS NULL
+        RETURN f.origin            AS origin,
+               f.asserted_by       AS asserted_by,
+               f.text              AS text,
+               f.source_session_id AS source_session_id,
+               f.valid_from        AS valid_from
+        ORDER BY f.origin ASC, f.valid_from ASC
+        LIMIT $limit
+        """,
+        database, persona_id=persona_id, limit=limit,
+    )
+
+
 # ---------- rules -------------------------------------------------------------
 
 

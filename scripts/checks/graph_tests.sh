@@ -35,8 +35,24 @@ MODULES=(
   tests/backend/coordinator/test_live_hard_walls_render.py \
   tests/backend/coordinator/test_graph_queries.py \
   tests/backend/coordinator/test_mcp_graph_server.py \
-  tests/backend/coordinator/test_grounding_context.py
+  tests/backend/coordinator/test_grounding_context.py \
+  tests/backend/coordinator/test_operator_facts.py \
+  tests/backend/coordinator/test_episodes.py
 )
+
+# ⚠️ THIS LIST IS THE THIRD "listed, not globbed" REGISTRY a new graph writer has
+# to be added to, and forgetting any one of them is silent:
+#   1. scripts/checks/the_built_graph_surface_is_declared.py  CYPHER_SOURCES
+#      -- miss it and the drift check cannot see the new label at all
+#   2. tests/conftest.py  guarded_write's parameter spellings
+#      -- miss it and a test can write to the LIVE graph (operator_id was the
+#         second spelling to need adding, after pid)
+#   3. this MODULES array
+#      -- miss it and the tests exist but never run. Measured 2026-10-21: this
+#         script reported "101 passed" while three tests in an unlisted module
+#         were failing, which is the exact shape the script's own header warns
+#         about ("the skip is correct; being unable to run them easily is what
+#         made the break invisible").
 
 out=$(./.venv/bin/python -m pytest "${MODULES[@]}" -o addopts= -q "$@" 2>&1)
 status=$?

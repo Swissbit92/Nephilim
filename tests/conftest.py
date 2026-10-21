@@ -507,7 +507,15 @@ def _block_graph_writes_to_real_personas(monkeypatch):
         # and _set_current_dials all pass pid=, so a guard checking only persona_id/p
         # had an unguarded path to the live identity graph. Watched failing before this
         # line existed: tests/backend/coordinator/test_graph_write_guard.py.
-        pid = params.get("persona_id") or params.get("p") or params.get("pid")
+        # `operator_id` is the ADR-021 operator-fact repository's spelling. It was
+        # added here IN THE SAME CHANGE as that repository, because the guard
+        # protects only the parameter names it knows: an `operator_id` write
+        # would otherwise have reached the live graph from a test, silently,
+        # exactly as `pid` once did. The comment below records that precedent —
+        # this is the second time a new writer's spelling had to be added, so
+        # the pattern is the finding, not the instance.
+        pid = (params.get("persona_id") or params.get("p") or params.get("pid")
+               or params.get("operator_id"))
         if pid is None and "nid" in params:
             # Fail CLOSED. An unresolvable target is refused rather than allowed: the
             # node may not exist yet, the driver may be a stub, or the read may fail --

@@ -192,6 +192,16 @@ def identity_nodes(card: Dict[str, Any]) -> List[Dict[str, Any]]:
         if isinstance(entry, str) and entry.strip():
             out.append(_node(TRAIT, pid, "voice.tics", i, entry, kind="tic"))
 
+    # `appearance` is emitted BEFORE `lore` so that a reader taking the first N
+    # nodes gets the checkable physical facts rather than 188-character style
+    # prose. The ORDER BY in `idn.cq01` is (source_field, source_index), and
+    # "appearance" sorts before "lore" alphabetically, so the graph read inherits
+    # this ordering for free rather than depending on it being re-applied.
+    for i, entry in enumerate(card.get("appearance") or []):
+        if isinstance(entry, str) and entry.strip():
+            out.append(_node(LORE_ENTRY, pid, "appearance", i, entry,
+                             kind="appearance"))
+
     for i, entry in enumerate(card.get("lore") or []):
         if isinstance(entry, str) and entry.strip():
             out.append(_node(LORE_ENTRY, pid, "lore", i, entry, kind="lore"))
@@ -272,6 +282,7 @@ def identity_nodes(card: Dict[str, Any]) -> List[Dict[str, Any]]:
 #: consumed by identity_to_card, with test_source_field_kind_covers_every_node
 #: failing when a builder is added without a matching entry.
 SOURCE_FIELD_KIND: Dict[str, str] = {
+    "appearance": "list",
     "lore": "list",
     "signature_moves": "list",
     "style": "scalar",
@@ -302,6 +313,7 @@ SOURCE_FIELD_KIND: Dict[str, str] = {
 
 
 MODELLED_FIELDS: frozenset[str] = frozenset({
+    "appearance",
     "lore", "signature_moves", "behavior", "psychological_profile",
     "emotional_profile", "boundaries", "expertise",
     # Added after the first pass excluded these as presentation. They are not:
