@@ -82,6 +82,12 @@ _RULE_PATH_LABELS: dict[str, str] = {
     # question set's own backlog rather than a new demand.
     "Operator": "operator_fact_repository.add_fact",
     "Fact": "operator_fact_repository.add_fact",
+    # ADR-021 Phase 1 episodes. Demanded by prf.cq03 ("What are we in the middle
+    # of?"), which also demands Thread and PART_OF — deliberately NOT built, see
+    # episode_repository's module docstring: grouping episodes into threads needs
+    # scene-boundary detection, and the only groupings available without it are
+    # the two the question's negative fixture forbids.
+    "Episode": "episode_repository.record_episode",
     "_PropertyKeyRegistry": "neo4j_rule_repository._REGISTER_KEYS (created and DELETEd "
                             "in the same statement; never survives the transaction)",
 }
@@ -91,6 +97,7 @@ _RULE_PATH_RELS: dict[str, str] = {
     "HAS_RULE": "neo4j_rule_repository.seed_rules — (:Persona)->(:Rule)",
     "HAS_PROPOSAL": "rule_proposals.propose — (:Persona)->(:ProposedRule)",
     "ABOUT": "operator_fact_repository.add_fact — (:Fact)->(:Operator)",
+    "CONTINUES": "episode_repository.link_chronology — (:Episode)->(:Episode), newer->older",
     "SUPERSEDES": "neo4j_rule_repository.supersede_rule — new->old, per ADR-017",
     "CORRECTS": "neo4j_rule_repository.correct_rule — new->old, operator rewrite",
 }

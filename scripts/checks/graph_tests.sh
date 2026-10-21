@@ -36,7 +36,8 @@ MODULES=(
   tests/backend/coordinator/test_graph_queries.py \
   tests/backend/coordinator/test_mcp_graph_server.py \
   tests/backend/coordinator/test_grounding_context.py \
-  tests/backend/coordinator/test_operator_facts.py
+  tests/backend/coordinator/test_operator_facts.py \
+  tests/backend/coordinator/test_episodes.py
 )
 
 # ⚠️ THIS LIST IS THE THIRD "listed, not globbed" REGISTRY a new graph writer has

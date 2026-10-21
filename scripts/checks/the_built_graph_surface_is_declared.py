@@ -51,6 +51,7 @@ CYPHER_SOURCES = (
     ROOT / "scripts" / "research" / "identity_ab.py",
     SRC / "graph_queries.py",
     SRC / "repositories" / "operator_fact_repository.py",
+    SRC / "repositories" / "episode_repository.py",
 )
 
 #: `(x:Label` / `(:Label` — a parenthesis is required, so a bare `:Label` inside prose
