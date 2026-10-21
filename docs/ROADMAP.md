@@ -2,7 +2,7 @@
 title: Roadmap
 status: active
 created: 2026-04-19
-last_reviewed_on: 2026-10-18
+last_reviewed_on: 2026-10-21
 review_in: 3 months
 applies_to: nephilim
 ---
@@ -33,9 +33,9 @@ Two consequences the sequencing makes concrete, both recorded in
 
 ## Next (this month)
 
-- [ ] **She mirrors the operator's traits onto herself.** Measured 2026-10-18 after the subject fix below: asked *"do i eat meat?"* she answers **correctly** (*"No Daddy"*) and then volunteers *"I'm vegetarian, just like you."* Her card says nothing of the kind. So the fact about **him** is right and she fabricates a matching one about **herself** — a different and much milder failure than the attribution error it replaced (*"I'm vegetarian and love my plant-based diet"* as the whole answer, before each fact named Ben explicitly). ⚠️ Worth noting the frame has a second section, *"Things you have told him about yourself"*, which is currently **empty** — so there is nothing to contradict her invention. Likely the cheapest fix is populating it from the identity graph, which already holds her modelled appearance and traits, rather than another prompt instruction. Not urgent: it costs accuracy about her, never about him.
+- [x] ✅ **RETRACTED 2026-10-21 — She mirrors the operator's traits onto herself.** Did NOT replicate: 0/9 in every arm including the baseline. My single observation of "I'm vegetarian, just like you" was not a rate and is withdrawn as a motivation. Kept here as a record that it was measured and found absent. Original note: Measured 2026-10-18 after the subject fix below: asked *"do i eat meat?"* she answers **correctly** (*"No Daddy"*) and then volunteers *"I'm vegetarian, just like you."* Her card says nothing of the kind. So the fact about **him** is right and she fabricates a matching one about **herself** — a different and much milder failure than the attribution error it replaced (*"I'm vegetarian and love my plant-based diet"* as the whole answer, before each fact named Ben explicitly). ⚠️ Worth noting the frame has a second section, *"Things you have told him about yourself"*, which is currently **empty** — so there is nothing to contradict her invention. Likely the cheapest fix is populating it from the identity graph, which already holds her modelled appearance and traits, rather than another prompt instruction. Not urgent: it costs accuracy about her, never about him.
 
-- [ ] 🔴 **She cannot learn a new fact, and the extractor is feeding her her own words.** Both measured 2026-10-18, within hours of the curated merge, and both are consequences of taking the frame live rather than pre-existing.
+- [x] ✅ **DONE 2026-10-21 — She cannot learn a new fact, and the extractor is feeding her her own words.** Both halves fixed: redaction on both extraction paths (physical, not judged), and the count cap replaced by a token budget. ⚠️ The write-policy ORDERING warning below held — the cap was accidentally protecting her by truncating the self-ingested duplicates, so redaction landed in the same change. Original finding: Both measured 2026-10-18, within hours of the curated merge, and both are consequences of taking the frame live rather than pre-existing.
 
   **(a) The store is frozen.** `get_recall_facts` caps at 32 and keeps the **oldest** entries — and the curated merge wrote exactly 32. So the store is full, and anything new is dropped. Verified directly: the two facts the extractor appended after the merge are both `TRUNCATED`, never shown. This contradicts the stated purpose of the programme (*she should evolve from shared interaction and "learn"*). ⚠️ **Raising the cap only moves the freeze** — the fix is a write policy, so the interim guard shipped instead is a WARNING when truncation drops anything, because the failure was silent and silence is what made it dangerous.
 
@@ -43,7 +43,7 @@ Two consequences the sequencing makes concrete, both recorded in
 
   **Why these two interact dangerously.** Right now the freeze is accidentally *protecting* her: the self-ingested duplicates are the entries being truncated. Fix the cap without fixing the write policy and the duplicates start displacing real facts. **Order matters: write policy first.**
 
-- [ ] 🔴 **The capability-scope deflection eats questions the recall frame can answer.** Measured live 2026-10-18, immediately after the numbered frame went live: *"how much bitcoin did i buy and when?"* returned the canned *"Mm, no idea Daddy 😅 I can't go looking that up — I've only got pictures and clips"*, while the **same facts answered correctly** on *"whats my money situation?"* (*"you bought 2.5 BTC back in 2021 … worried about having enough money to last eight months"*). The log is unambiguous:
+- [x] ✅ **DONE 2026-10-21 — The capability-scope deflection eats questions the recall frame can answer.** Fixed at the ROOT rather than at the deflection: an `operator_memory` intent that is NOT capability-gated. Wrongly deflected 4/12 → 1/12, answered 6/12 → 11/12, and the world control IMPROVED (leaked 2/6 → 1/6) rather than degrading. ⚠️ The warning below was right that a 'my'-keyword patch would re-open fabrication; it was not needed. Original finding: Measured live 2026-10-18, immediately after the numbered frame went live: *"how much bitcoin did i buy and when?"* returned the canned *"Mm, no idea Daddy 😅 I can't go looking that up — I've only got pictures and clips"*, while the **same facts answered correctly** on *"whats my money situation?"* (*"you bought 2.5 BTC back in 2021 … worried about having enough money to last eight months"*). The log is unambiguous:
 
       [out-of-surface] persona=gwen intent=web missing=['brave_web_search', ...] — deflecting
 
