@@ -20,6 +20,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+_REDACTED_TURN = (
+    "Assistant: [her reply omitted — never a source of facts about the user]"
+)
+
+
 class FactExtractor:
     """Extract key facts from conversation segments using LLM analysis.
 
@@ -121,9 +126,29 @@ IMPORTANT: Return ONLY valid JSON. No markdown, no explanations, just the JSON o
         for msg in messages_to_analyze:
             if msg["role"] == "narrator":
                 continue  # ADR-011: scene direction, not a speaker's facts
-            role = "User" if msg["role"] == "user" else "Assistant"
+            if msg["role"] != "user":
+                # 🔴 HER WORDS ARE NEVER A SOURCE OF FACTS ABOUT HIM.
+                #
+                # The turn's POSITION is kept so a short user reply still has a
+                # visible antecedent, but the CONTENT is removed. That makes the
+                # rule physical rather than judged, which is the whole point:
+                # Mem0 is the only production memory system with a provenance
+                # field (`attributed_to`) and its LLM-judged version failed in
+                # exactly this shape — roles were stripped upstream of
+                # extraction so everything defaulted to the user
+                # (mem0ai/mem0#5642). A prompt instruction is a soft mitigation;
+                # absent text is a guarantee.
+                #
+                # Measured here: she recited "Eggs benedict and apple juice" and
+                # the extractor wrote "User eats eggs benedict and apple juice
+                # for breakfast" as a NEW FACT ABOUT HIM. 32 stored facts became
+                # 36 during one probe burst, every addition a paraphrase of
+                # something she had just said. The loop did not exist before the
+                # numbered frame made her recite stored facts at all.
+                lines.append(f"{_REDACTED_TURN}")
+                continue
             content = msg["content"][:500]  # Truncate very long messages
-            lines.append(f"{role}: {content}")
+            lines.append(f"User: {content}")
 
         return "\n".join(lines)
 

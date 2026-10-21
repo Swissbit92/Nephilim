@@ -31,6 +31,10 @@ from .repositories.memory_fact_repository import PREDICATE_VOCABULARY
 
 logger = logging.getLogger(__name__)
 
+# One definition, shared with the legacy extractor — two spellings of this
+# marker would let one path drift open again while the other stayed closed.
+from .fact_extractor import _REDACTED_TURN  # noqa: E402
+
 # Predicates whose object is another person/entity (not a literal value).
 _ENTITY_OBJECT_PREDICATES = frozenset({"has_relationship", "has_pet"})
 
@@ -105,8 +109,26 @@ class TripletExtractor:
         for m in recent:
             if m.get("role") == "narrator":
                 continue  # ADR-011: scene direction, not a speaker's facts
-            role = "User" if m.get("role") == "user" else "Assistant"
-            lines.append(f"{role}: {str(m.get('content', ''))[:500]}")
+            if m.get("role") != "user":
+                # 🔴 Same hard rule as `fact_extractor._format_messages`, and
+                # here it also REPAIRS the quote-span guard rather than
+                # duplicating it.
+                #
+                # `_validate` rejects a triple whose `quote` is absent from the
+                # transcript — but `norm_transcript` was built from the WHOLE
+                # transcript including her turns, so a quote lifted verbatim
+                # from her own reply passed with full "verbatim-supported"
+                # credentials. Worse, `subject` defaults to "self" and
+                # `fact_write_policy` maps "self" to the USER's entity, so an
+                # assistant-sourced claim was stored as a user fact. The
+                # few-shot examples even show an `Assistant:` line in the
+                # transcript, teaching the model her text is in bounds.
+                #
+                # With her content absent, a lifted quote now fails the guard
+                # that already exists.
+                lines.append(_REDACTED_TURN)
+                continue
+            lines.append(f"User: {str(m.get('content', ''))[:500]}")
         return "\n".join(lines)
 
     def _parse(self, response: str) -> List[Dict[str, Any]]:

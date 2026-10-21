@@ -199,16 +199,27 @@ class TestTheSeamPassesBothSections:
         written and NO call site ever passed it anything — one call site, three
         positional args, so the "Things you have told him about yourself"
         branch was unreachable in production."""
+        import ast
         import inspect
+        import textwrap
 
         from coordinator.services import chat_session_service as css
 
-        src = inspect.getsource(css._build_turn_prompt)
-        i = src.index("frame_numbered_facts(")
-        call = src[i:i + 200]
-        assert "_recalled, _self," in call, (
-            f"the frame must receive both sections; got: {call[:120]!r}"
+        # Parsed, not string-matched. The first version of this test looked for
+        # the literal "_recalled, _self," and broke when the call was reformatted
+        # onto one line by a later change — the same assert-the-string trap this
+        # repo has now hit three times. Counting ARGUMENTS survives reformatting.
+        tree = ast.parse(textwrap.dedent(inspect.getsource(css._build_turn_prompt)))
+        calls = [n for n in ast.walk(tree)
+                 if isinstance(n, ast.Call)
+                 and getattr(n.func, "id", None) == "frame_numbered_facts"]
+        assert calls, "the frame is never called"
+        assert all(len(c.args) == 4 for c in calls), (
+            "every call must pass BOTH sections — about_user AND about_self; "
+            f"arg counts: {[len(c.args) for c in calls]}"
         )
+        names = {a.id for c in calls for a in c.args if isinstance(a, ast.Name)}
+        assert "_self" in names, f"about_self is not passed; args: {names}"
 
     def test_both_flags_default_off(self):
         from coordinator.config import get_settings

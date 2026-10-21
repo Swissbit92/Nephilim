@@ -665,9 +665,37 @@ def _build_turn_prompt(state: ChatTurnState, deps: ChatDeps) -> None:
                 card, state.persona_key,
                 include_expertise=_mem_settings.self_facts_include_expertise,
             )
-        state.extra_system_context = frame_numbered_facts(
-            state.persona_key, card, _recalled, _self,
-        ) or ""
+        # Budget in TOKENS, not in a fact count. A count of 32 froze her: the
+        # curated merge wrote exactly 32, the cap kept the oldest, and nothing
+        # new could ever be shown. `MEMORY_CONTEXT_MAX_TOKENS` is the knob the
+        # rest of the injection path already uses.
+        #
+        # ⚠️ The trim order is stated rather than reasoned: it drops from the
+        # END, which preserves the curated core at the cost of the newest
+        # arrivals. No eviction policy in this space has published support (the
+        # one clean ablation, arXiv 2608.28978, is null-to-negative), so this is
+        # a bound and not a policy. At ~710 tokens against a 2000 budget it
+        # should never fire; if it does, THAT is the signal that ADR-021's write
+        # policy and dedup are overdue — which is what the warning says.
+        _budget = _mem_settings.context_max_tokens
+        _framed = frame_numbered_facts(state.persona_key, card, _recalled, _self)
+        if _framed and _budget and estimate_tokens(_framed) > _budget:
+            while (_recalled or _self) and _framed and estimate_tokens(_framed) > _budget:
+                if _recalled:
+                    _recalled = _recalled[:-1]
+                else:
+                    _self = _self[:-1]
+                _framed = frame_numbered_facts(
+                    state.persona_key, card, _recalled, _self
+                )
+            logger.warning(
+                "[RecallFacts] the framed recall block exceeded %d tokens and was "
+                "trimmed to %d user facts + %d self-facts. Facts are being "
+                "dropped from the END. This is a BOUND, not a policy — see "
+                "ADR-021 Phase 0 (write policy, asserted_by, dedup).",
+                _budget, len(_recalled), len(_self),
+            )
+        state.extra_system_context = _framed or ""
         if state.extra_system_context:
             logger.info(
                 f"[SessionContext] injecting {estimate_tokens(state.extra_system_context)} "
