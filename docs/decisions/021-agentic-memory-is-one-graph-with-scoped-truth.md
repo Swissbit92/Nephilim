@@ -2,7 +2,7 @@
 title: Agentic memory is one graph with scoped truth
 status: Accepted
 created: 2026-10-17
-last_reviewed_on: 2026-10-17
+last_reviewed_on: 2026-10-22
 review_in: 12 months
 applies_to: nephilim
 ai_summary: >
@@ -350,6 +350,121 @@ resolution strategies (rule order, explicit priority, recency) from the Rete/CLI
 ADR-014's design has no published competitor to check against, and the literature to
 borrow from is 1980s expert systems rather than 2026 agent papers. Recorded so the next
 person does not go looking for a paper that does not exist.
+
+## AMENDMENT 2026-10-22 — the read path opened WITHOUT this ADR's gate, the schema changed in four names, and one modelling decision is reversed
+
+Five statements in this document are now false. They are left in place below
+(reversals stay visible) and corrected here.
+
+### 1. "The read path is CLOSED until one experiment says otherwise" — FALSE
+
+Stated in five places: the `ai_summary`, the `#### ⚠️` heading, the Status line
+("the **read path is gated** on the experiment above"), and "**The read path
+stays CLOSED, for a new reason.**"
+
+The read path is **open and live**. The numbered recall frame reads the identity
+graph on every turn (`MEMORY_SELF_FACTS`), and `what_do_you_know_about_me`
+serves the operator's facts from `(:Fact)-[:ABOUT]->(:Operator)`.
+
+🔴 **The Phase 2 gate was never run, and nothing here should be read as saying
+it passed.** The gate was "triples vs prose, appended late, measured on gwen,
+scored on recall AND voice". What actually opened the path was a *different*
+measurement — self-recall 8/15 → 15/15, with the deflection fix taking wrongly-
+deflected answers 4/12 → 1/12. That is a recall result, not the recall-and-voice
+comparison this document specified.
+
+The voice half was finally measured on 2026-10-22, and it is recorded honestly:
+
+| arm | distinctiveness | attribution |
+|---|---|---|
+| OFF | 1.000 | 8/8 to gwen |
+| ON (760 tokens) | 0.875 | 7/8 to gwen, 1 to `nephilim_solace` |
+
+**No collapse** — ADR-006's EEVA/solace collapse to 0.25 does not reproduce, and
+gwen's ON arm is *exactly* her score in the historical 8-persona ruler (0.875).
+⚠️ But the repo's own gate reports **REGRESSION**, because its `TOL = 0.01` sits
+against a metric whose smallest possible step is 1/8 = 0.125 — so it cannot
+return "within noise" on this instrument at all. One flip of eight is p=1.0
+paired; six one-way flips are needed for p<0.05. **Whether a subtle voice cost
+exists is still unmeasured, and this instrument cannot measure it.**
+
+⚠️ Also: the historical **0.804 OFF arm is unrecoverable** — no file on disk
+contains 0.804 or 0.661, only the 0.625 ON arm. ADR-006's comparison can be
+reproduced in protocol only, never in number.
+
+### 2. The schema block names four things that were never built
+
+The block reading
+
+    (:Thread)-[:HAS_EPISODE]->(:Episodic)-[:NEXT_EPISODE]->(:Episodic)
+    (:Episodic)-[:MENTIONS]->(:Entity)
+    (:Entity)-[:ASSERTS {...}]->(:Entity)
+
+is wrong in four names. What ships is `:Episode` + `CONTINUES`
+(`episode_repository.py`, 229 nodes / 228 edges) and
+`(:Fact)-[:ABOUT]->(:Operator)` (`operator_fact_repository.py`). `:Episodic`,
+`NEXT_EPISODE`, `MENTIONS` and `ASSERTS` exist nowhere in `graph_surface.py`.
+
+**`Episode`, not `:Episodic`, was forced by the question set** — `prf.cq03`
+demands `Episode`, C17 compares bare strings, and `:Episodic` would have been
+undemanded-and-unexempted while `Episode` showed as demanded-and-unbuilt.
+
+### 3. "Facts are edge properties, not nodes" — REVERSED
+
+This document followed Graphiti in writing every fact as a relationship carrying
+the predicate as a property. The shipped design makes `:Fact` a **node**, on a
+ground this ADR did not consider: `profile_data["facts"]` is a blob of bare
+strings with nowhere to hang a subject or a speaker, and the consequence was
+measured — after the self-facts section shipped she recited her own appearance
+and the extractor filed it under HIM (`Assistant's eyes are a deep ocean blue`
+in the operator's fact list, 38 such rows in ~20 minutes). A node carries
+`origin` and `asserted_by`; an edge property had nowhere to put them.
+
+### 4. `:Thread` and `PART_OF` are REFUSED, not pending
+
+`prf.cq03` demands them. They are deliberately not built, because grouping
+sessions into topical threads needs scene-boundary detection and the only
+groupings available without it are the two the question's own negative fixture
+forbids ("She must NOT merge two separate threads into one"): one thread per
+operator merges every scene, one thread per session makes `Thread` a synonym for
+`Episode`. A test asserts the refusal, so building it later must argue past it.
+
+### 5. ⚠️ THE CONTRADICTION ORDERING IN THIS ADR IS NOT LITERATURE-SUPPORTED
+
+This document says: interval logic first, LLM only for the remainder, and
+**never infer contradiction from recency**. Research on 2026-10-22 read
+Graphiti's source and found the opposite on both counts —
+`resolve_extracted_edge()`'s own docstring orders it "dedupe it, date it, then
+apply contradictions" (LLM dedup **first**), and `_apply_temporal_invalidation()`
+is plain **newest-wins**: "a candidate that starts later supersedes this edge".
+
+ADR-021's ordering is therefore a **stricter, unprecedented design bet**, not a
+borrowed best practice. It may well be the better choice — recency-wins is a
+known footgun — but it must be defended on its own merits, and this amendment
+records that no reference implementation does it this way.
+
+One premise *is* confirmed: `temporal_edge_utils.py` runs date parsing and
+future-tense detection as pure regex with no LLM, so "interval logic can run
+without an LLM" is true.
+
+### 6. Phase 0 and Phase 1 are partly done
+
+- **Phase 0**: `asserted_by` **DONE** (from the SQLite `role` column, never an
+  LLM), `valid_to`/`expired_at` **DONE** on `:Fact`. Still open: the tombstone
+  log, the `identity_resolution` crosswalk, `extractor_version`/
+  `ontology_version`.
+- **Phase 1**: episodes **DONE** as pointers; threads **refused** (see 4).
+- **Phase 4**: "user turns only" **DONE** — both extraction paths physically
+  redact assistant content.
+
+⚠️ `asserted_by = "user"` is a **window-level** claim, not per-fact.
+`extract_facts` returns bare strings with no provenance, so a fact cannot be
+traced to a row; what makes it sound is that non-user turns are *physically
+absent* from the extractor's input. The per-fact version needs a quote span —
+`TripletExtractor` already returns one and `apply_triples` already accepts a
+`message_id` that **nothing ever passes**.
+
+---
 
 ## Status
 

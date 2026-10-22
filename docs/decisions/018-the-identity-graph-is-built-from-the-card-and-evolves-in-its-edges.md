@@ -2,7 +2,7 @@
 title: The identity graph is built from the card and evolves in its edges
 status: Accepted
 created: 2026-09-28
-last_reviewed_on: 2026-10-16
+last_reviewed_on: 2026-10-22
 review_in: 12 months
 applies_to: nephilim
 ai_summary: >
@@ -370,6 +370,38 @@ hand-written rule/proposal half is re-derived from the Cypher on every invariant
 See [ADR-017's 2026-10-17 amendment](017-learned-preferences-may-change-soft-walls-never-hard-walls.md)
 for how the nine resolved, and [INVARIANTS](../INVARIANTS.md) for the exemption class —
 which had to be defined here, because no published methodology defines one.
+
+## AMENDMENT 2026-10-22 — "her appearance is not a structured field" is no longer true
+
+This ADR records, as a measured finding that shaped the design: *"Her appearance
+is not a structured field — it is embedded in **21 free-text `lore` strings**."*
+It then chooses **Option 1** (model at the card's own granularity) over
+**Option 2** (extract finer structure from the prose) because Option 2 "requires
+an LLM, and therefore inherits the junk problem".
+
+As of 2026-10-21 gwen's card carries **8 atomic appearance facts** and
+`appearance` is a member of `LORE_KINDS`.
+
+**The rejection reasoning is intact; the conclusion is not.** Option 2 was never
+taken — no LLM extracted anything. The structure was **hand-authored into the
+card**, a third route this ADR did not consider, which buys Option 2's
+granularity without Option 2's junk problem. The cost is human labour, paid once.
+
+Why it mattered: `idn.cq01` ("What do you look like?") was unanswerable, and its
+own docstring recorded the gap as the DATA's rather than the query's. Measured
+before the change — she refused her own hair colour, eye colour and height on
+**5 of 15** probes while `blue eyes`, `155`, `petite` and `red hair` were all
+already present in the built prompt. Not missing data: present and unfindable.
+After: **15/15, zero refusals**.
+
+⚠️ Adding the field reproduced the ADR-016 drift immediately — it
+re-fingerprinted the card, an LLM rewrote the cached `<identity>` paragraph, and
+the prompt grew 4246 → 4435 chars with her self-description silently replaced.
+`appearance` is therefore in `_FINGERPRINT_EXCLUDE`, and the prompt is asserted
+byte-identical at 4377 chars. `personas/_summaries/` being tracked in git is the
+only reason that was visible — it surfaced as a one-file diff.
+
+---
 
 ## Related
 

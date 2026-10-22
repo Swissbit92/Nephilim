@@ -78,6 +78,8 @@ from .di.services import (  # noqa: F401 - re-exported for startup.get_X()/init_
     get_conversation_summarizer,
     get_episodic_memory_rag,
     get_fact_extraction_worker,
+    get_operator_fact_worker,
+    init_operator_fact_worker,
     get_fact_extractor,
     get_generation_throttle,
     get_memory_fact_repo,
@@ -88,6 +90,7 @@ from .di.services import (  # noqa: F401 - re-exported for startup.get_X()/init_
     init_brave_client,
     init_graph_driver,
     init_memory_manager,
+    init_operator_fact_worker,
     init_phase3_memory,
     prewarm_session_indexes,
 )
@@ -192,6 +195,9 @@ def initialize_all():
     # Initialize Phase 3 advanced memory (RAG + fact extraction)
     try:
         init_phase3_memory()
+        # AFTER phase3 so the graph driver exists; the worker resolves it lazily
+        # per job anyway, but starting it last keeps the dependency order honest.
+        init_operator_fact_worker()
         if get_episodic_memory_rag():
             logger.info("Phase 3: RAG memory enabled (semantic search)")
         else:

@@ -2,7 +2,7 @@
 title: The graph is consulted on every turn and she may only assert what it returned
 status: Accepted
 created: 2026-10-18
-last_reviewed_on: 2026-10-18
+last_reviewed_on: 2026-10-22
 review_in: 24 months
 applies_to: nephilim
 ---
@@ -406,6 +406,60 @@ test asserts the first still works, so this is an addition and not a replacement
 One defence is built in and did hold in measurement: the frame names the persona
 and tells her never to recite the list or its numbers — **0 of 40 replies leaked a
 bracket number**.
+
+## AMENDMENT 2026-10-22 — "Nothing calls it" is false, and the voice run this ADR deferred has happened
+
+The third amendment says of the numbered renderer: **"Nothing calls it.
+`MEMORY_CONTEXT_INJECT` and `MEMORY_FACTS_ENABLED` are both `false`, so the
+prompt is byte-identical until the operator flips a flag."**
+
+`frame_numbered_facts` is called on every live turn. The flags are flipped. It
+renders **760 tokens** — 36 operator facts read from the graph plus 8
+self-facts. The byte-identical half survives only for the default-OFF
+configuration; the "nothing calls it" half is the sentence someone would cite to
+conclude the renderer is dormant, and it is wrong.
+
+**Part 1 is understated rather than wrong.** It says citation only works if the
+numbered list is "complete and current". That turned out to be load-bearing in
+two ways this ADR did not anticipate:
+
+- A **count cap of 32** against a curated set of exactly 32 meant the list was
+  permanently full, kept the OLDEST entries, and could never show anything new.
+  It is a token budget now (`MEMORY_CONTEXT_MAX_TOKENS`), because no eviction
+  policy in this space has published support — the one clean ablation reports
+  +0.001 token F1 with CI spanning zero and judged correctness *dropping*.
+- The extraction gate, `% 10` on an all-rows count, **fired once, on an empty
+  transcript**. So the list was never "current" in any session: 0 of 3 stated
+  facts reached any store. Fixed — the loop now closes end to end, 2/3 recalled
+  in a fresh session with no history.
+
+**The distinctiveness run this ADR deliberately skipped has been done.** The
+record said: *"the frozen-gallery distinctiveness run is deliberately skipped,
+on the grounds that he judges her voice in use. That is a better instrument than
+a proxy — he is the user — but it is a judgement, not a measurement, and the
+voice question should not be cited as settled by anyone reading this later."*
+
+Measured 2026-10-22, two fresh gwen-only frozen-gallery arms, chance 0.125:
+
+| arm | distinctiveness | attribution |
+|---|---|---|
+| OFF | 1.000 | 8/8 to gwen |
+| ON | 0.875 | 7/8 to gwen, 1 to `nephilim_solace` |
+
+**No collapse**, and her ON arm is exactly her score in the historical
+8-persona ruler (0.875). ⚠️ The repo gate reports **REGRESSION** because
+`TOL = 0.01` cannot resolve a metric whose smallest possible step is 0.125. One
+flip of eight is p=1.0 paired; six one-way flips are needed for p<0.05.
+
+So: the catastrophic risk is ruled out, a subtle cost is **neither ruled in nor
+out**, and the voice question is now *partly* measured rather than unmeasured.
+It should still not be cited as settled.
+
+⚠️ Still unmeasured: **tool-firing under the larger block** — the one axis
+Deflanderization (arXiv 2510.13586) names, where richer in-character content cut
+function-argument exact match 0.359 → 0.226.
+
+---
 
 ## Related
 

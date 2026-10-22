@@ -133,6 +133,15 @@ Layered: **routes → services → repositories → models**, mirrored on the fr
 | In-voice status lines | Every user-facing image line is GENERATED in the persona's voice, never a status string. Variant floor + shuffled permutation queue + near-duplicate rejection; a lifetime cache only where the model is evicted (`_MODEL_UNREACHABLE`), recycle-on-drain elsewhere with exponential backoff on failure | `services/persona_lines.py` |
 | Tool-call safety middleware | Deterministic pre-execution gating on every tool-brain call: `mcp_access` + argument allowlist + HITL; plus RAG memory-write sanitization | `services/tool_interceptor.py`, `services/injection_guard.py` |
 | Persistence | SQLite repositories — ALL extend `BaseRepository` via `db_adapter` (connection pooling, thread-safe) | `repositories/` |
+| `graph_driver.py` | **The ONLY module importing `neo4j`.** `read()`/`write()` as managed transactions; `_plain()` raises if a Node/Relationship reaches the seam. No shared session or transaction between calls — deliberately. |
+| `graph_surface.py` | Declares every label and relationship type this code builds (14 labels, 11 rels). The identity half is DERIVED from `identity_shapes` so it cannot drift; the rest is hand-declared and re-derived from the Cypher by an invariant check. |
+| `graph_queries.py` | One typed function per competency question (12 of 31 executable). The `query:` field the ecosystem's question set carries. Read-only by contract. |
+| `repositories/identity_repository.py` | Persona identity: `apply_card` is the ONLY identity writer. Soft-expires by removing `:CurrentIdentity`. |
+| `repositories/neo4j_rule_repository.py` | Standing rules, supersession and `check_integrity()` — which DETECTS what Community edition cannot prevent. |
+| `repositories/operator_fact_repository.py` | `(:Fact)-[:ABOUT]->(:Operator)` with `origin` + `asserted_by`. ⚠️ `:Fact` is deliberately NOT a `Shape`: `apply_card` expires everything absent from the card, and a learned fact is absent by definition. |
+| `repositories/episode_repository.py` | `:Episode` + `CONTINUES`, pointers only — no message text, because `idn.cq06` requires the graph to REFUSE "what did she say three weeks ago". `Thread`/`PART_OF` deliberately NOT built. |
+| `services/operator_fact_worker.py` | Extraction OFF the request thread (it costs a measured median 5.54 s). `stop()` is registered with the lifespan, before the graph driver closes. |
+| `identity_source.py` | The overlay seam: graph → card, floor-guarded. ADR-019's byte-identity boundary lives here. |
 | Configuration | Per-subsystem settings package (llm/search/memory/wallet/auth/routing/lore/agent) + `get_settings()` | `config/` |
 | Composition root | `startup.py` = thin orchestrator (`initialize_all()` ordering + `build_app_state()`), re-exporting `get_*`/`init_*` singletons split by cluster into `di/{repositories,services,jupiter}.py` (2026-08-22); `dependencies.py` = FastAPI `Depends` providers (`require_*`→503-on-uninit, `optional_*`→None) resolving `startup.get_X()` at call time | `app_state.py`, `dependencies.py`, `startup.py`, `di/`, `server.py` |
 
@@ -146,6 +155,7 @@ Layered: **routes → services → repositories → models**, mirrored on the fr
 | `seeker_profiles`, `persona_affinity`, `resonance_log`, `unlocked_lore` | SQLite | `seeker_progression_repository` | `chat_session_service`, nephilim routes |
 | `user_profiles` | SQLite | `user_profile_repository` | cross-session memory injection |
 | `memory_entities`, `memory_facts` (ADR-006) | SQLite S-P-O triples, bi-temporal `valid_from`/`valid_to`, confidence, provenance | fact worker (M3) | fact retrieval (M4) |
+| **Neo4j graph** (bolt://127.0.0.1:**7688**) | 14 labels / 11 rels. Persona identity (136 nodes incl. 8 `appearance`), 18 rules, `(:Fact)-[:ABOUT]->(:Operator)` with `origin`+`asserted_by`, `:Episode`+`CONTINUES` (229/228). ⚠️ Operator facts are AUTHORED here and exist nowhere else — see the invariant note below. | `operator_fact_worker` (post-turn, async), `apply_card`, `seed_*` scripts | the numbered recall frame, `graph_queries`, the read-only MCP server |
 | wallet registry / summary / **flow** | SQLite | `wallet_registry` / `wallet_summary` / **`wallet_flow`** repos | `query_handler_service`, `wallet_creation_flow_service` |
 | Session + lore vector indexes | FAISS | `memory_rag` | `chat_session_service` (semantic recall, on-demand lore) |
 
@@ -159,6 +169,9 @@ Layered: **routes → services → repositories → models**, mirrored on the fr
 | **Every repository extends `BaseRepository`** | One pooled, thread-safe connection rather than raw handles | `db_adapter.py` |
 | **Per-turn content never enters the cached prompt** | Lore and memory are appended *after* `build_system_prompt`, or the `lru_cache` would serve one user's context to another | `routes/chat.py`, via `extra_system_context` |
 | **Companion memory is default OFF** | The M5 gate passed on the previous model and does not hold on the current one — both injections homogenise the warm personas | `MEMORY_CONTEXT_INJECT`, `MEMORY_FACTS_ENABLED` |
+| **Her own words are never facts about the operator** | She recited stored facts, the extractor read her own replies, and 38 contaminated rows appeared in ~20 minutes — including facts about HER filed under HIM. Both extraction paths now physically REDACT non-user content. | `scripts/checks/no_self_ingestion.py` (wired invariant) |
+| **The graph is a SYSTEM OF RECORD for operator facts, not a projection** | ⚠️ This contradicts the ecosystem's `SEMANTIC_PLATFORM.md` ("SQLite remains the source of truth… nothing is a system of record in two places"). Operator facts are authored in the graph and exist nowhere else. `SEMANTIC_MIGRATION.md` names this exact state as the documented cache-to-database failure path. **Recorded as a live contradiction, not resolved.** | ADR-021 amendment 2026-10-22 |
+| **Memory injection budgets in TOKENS, never a count** | A count cap of 32 against a curated set of exactly 32 kept the OLDEST entries, so the store was permanently full and she could never learn. No eviction policy in this space has published support. | `MEMORY_CONTEXT_MAX_TOKENS` |
 | **Facts are invalidated, never deleted** | History stays reconstructable; a correction does not erase what was believed before | `valid_to` on `memory_facts` |
 | **Search results pass one choke point** | Junk filtering and the relevance floor apply to synthesis and citations alike, so the two can never disagree | `tools/executor_bindings.py` |
 | **Citations are never stapled to a refusal** | A refused answer stays a refusal instead of looking sourced | `routes/chat.py`, on `ToolBrainResult.refused` |

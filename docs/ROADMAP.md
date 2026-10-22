@@ -2,7 +2,7 @@
 title: Roadmap
 status: active
 created: 2026-04-19
-last_reviewed_on: 2026-10-21
+last_reviewed_on: 2026-10-22
 review_in: 3 months
 applies_to: nephilim
 ---
@@ -53,7 +53,36 @@ Two consequences the sequencing makes concrete, both recorded in
 
   **Where it sits:** `routes/chat.py` ~line 560, the `if scope:` branch. The grounding string is already available at the gate call sites in the same module via `context_framing.recalled_facts_for_grounding`.
 
-- [ ] **Two residual recall failures that are model behaviour, not wiring** (same live run, 8 probes, frame firing on 8/8 turns and zero gate abstentions). *"what do i usually eat for breakfast?"* was derailed into explicit content and never answered — while *"do i eat meat?"* answered *"you're vegetarian … and you love eggs b[enedict]"*, so the fact was reachable on the very next turn. And *"what hobbies do i have?"* produced a false refusal **in her own voice** (*"I only know the things that make you happy Daddy, and I don't even know those"*) rather than any gate line, with `gym`/`GTA 5`/`reads`/`beach` all in the list. Both suggest the card's explicit register is outcompeting the recall instruction for attention on some turns; neither is a guard misfiring. Worth a position/strength experiment on `RECALL_INSTRUCTION` before anything else, and ⚠️ **not** worth another prompt-content addition without an eval — this repo has measured that as neutral-or-negative twice.
+- [x] ✅ **DONE 2026-10-22 — Two residual recall failures that are model behaviour, not wiring.** Both resolved, and NEITHER was model behaviour. One was the capability-scope deflection (fixed by the un-gated `operator_memory` intent); the other was the groundedness gate still destroying DATED recitals, fixed by a hard figure-containment pre-check. ⚠️ My diagnosis of "register effects of her card" was WRONG on both counts — the deflection was eating more than the log showed. Original note: (same live run, 8 probes, frame firing on 8/8 turns and zero gate abstentions). *"what do i usually eat for breakfast?"* was derailed into explicit content and never answered — while *"do i eat meat?"* answered *"you're vegetarian … and you love eggs b[enedict]"*, so the fact was reachable on the very next turn. And *"what hobbies do i have?"* produced a false refusal **in her own voice** (*"I only know the things that make you happy Daddy, and I don't even know those"*) rather than any gate line, with `gym`/`GTA 5`/`reads`/`beach` all in the list. Both suggest the card's explicit register is outcompeting the recall instruction for attention on some turns; neither is a guard misfiring. Worth a position/strength experiment on `RECALL_INSTRUCTION` before anything else, and ⚠️ **not** worth another prompt-content addition without an eval — this repo has measured that as neutral-or-negative twice.
+
+- [ ] 🔴 **Agentic memory — ADR-021, SPLIT BY PHASE (2026-10-22).** The single
+  six-phase item below was unticked while half of it had shipped, so the phases
+  are broken out. ⚠️ **The READ PATH IS OPEN** and the header claim below that
+  it "IS NOT" is false — see ADR-021's 2026-10-22 amendment. The Phase 2 gate
+  was **never run**; the path opened on a different measurement (self-recall
+  8/15 → 15/15), and the voice half was measured separately on 2026-10-22 (no
+  collapse, 1.000 → 0.875, one probe of eight, with the repo gate reporting
+  REGRESSION because its tolerance is 12× finer than the metric's resolution).
+
+  - [x] **Phase 0 — partly.** `asserted_by` DONE (SQLite `role` column, never an
+    LLM). `valid_to`/`expired_at` DONE on `:Fact`. ⚠️ STILL OPEN: the tombstone
+    log, the `identity_resolution` crosswalk, and
+    `extractor_version`/`ontology_version`. ⚠️ `asserted_by` is a WINDOW-level
+    claim, not per-fact — `extract_facts` returns bare strings, so the per-fact
+    version needs a quote span (`TripletExtractor` returns one, and
+    `apply_triples` accepts a `message_id` that nothing passes).
+  - [x] **Phase 1 — episodes DONE, threads REFUSED.** 229 `:Episode` nodes, 228
+    `CONTINUES` edges, backfilled from 1963 messages, pointers only.
+    `Thread`/`PART_OF` deliberately not built: grouping needs scene-boundary
+    detection, and the only groupings available without it are the two
+    `prf.cq03`'s own negative fixture forbids. A test asserts the refusal.
+  - [ ] **Phase 2 — SUPERSEDED, not run.** Kept for the record only.
+  - [ ] **Phase 3 — read path indexes. NOT NEXT.** A vector + full-text index
+    earns its place when the store is too big to inject. It holds 36 facts in
+    760 tokens and she gets all of them every turn.
+  - [x] **Phase 4 — "user turns only" DONE.** Both extraction paths physically
+    redact assistant content. ⚠️ Still open: grammar-constrained typed
+    extraction, and dedup beyond exact containment.
 
 - [ ] 🔴 **Agentic memory — ADR-021 implementation, six phases.** [ADR-021](decisions/021-agentic-memory-is-one-graph-with-scoped-truth.md) decided the design on 2026-10-17: facts, episodes, threads and her trait evolution in the graph, message text staying in SQLite, working memory staying in the context window. **The write path and schema are Accepted; the READ PATH IS NOT** — it is gated on Phase 2 below. Priority input from the owner, not derivable from code: *both* remembering and evolving, **remembering first**.
 

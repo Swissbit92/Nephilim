@@ -90,7 +90,26 @@ def _shutdown() -> None:
     orphaned sockets and threads for the life of the process. In 5.x the GC
     quietly saved you; it no longer does.
     """
-    from .startup import close_graph_driver, get_strategy_scheduler
+    from .startup import (
+        close_graph_driver,
+        get_operator_fact_worker,
+        get_strategy_scheduler,
+    )
+    try:
+        # The operator-fact worker is a PRODUCER OF GRAPH WORK, so it stops here
+        # — before close_graph_driver() — per this block's own ordering rule. A
+        # job draining into a closed driver is the use-after-close the docstring
+        # above describes.
+        #
+        # ⚠️ This stop() has a caller ON PURPOSE. The pre-existing
+        # FactExtractionWorker has the identical shape and its stop() has none,
+        # so its queue is lost on every restart. That is a recorded gap and is
+        # not repeated here.
+        worker = get_operator_fact_worker()
+        if worker is not None:
+            worker.stop()
+    except Exception:
+        logger.exception("Operator fact worker shutdown failed")
     try:
         scheduler = get_strategy_scheduler()
         if scheduler and scheduler.running:
@@ -104,7 +123,7 @@ def _shutdown() -> None:
 
 # ----------------- FastAPI App -----------------
 
-app = FastAPI(title="Local Coordinator (Chat-only)", version="0.9.0", lifespan=lifespan)
+app = FastAPI(title="Local Coordinator (Chat-only)", version="0.9.1", lifespan=lifespan)
 
 # Add CORS middleware
 app.add_middleware(
