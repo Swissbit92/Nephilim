@@ -58,8 +58,22 @@ def _norm(text: str) -> str:
     return _WS.sub(" ", (text or "").strip().lower()).rstrip(".,;!?")
 
 
-def make_handler(repo_factory, settings_factory):
-    """Build the worker's handler. Factories so nothing is captured at import."""
+def make_handler(repo_factory, settings_factory, profile_repo_factory=None):
+    """Build the worker's handler. Factories so nothing is captured at import.
+
+    🔴 ONE EXTRACTION, BOTH WRITES. The first version of this enqueued the worker
+    and LEFT the inline extraction in place, so extraction ran TWICE per window:
+    the 5.54 s stayed on the request thread AND a second LLM call followed it.
+    Measured consequence — the two runs disagree, because they are two
+    independent samplings: a "bouldering" fact landed in SQLite and NOT in the
+    graph on the same window, which looked like a graph write bug and was not.
+
+    So the worker owns extraction and writes BOTH stores from the one result.
+    SQLite is still written deliberately: the graph is becoming the system of
+    record for facts but the migration is unfinished, and `_operator_facts`
+    falls back to SQLite on any graph failure — dropping the SQLite write would
+    make that fallback fall back to nothing.
+    """
 
     def handle(job: FactJob) -> int:
         from ..fact_extractor import FactExtractor
@@ -115,6 +129,21 @@ def make_handler(repo_factory, settings_factory):
                 "(%d candidate(s), %d already held)",
                 written, job.user_id, len(candidates), len(candidates) - written,
             )
+
+        # The SAME extraction result also updates the SQLite profile, so the two
+        # stores cannot diverge the way two independent extractions did.
+        if profile_repo_factory is not None:
+            try:
+                prepo = profile_repo_factory()
+                if prepo is not None:
+                    profile = prepo.get_or_create_profile(job.user_id)
+                    profile.update_from_session(out)
+                    prepo.update_profile(profile)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "[OperatorFactWriter] SQLite profile update failed "
+                    "(non-fatal, the graph write stands): %s", e
+                )
         return written
 
     return handle

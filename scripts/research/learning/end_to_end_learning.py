@@ -51,21 +51,38 @@ sys.path.insert(0, os.path.abspath(ROOT))
 #: Deliberately unusual, so a hit cannot come from the base model's priors.
 #: (statement to make, question to ask later, keys that count as recalled)
 TAUGHT = [
-    ("my favourite band is The Rusted Compass",
+    ("my favourite band is Harrowgate Lantern",
      "what's my favourite band?",
-     ("rusted compass", "rusted")),
-    ("i've taken up bouldering on tuesday evenings",
-     "what do i do on tuesday evenings?",
-     ("boulder", "climb")),
-    ("my cat is called Pemberton",
-     "what's my cat called?",
-     ("pemberton",)),
+     ("harrowgate", "lantern")),
+    ("i've started fencing on thursday mornings",
+     "what do i do on thursday mornings?",
+     ("fencing", "fence")),
+    ("my dog is called Tulliver",
+     "what's my dog called?",
+     ("tulliver",)),
 ]
 
-#: NEVER told to her. A yes here is agreement, not memory.
+#: NEVER told to her, and chosen to share NO SUBJECT with any stored fact.
+#:
+#: ⚠️ THE FIRST VERSION OF THIS CONTROL WAS INVALID, twice over. It asked "what
+#: car do i drive now?" and she answered "You sold your car in June or July
+#: 2026" — a TRUE stored fact, and a reasonable partial answer, which the scorer
+#: counted as a fabrication. An instrument that scores a correct answer as a
+#: failure is worse than no instrument.
+#:
+#: The fix is PERMA's zero-memory-checkpoint design (arXiv 2603.23231) as the
+#: research recommends: the control must have the SAME SHAPE as an answerable
+#: question but no stored fact anywhere near its subject, so the only difference
+#: between the two cells is whether grounding exists. LongMemEval's abstention
+#: task (arXiv 2410.10813) is the published precedent for using unanswerables
+#: this way at all — 30 false-premise questions per set.
+#:
+#: Checked against the live store: none of these subjects (sibling, employer,
+#: childhood town) appears in any of the 32 curated facts.
 NEVER_TOLD = [
-    ("what's my brother's name?", ("brother",)),
-    ("what car do i drive now?", ("drive",)),
+    ("what's my sister called?", ()),
+    ("which company do i work for?", ()),
+    ("what town did i grow up in?", ()),
 ]
 
 REFUSALS = ("don't know", "do not know", "not sure", "haven't told", "wasn't told",
@@ -160,7 +177,7 @@ def check(operator_id: str):
 
     print(f"\n--- NEGATIVE CONTROL (never told) ---")
     fabricated = 0
-    for question, keys in NEVER_TOLD:
+    for question, _keys in NEVER_TOLD:
         reply = say(sid, question)
         low = reply.lower()
         refused = any(p in low for p in REFUSALS)

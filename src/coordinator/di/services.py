@@ -107,6 +107,7 @@ def init_operator_fact_worker():
         _operator_fact_worker = None
         return None
     try:
+        from .repositories import get_user_profile_repo
         from ..services.operator_fact_worker import OperatorFactWorker
         from ..services.operator_fact_writer import make_handler
 
@@ -122,7 +123,7 @@ def init_operator_fact_worker():
             return OperatorFactRepository(driver, cfg.database)
 
         _operator_fact_worker = OperatorFactWorker(
-            make_handler(_repo, get_settings)
+            make_handler(_repo, get_settings, get_user_profile_repo)
         )
         _operator_fact_worker.start()
     except Exception as e:  # noqa: BLE001

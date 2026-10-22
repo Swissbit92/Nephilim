@@ -1061,15 +1061,41 @@ def _apply_post_turn_updates(state: ChatTurnState, deps: ChatDeps) -> None:
                         persona_key=state.persona_key or "",
                         messages=recent_messages,
                     ))
+                    # 🔴 A FLAG, NOT A RETURN. The worker owns extraction AND
+                    # both writes from here, so the inline path below must be
+                    # skipped — running it would extract a SECOND time, keeping
+                    # the 5.54 s on the request thread and letting the two
+                    # independent samplings disagree. Measured: a "bouldering"
+                    # fact landed in SQLite and NOT in the graph on the same
+                    # window, which looked like a graph write bug and was not.
+                    #
+                    # ⚠️ `return` here looked right and would have skipped the
+                    # ENTIRE NEPHILIM PROGRESSION BLOCK below — rank-ups,
+                    # resonance and capability unlocks. Third time this session
+                    # that an early return in a multi-purpose post-turn function
+                    # would have silently switched off an unrelated feature.
+                    #
+                    # The inline path survives for the case the worker cannot
+                    # serve: no pinned operator id, where identity has to be
+                    # recovered from `facts["user_name"]` synchronously because
+                    # the rest of the turn needs a user_id.
+                    _worker_owns_extraction = True
+                else:
+                    _worker_owns_extraction = False
 
-                if fact_extractor is None:
+                if not _worker_owns_extraction and fact_extractor is None:
                     llm_client = create_llm_client(
                         {}, temperature=get_settings().ollama.temp_fact_extraction
                     )
                     from ..fact_extractor import FactExtractor  # noqa: PLC0415
                     fact_extractor = FactExtractor(llm_client)
 
-                facts = fact_extractor.extract_facts(recent_messages, persona_key=state.persona_key)
+                facts = (
+                    {} if _worker_owns_extraction
+                    else fact_extractor.extract_facts(
+                        recent_messages, persona_key=state.persona_key
+                    )
+                )
 
                 # 🔴 A STABLE OPERATOR IDENTITY TAKES PRECEDENCE OVER BOTH PATHS BELOW.
                 # Identity used to be recovered by looking up an LLM-EXTRACTED NAME and
@@ -1104,8 +1130,9 @@ def _apply_post_turn_updates(state: ChatTurnState, deps: ChatDeps) -> None:
                     deps.user_profile_repo.link_session_to_user(
                         state.user_id, state.session_id)
 
-                state.user_profile.update_from_session(facts)
-                deps.user_profile_repo.update_profile(state.user_profile)
+                if not _worker_owns_extraction:
+                    state.user_profile.update_from_session(facts)
+                    deps.user_profile_repo.update_profile(state.user_profile)
 
                 logger.info(
                     f"[Phase3] Updated user profile {state.user_id}: "

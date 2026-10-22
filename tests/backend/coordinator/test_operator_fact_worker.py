@@ -268,3 +268,69 @@ class TestShutdownIsRegistered:
             f"producers of graph work must stop first; stop at line "
             f"{calls['stop']}, close at {calls['close_graph_driver']}"
         )
+
+
+class TestNoEarlyReturnInThePostTurnHook:
+    """🔴 THE REGRESSION I ALMOST SHIPPED, THREE TIMES IN ONE SESSION.
+
+    `_apply_post_turn_updates` does several unrelated things in sequence. When
+    the worker takes over extraction the inline path must be SKIPPED — and the
+    obvious way to write that is `return`, which looks right and silently
+    switches off everything after it: `_track_nephilim_progression`, the rank
+    ceremony, and capability unlocks.
+
+    The same mistake was caught in `_build_turn_prompt` on 2026-10-18 (it would
+    have dropped ADR-011's author note and the summary-context block). A flag is
+    the correct shape in a function that is a sequence of independent steps.
+    """
+
+    def test_the_hook_never_returns_early(self):
+        import ast
+        import inspect
+        import textwrap
+
+        from coordinator.services import chat_session_service as css
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(css._apply_post_turn_updates)))
+        fn = tree.body[0]
+        returns = [n for n in ast.walk(fn) if isinstance(n, ast.Return)]
+        # A bare `return` at the very end is harmless; anything earlier is not.
+        offenders = [n.lineno for n in returns]
+        assert not offenders, (
+            "an early return here silently skips the NEPHILIM progression block "
+            f"(rank-ups, resonance, capability unlocks); returns at {offenders}"
+        )
+
+    def test_progression_still_runs_after_the_extraction_block(self):
+        import ast
+        import inspect
+        import textwrap
+
+        from coordinator.services import chat_session_service as css
+
+        src = textwrap.dedent(inspect.getsource(css._apply_post_turn_updates))
+        tree = ast.parse(src)
+        lines = {}
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Call):
+                name = getattr(n.func, "id", None) or getattr(n.func, "attr", None)
+                if name in ("enqueue", "_track_nephilim_progression"):
+                    lines.setdefault(name, n.lineno)
+        assert "enqueue" in lines, "the worker is never enqueued"
+        assert "_track_nephilim_progression" in lines
+        assert lines["enqueue"] < lines["_track_nephilim_progression"], (
+            "progression must come after the extraction block, and must still "
+            "be reachable from it"
+        )
+
+    def test_the_inline_path_is_guarded_by_a_flag(self):
+        import inspect
+
+        from coordinator.services import chat_session_service as css
+
+        src = inspect.getsource(css._apply_post_turn_updates)
+        assert "_worker_owns_extraction" in src
+        assert "if not _worker_owns_extraction:" in src, (
+            "the SQLite write must be skipped when the worker owns it, or "
+            "extraction runs twice and the two stores disagree"
+        )
