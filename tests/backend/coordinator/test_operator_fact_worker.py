@@ -293,8 +293,19 @@ class TestNoEarlyReturnInThePostTurnHook:
 
         tree = ast.parse(textwrap.dedent(inspect.getsource(css._apply_post_turn_updates)))
         fn = tree.body[0]
-        returns = [n for n in ast.walk(fn) if isinstance(n, ast.Return)]
-        # A bare `return` at the very end is harmless; anything earlier is not.
+
+        # ⚠️ Walk the OUTER body only. `ast.walk` descends into nested
+        # functions, and this one contains a `_window_since_last_firing` helper
+        # whose `return` is perfectly fine — the first version of this test
+        # flagged it, which is a false positive in the test rather than a defect
+        # in the code.
+        nested = {
+            id(n) for d in ast.walk(fn)
+            if isinstance(d, (ast.FunctionDef, ast.AsyncFunctionDef)) and d is not fn
+            for n in ast.walk(d)
+        }
+        returns = [n for n in ast.walk(fn)
+                   if isinstance(n, ast.Return) and id(n) not in nested]
         offenders = [n.lineno for n in returns]
         assert not offenders, (
             "an early return here silently skips the NEPHILIM progression block "
