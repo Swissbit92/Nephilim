@@ -2,12 +2,49 @@
 title: Generation-time groundedness gate
 status: Proposed
 created: 2026-07-04
-last_reviewed_on: 2026-08-23
+last_reviewed_on: 2026-10-22
 review_in: 12 months
 applies_to: nephilim
 ---
 
 # ADR-007: Generation-time groundedness gate
+
+## AMENDMENT 2026-10-22 — the gate changed twice, and the clean split it claims is exactly where it broke
+
+The 2026-10-18 amendment says **"This gate is unchanged and is not
+superseded. It keeps real-world claims: scores, balances, dates, live account
+state."** It has since changed twice, and the real-world/personal split it calls
+clean is the precise place it failed.
+
+**(1) It is handed the recalled facts as grounding.** It previously saw only the
+question and the draft, so a RECITED fact and an INVENTED one were
+indistinguishable to it. Measured: it destroyed three correct answers in one
+session — *"You read, play GTA 5, and hit the gym"*, *"No way, I know how much
+you hate meat"*, *"You've been thinking about quitting your job"* — and replaced
+each with "I don't know, want me to search?".
+
+**(2) It gained a deterministic figure-containment pre-check**
+(`_figures_are_all_in_the_grounding`). Handing it the grounding was **not
+enough for DATED facts**: it still destroyed *"Daddy bought 2.5 BTC back in
+2021"* and *"You sold your car in June or July 2026"* against grounding that
+literally contained those figures. The exclusion loses to the flag rule above
+it, because this is a 24B generalist and entailment against fixed evidence is a
+specialist's task — MiniCheck at 770M reaches 74.7% balanced accuracy against
+GPT-4's 75.3% at 445× lower cost.
+
+⚠️ So the split this gate rests on — real-world claims in, personal claims out —
+broke on a **dated personal** claim, which is both at once.
+
+The pre-check is deliberately narrow: exact-figure **containment**, not
+similarity (lexical overlap is recorded in this repo as known-bad for this class
+of judgement); it can only **skip** the gate, never cause an abstention; and a
+wrong figure such as "2.5 BTC in 2019" still reaches the classifier.
+
+**Status line correction:** this ADR still reads *"Proposed — core mechanism
+built, default OFF, eval-first validation before enabling."*
+`GROUNDEDNESS_GATE_ENABLED=true` has been live on production since 2026-07-04.
+
+---
 
 ## Status
 

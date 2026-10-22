@@ -24,6 +24,7 @@ from fastapi import HTTPException
 
 from ..config import get_settings
 from ..context_framing import frame_injected_context, frame_numbered_facts
+from .operator_fact_worker import FactJob
 from ..memory_fact_retrieval import render_facts_narrative, select_facts_for_injection
 
 # Lazy imports to break circular dependency: llm_client -> services -> chat_session_service -> llm_client
@@ -974,8 +975,16 @@ def _apply_post_turn_updates(state: ChatTurnState, deps: ChatDeps) -> None:
         # and batched at the same cadence as the legacy extractor. Requires a linked
         # user_id (a brand-new user's facts wait until their profile is created below).
         _mem = get_settings().memory
+        # 🔴 ONE DEFINITION FOR BOTH GATES. This path had the IDENTICAL skippable
+        # modulo as the legacy one below — found by the legacy gate's own test,
+        # which refused to pass while a second all-rows modulo survived in the
+        # same function. Fixing only the path that was measured broken would
+        # have left this one to be rediscovered the day MEMORY_FACTS_ENABLED is
+        # flipped: fix by SHAPE, not by file, which this repo has recorded as a
+        # lesson from two other repos.
+        user_turns = sum(1 for m in state.db_messages if m.get("role") == "user") + 1
         if (deps.fact_extraction_worker and _mem.facts_enabled and state.user_id
-                and len(state.db_messages) % _mem.fact_extraction_interval == 0):
+                and user_turns % _mem.fact_extraction_interval == 0):
             try:
                 from ..fact_extraction_worker import ExtractionJob  # noqa: PLC0415
                 recent_for_facts = deps.message_repo.get_messages_by_session(state.session_id)[-20:]
@@ -986,20 +995,107 @@ def _apply_post_turn_updates(state: ChatTurnState, deps: ChatDeps) -> None:
                 logger.debug(f"[FactWorker] enqueue skipped (non-fatal): {e}")
 
         # Extract facts and update user profile (configurable interval to save compute)
-        fact_interval = get_settings().memory.fact_extraction_interval
-        if deps.user_profile_repo and len(state.db_messages) % fact_interval == 0:
+        #
+        # 🔴 THE GATE COUNTS *USER* MESSAGES, NOT ALL MESSAGES, AND IT COUNTS THEM
+        # AFTER THIS TURN IS PERSISTED. Both halves were defects, and together they
+        # made extraction close to non-functional for the life of the feature.
+        #
+        # It used to be `len(state.db_messages) % fact_interval == 0`. Two things
+        # were wrong with that:
+        #
+        #   1. `db_messages` counts EVERY row, and she replies in multi-message
+        #      bubbles, so the counter advances by 2 or 3 unpredictably. Hitting
+        #      `% 10 == 0` was therefore a matter of luck rather than cadence.
+        #   2. `db_messages` is populated in `_build_turn_prompt` BEFORE this turn
+        #      is persisted, so even when it did fire the window excluded the
+        #      newest turn — the one most likely to carry a new fact.
+        #
+        # Measured 2026-10-22 on a real teaching session. Three facts were stated
+        # ("my favourite band is The Rusted Compass", "i've taken up bouldering on
+        # tuesday evenings", "my cat is called Pemberton"). Enumerating the
+        # pre-turn counts across the six user turns gives 0, 3, 6, 9, 12, 16 — so
+        # the gate fired EXACTLY ONCE, at count 0, on an EMPTY transcript. Every
+        # turn that contained a fact was skipped, and 0 of 3 facts reached any
+        # store. ⚠️ Not the extractor's fault and not temperature: re-run on the
+        # same transcript at the live 0.3 it captures 7 of 9 across 3 reps. This
+        # also explains the historical 12 July rows that describe the conversation
+        # rather than the operator — the rare firings caught arbitrary windows.
+        #
+        # Counting user messages makes the step exactly 1, so the modulo cannot be
+        # skipped, and `+1` for this turn's own user message removes the
+        # off-by-one without needing a second DB read before the persist.
+        fact_interval = _mem.fact_extraction_interval
+        if deps.user_profile_repo and user_turns % fact_interval == 0:
             try:
                 all_messages_updated = deps.message_repo.get_messages_by_session(state.session_id)
                 recent_messages = all_messages_updated[-20:]
 
-                if fact_extractor is None:
+                # 🔴 OFF THE REQUEST THREAD. Extraction costs a MEASURED median
+                # 5.54 s (5 reps, live model, live transcript) and the user waits
+                # for everything in this function. Enqueue and return; the worker
+                # writes to the graph with `asserted_by` from the role column.
+                #
+                # ⚠️ The research recommends a SYNCHRONOUS write here, on the
+                # strength of Mem0's p95 of 1.44 s. This box measures 4x that, and
+                # the standing rule in this repo is to replay a borrowed constant
+                # against local data before trusting it — a borrowed threshold
+                # once scored 31% where a fitted one scored 57%. Zep's documented
+                # hours-long staleness came from bounded CONCURRENT ingestion at
+                # scale, which one job on one thread does not have.
+                #
+                # The SQLite write below is kept as well, deliberately: the graph
+                # is becoming the system of record for facts but the migration is
+                # not finished, and `_operator_facts` still falls back to SQLite
+                # on any graph failure. Dropping the SQLite write would make that
+                # fallback fall back to nothing.
+                # Module ref resolved at CALL time, not `from ..startup import
+                # get_X` — that is the repo's patch-path contract, so a test
+                # patching src.coordinator.startup.get_X still intercepts.
+                from .. import startup as _startup
+
+                _ofw = _startup.get_operator_fact_worker()
+                if _ofw is not None and state.user_id:
+                    _ofw.enqueue(FactJob(
+                        user_id=state.user_id,
+                        session_id=state.session_id,
+                        persona_key=state.persona_key or "",
+                        messages=recent_messages,
+                    ))
+                    # 🔴 A FLAG, NOT A RETURN. The worker owns extraction AND
+                    # both writes from here, so the inline path below must be
+                    # skipped — running it would extract a SECOND time, keeping
+                    # the 5.54 s on the request thread and letting the two
+                    # independent samplings disagree. Measured: a "bouldering"
+                    # fact landed in SQLite and NOT in the graph on the same
+                    # window, which looked like a graph write bug and was not.
+                    #
+                    # ⚠️ `return` here looked right and would have skipped the
+                    # ENTIRE NEPHILIM PROGRESSION BLOCK below — rank-ups,
+                    # resonance and capability unlocks. Third time this session
+                    # that an early return in a multi-purpose post-turn function
+                    # would have silently switched off an unrelated feature.
+                    #
+                    # The inline path survives for the case the worker cannot
+                    # serve: no pinned operator id, where identity has to be
+                    # recovered from `facts["user_name"]` synchronously because
+                    # the rest of the turn needs a user_id.
+                    _worker_owns_extraction = True
+                else:
+                    _worker_owns_extraction = False
+
+                if not _worker_owns_extraction and fact_extractor is None:
                     llm_client = create_llm_client(
                         {}, temperature=get_settings().ollama.temp_fact_extraction
                     )
                     from ..fact_extractor import FactExtractor  # noqa: PLC0415
                     fact_extractor = FactExtractor(llm_client)
 
-                facts = fact_extractor.extract_facts(recent_messages, persona_key=state.persona_key)
+                facts = (
+                    {} if _worker_owns_extraction
+                    else fact_extractor.extract_facts(
+                        recent_messages, persona_key=state.persona_key
+                    )
+                )
 
                 # 🔴 A STABLE OPERATOR IDENTITY TAKES PRECEDENCE OVER BOTH PATHS BELOW.
                 # Identity used to be recovered by looking up an LLM-EXTRACTED NAME and
@@ -1034,8 +1130,9 @@ def _apply_post_turn_updates(state: ChatTurnState, deps: ChatDeps) -> None:
                     deps.user_profile_repo.link_session_to_user(
                         state.user_id, state.session_id)
 
-                state.user_profile.update_from_session(facts)
-                deps.user_profile_repo.update_profile(state.user_profile)
+                if not _worker_owns_extraction:
+                    state.user_profile.update_from_session(facts)
+                    deps.user_profile_repo.update_profile(state.user_profile)
 
                 logger.info(
                     f"[Phase3] Updated user profile {state.user_id}: "

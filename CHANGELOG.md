@@ -5,6 +5,48 @@ All notable changes to the NEPHILIM project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-10-22
+
+### Fixed — the learning loop closes
+
+- **The extraction gate was skippable, so she learned nothing.** Three facts
+  stated in a real session reached no store: `len(db_messages) % 10 == 0`
+  counted every row, and multi-message replies made the step irregular, so the
+  gate fired **once, on an empty transcript**. Now counts USER messages (+1 for
+  this turn), step exactly 1. ⚠️ The same defect was on BOTH extraction paths.
+- **Extraction moved off the request thread.** Measured median **5.54 s** paid
+  where the user waits. ⚠️ A deliberate departure from the research, which
+  recommends a synchronous write on Mem0's p95 of 1.44 s — this box measures 4×
+  that. `stop()` is registered with the lifespan, before the graph driver closes.
+- **One extraction now feeds both writes.** The first version left the inline
+  path, so extraction ran twice and the two samplings disagreed.
+- **The negative control was invalid** and scored a true answer as a
+  fabrication. Rebuilt on PERMA's zero-memory-checkpoint design.
+
+### Added
+
+- `(:Fact)-[:ABOUT]->(:Operator)` written from live conversation, with `origin`
+  and `asserted_by` from the SQLite `role` column — never a model. ⚠️
+  Window-level provenance, not per-fact.
+- `OperatorFactWorker` + `operator_fact_writer`, with exact case-insensitive
+  containment dedup (not a borrowed similarity threshold).
+- A **7th wired invariant**: *her own words are never ingested as facts about
+  the operator*, with `scripts/checks/no_self_ingestion.py`.
+- `scripts/research/learning/{end_to_end_learning,extraction_temperature_ab}.py`.
+
+### Measured
+
+| | before | after |
+|---|---|---|
+| stored in SQLite | 0/3 | 2/3 |
+| stored in the graph | 0/3 | 2/3 |
+| recalled, fresh session | 0/3 | **2/3** |
+| fabricated on the control | 1/2 | **0/2** |
+| voice distinctiveness OFF → ON | — | 1.000 → 0.875 (no collapse) |
+
+⚠️ Recall is **not a rate** — serially correlated, n=1. ⚠️ The voice gate reports
+REGRESSION because its tolerance is 12× finer than the metric's resolution.
+
 ## [0.9.0] - 2026-10-21
 
 Minor rather than patch: the graph gained three new node types and became the

@@ -2,7 +2,7 @@
 title: The graph is the source of identity, not extra prompt text
 status: Accepted
 created: 2026-09-28
-last_reviewed_on: 2026-10-16
+last_reviewed_on: 2026-10-22
 review_in: 24 months
 applies_to: nephilim
 ai_summary: >
@@ -137,6 +137,75 @@ through a temperature-0.9 LLM into a **tracked** file whose text is not reproduc
 was triggered once during testing and recovered from git — which is precisely why ADR-016
 tracks those files. It is acceptable only while no chat-time write path exists; if one is
 added, this becomes a non-reproducible write on a user turn and must be revisited.
+
+## AMENDMENT 2026-10-22 — the boundary was crossed by a route its own test does not watch
+
+🔴 **This is the failure mode this ADR was written to prevent, and it happened
+anyway.**
+
+The ADR's taxonomy splits two changes: **(a)** add identity-node content as
+extra prompt text — *Closed, ADR-018, measured* — and **(b)** switch the source
+of an existing block, which is free because the prompt stays byte-identical. The
+boundary between them is a test, and this document says why in as many words:
+
+> **The byte-identity assertion is the boundary against (a).** The moment the
+> overlay stops being byte-identical it has become the closed change, and that
+> test fails. This is why the boundary is a test and not a sentence in a
+> document: the previous boundary was a sentence, and a sentence cannot notice
+> when it is crossed.
+
+On 2026-10-21 `self_facts_from_graph()` shipped. It reads identity-graph nodes
+and renders them as **extra prompt text** in the numbered recall frame's second
+section. By this ADR's own taxonomy that is change **(a)**.
+
+**The test still passes.** It asserts the sha of `build_system_prompt`, and the
+self-facts text is appended *afterwards*, through `extra_system_context`. So the
+boundary held exactly where it was drawn and the thing it exists to prevent went
+around it. A test is better than a sentence, and it is still only as wide as
+what it watches.
+
+### What is recorded, rather than resolved
+
+The byte-identity assertion is **kept** — it still correctly governs the overlay
+path, which is genuinely change (b) and genuinely free. What is now written down
+is that it does **not** cover `extra_system_context`, and that the closed change
+has shipped by that route with the operator's knowledge.
+
+The voice cost was measured on 2026-10-22 rather than left asserted:
+
+| arm | distinctiveness | attribution |
+|---|---|---|
+| OFF | 1.000 | 8/8 to gwen |
+| ON (760 tokens) | 0.875 | 7/8 to gwen, 1 to `nephilim_solace` |
+
+No collapse: ADR-006's EEVA/solace collapse to 0.25 does not reproduce, and
+gwen's ON arm is *exactly* her score in the historical 8-persona ruler (0.875).
+⚠️ The repo gate nonetheless reports **REGRESSION**, because `TOL = 0.01` sits
+against a metric whose smallest step is 0.125 — it cannot say "within noise" on
+this instrument. One flip of eight is p=1.0; six are needed for p<0.05.
+**A subtle cost is neither ruled in nor out**, and the reopening condition this
+ADR names (`pairwise_auc` against the full centroid field) is still the right
+next instrument — it has chance 0.5 regardless of N and **zero production
+callers**, so nothing gates it yet.
+
+### Two preconditions in this ADR have narrowed
+
+Both of these rest on there being no chat-time graph write path:
+
+> Identity differs only because ADR-018 defers the write path — *"no write path
+> from chat exists"* — so nothing mutates these nodes mid-session.
+
+> It is acceptable only while no chat-time write path exists; if one is added,
+> this becomes a non-reproducible write on a user turn and must be revisited.
+
+Chat-time graph writes now exist: `(:Fact)-[:ABOUT]->(:Operator)` is written
+from a post-turn worker with `origin`, `asserted_by` and `source_session_id`.
+The `lru_cache` argument survives **because those writes target `:Fact`, never
+an identity `Shape` node** — so the qualification is narrowed from "no chat-time
+write path" to **"no chat-time write path to identity nodes"**, which
+`test_no_chat_time_identity_write_path_exists` still asserts.
+
+---
 
 ## Consequences
 

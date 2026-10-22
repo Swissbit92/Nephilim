@@ -2,7 +2,7 @@
 title: Lessons Learned
 status: active
 created: 2026-04-19
-last_reviewed_on: 2026-10-21
+last_reviewed_on: 2026-10-22
 review_in: 12 months
 applies_to: nephilim
 ---
@@ -10,6 +10,115 @@ applies_to: nephilim
 # Lessons Learned
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
+
+## 2026-10-22 — The feature had never worked, and four days of measuring the rendering never asked whether anything was stored
+
+**The cheapest finding of the whole programme, and it came last.** Three sessions
+went into *how* memory is rendered — prose, numbered lists, self-facts, a
+citation gate, two A/Bs. Then I taught her three facts and asked in a fresh
+session. **Zero of three reached any store.**
+
+The gate was `len(db_messages) % 10 == 0`. It counted every row, and she replies
+in multi-message bubbles, so the counter stepped by 2 or 3 and hitting the
+modulo was luck rather than cadence. It also read the *pre-turn* count, so even
+when it fired the window excluded the newest turn. Enumerated across six user
+turns: **0, 3, 6, 9, 12, 16** — it fired once, at 0, on an empty transcript.
+
+So fact extraction has been close to non-functional for the life of the feature,
+which also explains the twelve July rows that describe the conversation rather
+than the operator: the rare firings caught arbitrary windows.
+
+**The lesson is not "check the gate".** It is that *I measured the renderer four
+times without once checking that the thing being rendered had ever been
+written.* Every experiment was downstream of an input I never verified. The
+honest version of "does memory work?" starts at acquisition and ends at recall,
+and I only ever tested the back half — against facts I had seeded by hand, which
+is precisely the condition that cannot reveal this.
+
+**My diagnosis was wrong twice on the way down.** I arrived certain the write
+path was disconnected from the graph; it was, but that was invisible underneath
+a store that was empty. Then I blamed extraction temperature — production runs
+0.3, I had tested 0.1 — and an A/B across 0.0/0.1/0.3 showed **7 of 9 captured
+at the live setting**. The extractor was fine. Both hypotheses were plausible,
+specific, and wrong, and the only reason I didn't ship either as the fix is that
+each one was cheap to test.
+
+**Then my own test found a second copy of the defect.** I wrote an assertion that
+no all-rows modulo may survive in the post-turn function, and it refused to pass
+— because the ADR-006 triplet path had the identical gate. Fixing only the path
+I had measured would have left that to be rediscovered the day a flag flipped.
+Fix by shape, not by file, for the third repo running.
+
+---
+
+## 2026-10-22 — I departed from the research on a measured number, which is the only honest reason to
+
+The provenance research was unambiguous: adopt a **synchronous** memory write,
+reject deferred-by-default as unevidenced, on the strength of Mem0's published
+p95 of 1.44 s and Zep's documented hours-long staleness.
+
+I measured extraction on this box: **median 5.54 s**, five reps, live model,
+live transcript — four times Mem0's figure, paid on the request thread where the
+user waits. So the write went asynchronous, against the recommendation, and the
+reason is written into the code rather than left as taste: *a borrowed constant
+is replayed against local data before it is trusted*, which this repo learned
+once already when a borrowed threshold scored 31% where a fitted one scored 57%.
+Zep's staleness came from bounded concurrent ingestion at scale; one job on one
+thread does not have it.
+
+**The symmetric lesson, from the same research pass:** ADR-021 specifies
+"interval logic first, LLM only for the remainder, never infer contradiction
+from recency". Reading Graphiti's source found the **opposite on both counts** —
+its own docstring orders it "dedupe it, date it, then apply contradictions", and
+its temporal invalidation is plain newest-wins. So our ordering is a stricter,
+unprecedented bet. It may be right; it is not borrowed, and the ADR now says so.
+
+Both directions are the same discipline: *know whether a number is yours or
+someone else's, and say which.*
+
+---
+
+## 2026-10-22 — The voice gate cannot answer the question it was asked, and that is the answer
+
+The voice question had been deferred three times with the operator's consent. I
+finally measured it, and the result needs its instrument described before its
+number:
+
+| arm | distinctiveness | attribution |
+|---|---|---|
+| OFF | 1.000 | 8/8 to gwen |
+| ON (760 tokens) | 0.875 | 7/8 to gwen, 1 to `nephilim_solace` |
+
+**No collapse.** ADR-006's EEVA/solace collapse to 0.25 does not reproduce, and
+her ON arm is *exactly* her score in the historical 8-persona ruler.
+
+**And the repo's own gate calls it a REGRESSION.** Both are true. The gate's
+`TOL = 0.01` sits against a metric whose smallest possible step is 1/8 = 0.125,
+so it cannot return "within noise" on this instrument — it must call any single
+probe flip a regression. One flip of eight is p=1.0 paired; six one-way flips
+are needed for p<0.05.
+
+**I wrote my own prediction with the same broken bar.** I claimed gwen would
+stay "within 0.01" of her OFF arm, having *already read* the research that
+spelled out the power ceiling. The claim could only ever fail. That is worse
+than being wrong about the world — it is being wrong about my own instrument
+after being told.
+
+Three things worth keeping:
+
+- **A metric's resolution is a property of the metric, and a tolerance finer
+  than it is not a stricter test, it is a broken one.**
+- The historical **0.804 is unrecoverable** — no file on disk contains it, only
+  the 0.625 ON arm. A number can be cited in four documents and still not exist.
+  Both arms had to be cut fresh.
+- The one flip went to **solace**, one of the two personas the historical
+  collapse involved. One probe is not evidence; the direction is not random
+  either. Reporting only the reassuring half would have been the easy mistake.
+
+**What I did not do:** claim the null. The catastrophic risk is ruled out; a
+subtle cost is neither ruled in nor out, and saying so is the result.
+
+---
 
 ## 2026-10-21 — Every guard I added created the next defect, and the measurement found each one
 
