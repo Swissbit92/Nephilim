@@ -33,6 +33,44 @@ Two consequences the sequencing makes concrete, both recorded in
 
 ## Next (this month)
 
+- [ ] 🔴 **A fact stated in a session shorter than 10 user turns is lost forever.**
+  Measured on production 2026-10-22, after the learning loop was fixed and
+  verified at 3/3: the extraction gate fires every
+  `MEMORY_FACT_EXTRACTION_INTERVAL` **user turns** (live value 10), and there is
+  **no session-end hook to flush on**. A six-turn conversation extracts nothing,
+  correctly, and the facts in it are never seen again.
+
+  ⚠️ **Lowering the interval is NOT the fix.** `OLLAMA_NUM_PARALLEL=1` means a
+  background extraction call is **serialised against her generation**, not
+  overlapped — so halving the interval doubles GPU contention with her replies.
+  Extraction costs a measured **median 5.54 s**; moving it off the request
+  thread removed it from the response path but not from the GPU.
+
+  The fix is a **flush on session end**, which does not exist. Candidate
+  triggers, cheapest first: the existing `/reset` and session-delete paths; a
+  last-touched sweep in the already-scheduled prewarm job; an explicit
+  end-of-conversation signal from the Telegram gateway. ⚠️ Whichever is chosen
+  must reuse `_window_since_last_firing` so the flush window and the periodic
+  window cannot drift apart — that mismatch has now been the defect **twice**.
+
+- [ ] **Measure tool-firing under the 794-token injected block.** The one axis
+  Deflanderization (arXiv 2510.13586) names and the only one still unmeasured —
+  it found richer in-character content cutting function-argument exact match
+  **0.359 → 0.226**. `scripts/research/tool_calling_vs_history.py` already
+  varies prompt content as an arm and counts `fired` per cell; adding a third
+  arm that appends `frame_numbered_facts` is a ~3-line edit to its arm tuple,
+  and it yields the hard-wall breach count free on the same tape.
+
+- [ ] **The voice question needs a better instrument, or none.** The gwen-only
+  frozen-gallery arm has 8 probes, so its smallest possible step is 1/8 = 0.125
+  and it takes **six one-way flips of eight** to reach p<0.05. The repo gate's
+  `TOL = 0.01` cannot resolve that and therefore reports REGRESSION on any
+  single flip. Options: the full-8 run (64 items for `overall`, ~65 min/arm), a
+  repeated-probe design (`run_eval` has no `--reps`), or wiring `pairwise_auc`
+  into `compute_report` — it is the designed replacement, has **chance 0.5
+  regardless of N**, and currently has **zero production callers**.
+
+
 - [x] ✅ **RETRACTED 2026-10-21 — She mirrors the operator's traits onto herself.** Did NOT replicate: 0/9 in every arm including the baseline. My single observation of "I'm vegetarian, just like you" was not a rate and is withdrawn as a motivation. Kept here as a record that it was measured and found absent. Original note: Measured 2026-10-18 after the subject fix below: asked *"do i eat meat?"* she answers **correctly** (*"No Daddy"*) and then volunteers *"I'm vegetarian, just like you."* Her card says nothing of the kind. So the fact about **him** is right and she fabricates a matching one about **herself** — a different and much milder failure than the attribution error it replaced (*"I'm vegetarian and love my plant-based diet"* as the whole answer, before each fact named Ben explicitly). ⚠️ Worth noting the frame has a second section, *"Things you have told him about yourself"*, which is currently **empty** — so there is nothing to contradict her invention. Likely the cheapest fix is populating it from the identity graph, which already holds her modelled appearance and traits, rather than another prompt instruction. Not urgent: it costs accuracy about her, never about him.
 
 - [x] ✅ **DONE 2026-10-21 — She cannot learn a new fact, and the extractor is feeding her her own words.** Both halves fixed: redaction on both extraction paths (physical, not judged), and the count cap replaced by a token budget. ⚠️ The write-policy ORDERING warning below held — the cap was accidentally protecting her by truncating the self-ingested duplicates, so redaction landed in the same change. Original finding: Both measured 2026-10-18, within hours of the curated merge, and both are consequences of taking the frame live rather than pre-existing.
