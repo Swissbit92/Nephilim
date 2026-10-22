@@ -129,3 +129,93 @@ class TestTheNewGateCannotBeSkipped:
         assert not bad, (
             f"the all-rows modulo is the defect and must not run: {bad}"
         )
+
+
+class TestTheWindowCoversTheInterval:
+    """🔴 THE SECOND ARITHMETIC MISMATCH, found the same day as the first.
+
+    With the gate fixed, it fired correctly on production and extraction still
+    returned `0 facts` — because the window handed to it was `[-20:]`, the last
+    20 MESSAGES. She replies in multi-message bubbles, so 20 messages is only
+    about 7 user turns. At an interval of 10 the window covered turns ~4-10 and
+    the facts stated in turns 1-3 had ALREADY SCROLLED OUT before the gate ever
+    fired.
+
+    Two mismatches in a row — a gate that counted the wrong thing, then a window
+    smaller than the interval it was paired with — and nothing checked either.
+    """
+
+    INTERVAL = 10
+
+    def _window(self, msgs, interval):
+        """The production slice, extracted so it can be tested directly."""
+        uidx = [i for i, m in enumerate(msgs) if m.get("role") == "user"]
+        start = uidx[-interval] if len(uidx) > interval else 0
+        return msgs[start:]
+
+    def _convo(self, turns, bubbles=lambda t: (t % 3) + 1):
+        msgs = []
+        for t in range(1, turns + 1):
+            msgs.append({"role": "user", "content": f"turn {t}"})
+            msgs += [{"role": "assistant", "content": "b"}] * bubbles(t)
+        return msgs
+
+    def test_the_old_fixed_tail_was_smaller_than_the_interval(self):
+        msgs = self._convo(11)
+        old = sum(1 for m in msgs[-20:] if m["role"] == "user")
+        assert old < self.INTERVAL, (
+            f"a 20-message tail holds {old} user turns against an interval of "
+            f"{self.INTERVAL} — the gap is never examined by anything"
+        )
+
+    def test_the_new_window_covers_the_whole_interval(self):
+        w = self._window(self._convo(11), self.INTERVAL)
+        assert sum(1 for m in w if m["role"] == "user") == self.INTERVAL
+
+    def test_no_user_turn_is_ever_skipped_across_firings(self):
+        """The property that matters: consecutive firings must tile the
+        conversation with no gap, or a fact stated in the gap is lost forever."""
+        msgs, covered = [], set()
+        for t in range(1, 41):
+            msgs.append({"role": "user", "content": f"turn {t}"})
+            msgs += [{"role": "assistant", "content": "b"}] * ((t % 3) + 1)
+            if sum(1 for m in msgs if m["role"] == "user") % self.INTERVAL == 0:
+                covered |= {m["content"] for m in self._window(msgs, self.INTERVAL)
+                            if m["role"] == "user"}
+        # turns after the final firing are pending, not lost
+        expected = {f"turn {t}" for t in range(1, 41)}
+        missed = expected - covered
+        pending = {f"turn {t}" for t in range(41 - (40 % self.INTERVAL or self.INTERVAL), 41)
+                   if 40 % self.INTERVAL}
+        assert not (missed - pending), f"turns never examined: {sorted(missed - pending)}"
+
+    def test_a_short_conversation_takes_everything(self):
+        """Below the interval there is nothing to slice off."""
+        msgs = self._convo(3)
+        assert self._window(msgs, self.INTERVAL) == msgs
+
+    def test_it_survives_a_reply_with_many_bubbles(self):
+        """The failure mode was multi-message replies. Five bubbles per turn
+        makes a fixed tail even shorter; the new window is unaffected."""
+        msgs = self._convo(12, bubbles=lambda t: 5)
+        w = self._window(msgs, self.INTERVAL)
+        assert sum(1 for m in w if m["role"] == "user") == self.INTERVAL
+        assert sum(1 for m in msgs[-20:] if m["role"] == "user") < 5
+
+    def test_the_live_code_slices_by_user_turn_not_a_fixed_tail(self):
+        import ast
+        import inspect
+        import textwrap
+
+        from coordinator.services import chat_session_service as css
+
+        tree = ast.parse(textwrap.dedent(
+            inspect.getsource(css._apply_post_turn_updates)))
+        # No live subscript may be a bare [-20:] on the message list.
+        bad = []
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Subscript):
+                src = ast.unparse(n)
+                if "all_messages_updated[-" in src or "get_messages_by_session(state.session_id)[-" in src:
+                    bad.append(src)
+        assert not bad, f"a fixed tail is back: {bad}"

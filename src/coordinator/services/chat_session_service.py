@@ -983,11 +983,31 @@ def _apply_post_turn_updates(state: ChatTurnState, deps: ChatDeps) -> None:
         # flipped: fix by SHAPE, not by file, which this repo has recorded as a
         # lesson from two other repos.
         user_turns = sum(1 for m in state.db_messages if m.get("role") == "user") + 1
+
+        def _window_since_last_firing(msgs: list, interval: int) -> list:
+            """Every message since the Nth-from-last USER turn.
+
+            🔴 ONE DEFINITION FOR BOTH EXTRACTION PATHS. A fixed `[-20:]` tail
+            is SMALLER than an interval of 10, because she replies in
+            multi-message bubbles — 20 messages is about 7 user turns. Measured
+            on production: the gate fired correctly and extraction still
+            returned `0 facts`, because the stated facts had scrolled out of the
+            window before the firing.
+
+            Consecutive firings tile the conversation with no gap, which is the
+            property that matters: a fact stated inside a gap is lost forever.
+            """
+            uidx = [i for i, m in enumerate(msgs) if m.get("role") == "user"]
+            start = uidx[-interval] if len(uidx) > interval else 0
+            return msgs[start:]
         if (deps.fact_extraction_worker and _mem.facts_enabled and state.user_id
                 and user_turns % _mem.fact_extraction_interval == 0):
             try:
                 from ..fact_extraction_worker import ExtractionJob  # noqa: PLC0415
-                recent_for_facts = deps.message_repo.get_messages_by_session(state.session_id)[-20:]
+                recent_for_facts = _window_since_last_firing(
+                    deps.message_repo.get_messages_by_session(state.session_id),
+                    _mem.fact_extraction_interval,
+                )
                 deps.fact_extraction_worker.enqueue(ExtractionJob(
                     user_id=state.user_id, messages=recent_for_facts, session_id=state.session_id
                 ))
@@ -1028,7 +1048,28 @@ def _apply_post_turn_updates(state: ChatTurnState, deps: ChatDeps) -> None:
         if deps.user_profile_repo and user_turns % fact_interval == 0:
             try:
                 all_messages_updated = deps.message_repo.get_messages_by_session(state.session_id)
-                recent_messages = all_messages_updated[-20:]
+
+                # 🔴 THE WINDOW MUST COVER THE INTERVAL, AND A FIXED TAIL DID NOT.
+                #
+                # The gate fires every `fact_interval` USER turns, but this was
+                # `[-20:]` — the last 20 MESSAGES. She replies in multi-message
+                # bubbles, so 20 messages is only ~7 user turns. At an interval
+                # of 10 the window covered turns ~4-10 and the facts in turns
+                # 1-3 had ALREADY SCROLLED OUT before the gate ever fired.
+                #
+                # Measured on production 2026-10-22, immediately after the gate
+                # fix: the gate fired correctly, the worker ran, and extraction
+                # returned `0 facts` — because the three stated facts were no
+                # longer in the window it was handed. Two arithmetic mismatches
+                # in a row, neither of which anything checked.
+                #
+                # The window is now "every message since the Nth-from-last USER
+                # turn", computed from the list itself. No stored cursor, no
+                # magic multiplier, and it cannot be smaller than the interval
+                # it is paired with.
+                recent_messages = _window_since_last_firing(
+                    all_messages_updated, fact_interval
+                )
 
                 # 🔴 OFF THE REQUEST THREAD. Extraction costs a MEASURED median
                 # 5.54 s (5 reps, live model, live transcript) and the user waits
