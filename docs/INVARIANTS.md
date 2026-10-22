@@ -2,7 +2,7 @@
 title: Invariants
 status: active
 created: 2026-10-02
-last_reviewed_on: 2026-10-17
+last_reviewed_on: 2026-10-22
 review_in: 12 months
 applies_to: nephilim
 ---
@@ -222,10 +222,42 @@ which is worse than an honest gap. It is here because the next person wiring a g
 backend needs to read it, and because an unenforceable constraint stated plainly is more
 use than one quietly omitted.
 
+## Her own words are never ingested as facts about the operator
+
+Status: active
+Statement: Assistant turns reach a fact extractor as POSITION only, never as content.
+Falsifiable: WHEN any extraction path renders a non-user turn's text into its model input THE CHECK SHALL exit 1 and name the path.
+Check: scripts/checks/no_self_ingestion.py
+
+Measured 2026-10-21, and the loop did not exist until the numbered recall frame
+made her recite stored facts at all. She said *"Eggs benedict and apple juice"*;
+the extractor read HER REPLY and wrote *"User eats eggs benedict and apple juice
+for breakfast"* as a new fact about him. After the self-facts section shipped it
+got worse in a new way — she recited her own appearance and it was filed under
+him, so `Assistant's eyes are a deep ocean blue` sat in the operator's fact
+list. **38 contaminated rows in roughly 20 minutes.**
+
+Why this is an invariant rather than a test. There are TWO extraction paths and
+both had it; fixing one would have left the other open until
+`MEMORY_FACTS_ENABLED` flipped. A third path will be added by someone who has
+not read either test — the same argument the transport invariant rests on.
+
+Why the rule is PHYSICAL rather than judged: the provenance research found Mem0
+to be the only production memory system of six carrying a speaker field, and its
+**LLM-judged** version failed in exactly this shape (roles stripped upstream of
+extraction, everything defaulting to the user — mem0ai/mem0#5642). Graphiti,
+Zep, Letta, Cognee and LangGraph carry no fact-level attribution at all. Absent
+text is a guarantee; a prompt instruction is a mitigation.
+
+Redaction also REPAIRS the pre-existing quote-span guard rather than duplicating
+it: `_validate` checked the quote against a transcript that INCLUDED her turns,
+so a lifted quote passed with full verbatim-supported credentials while
+`subject: "self"` mapped to the USER's entity.
+
 ## Nothing is built that no competency question demands
 
 Status: active
-Statement: Every label and relationship type in `src/coordinator/graph_surface.py` is declared there and built by the Cypher in the three graph-writing modules, in both directions. Every one of them is either demanded by a competency question in the ecosystem question set, or carries a `MECHANISM_EXEMPTIONS` entry naming the write-semantics hazard it prevents.
+Statement: Every label and relationship type in `src/coordinator/graph_surface.py` is declared there and built by the Cypher in the SEVEN graph-writing modules listed in `CYPHER_SOURCES`, in both directions. (It was three; `operator_fact_repository.py` and `episode_repository.py` joined on 2026-10-21, and `graph_queries.py` and `scripts/research/identity_ab.py` before them.) Every one of them is either demanded by a competency question in the ecosystem question set, or carries a `MECHANISM_EXEMPTIONS` entry naming the write-semantics hazard it prevents.
 Falsifiable: WHEN a label or relationship type appears in a Cypher literal and not in `graph_surface`, OR is declared there and no Cypher builds it, THE CHECK SHALL exit 1 and name it. The question-set half is enforced by `docs/architecture/competency_questions/check.py` in the ecosystem repo, which exits 1 on a built name that is neither demanded nor exempted, and exits 2 — not 0 — when it cannot read `graph_surface` at all.
 Check: scripts/checks/the_built_graph_surface_is_declared.py
 

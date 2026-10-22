@@ -2,12 +2,62 @@
 title: Companion memory and continuity (eval-first)
 status: Accepted
 created: 2026-06-27
-last_reviewed_on: 2026-10-17
+last_reviewed_on: 2026-10-22
 review_in: 12 months
 applies_to: nephilim
 ---
 
 # ADR-006: Companion memory and continuity (eval-first)
+
+## AMENDMENT 2026-10-22 — the injection line is OPEN, and the number that closed it is unrecoverable
+
+This ADR says, in several places and in capitals, that the memory-injection
+line is **CLOSED** and that prompt-framing must not be re-attempted. Both halves
+need qualifying.
+
+**The instruction was obeyed in letter.** No fourth prose reframing was tried.
+What shipped instead was a *numbered list with a find-it-first instruction* —
+measured at fabrication 0.875 → 0.000 — and then a second section carrying her
+own appearance. Neither is prose reframing, and the measured results are the
+reason they shipped.
+
+**But the line is open in substance.** Injected memory reaches her prompt on
+every turn when the flags are on: 760 tokens, 36 operator facts plus 8
+self-facts. A reader finding "CLOSED" here would conclude the opposite of the
+live state.
+
+🔴 **The number that closed it cannot be reproduced.** The headline chain
+0.804 → 0.661 → 0.625 came from `attribution_accuracy`, and **only the 0.625 ON
+arm survives on disk** — no file contains 0.804 or 0.661, and the surviving arm
+carries no manifest. The protocol is reproducible; the comparison is not. Worse,
+it was a **7-persona** run (chance 0.1429) while the only committed ruler is
+8-persona (chance 0.125), and this repo's own eval doc warns those are different
+rulers that must not share a sentence.
+
+**What was measured instead, on 2026-10-22**, two fresh gwen-only
+frozen-gallery arms, chance 0.125 both:
+
+| arm | distinctiveness | attribution |
+|---|---|---|
+| OFF | 1.000 | 8/8 to gwen |
+| ON | 0.875 | 7/8 to gwen, 1 to `nephilim_solace` |
+
+**No collapse.** The EEVA/solace collapse to 0.25 recorded here does not
+reproduce for gwen, and her ON arm is exactly her score in the 8-persona ruler.
+⚠️ The repo gate still reports REGRESSION, because `TOL = 0.01` against a metric
+whose smallest step is 0.125 cannot return "within noise". One flip of eight is
+p=1.0. A subtle cost is neither ruled in nor out.
+
+⚠️ And the single flip went to **solace** — one of the two personas this ADR
+records collapsing. One probe is not evidence; the direction is not random
+either. Both belong in the record.
+
+**Also superseded here:** this ADR's rejection of Neo4j *for the fact store* no
+longer stands. The operator's facts live in `(:Fact)-[:ABOUT]->(:Operator)` as
+of 2026-10-21, with `origin` and `asserted_by`. Read ADR-021 and its 2026-10-22
+amendment before acting on the rejection below.
+
+---
 
 ## Status
 
