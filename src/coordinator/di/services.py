@@ -36,6 +36,7 @@ _fact_extractor: FactExtractor | None = None
 # ADR-006 Phase 1 (M3/M4): ontology-lite fact store + async extraction worker
 _memory_fact_repo = None        # Optional[MemoryFactRepository] (shared read/write)
 _fact_extraction_worker = None  # Optional[FactExtractionWorker]
+_operator_fact_worker = None  # Optional[OperatorFactWorker] — ADR-021 write path
 
 # HERMES-Agents Phase 3: deterministic tool-call interceptor (stateless singleton)
 _tool_interceptor = None
@@ -77,6 +78,57 @@ def get_episodic_memory_rag() -> EpisodicMemoryRAG | None:
 def get_fact_extractor() -> FactExtractor | None:
     """Get the fact extractor."""
     return _fact_extractor
+
+
+def get_operator_fact_worker():
+    """The ADR-021 operator-fact worker, or None when the flag is off."""
+    return _operator_fact_worker
+
+
+def init_operator_fact_worker():
+    """Start the worker that writes operator facts to the graph, OFF the turn.
+
+    Gated on `MEMORY_FACTS_FROM_GRAPH` — the same flag that makes the read path
+    use the graph. Reading from the graph while writing only to SQLite is the
+    defect this closes, so one flag governing both halves is deliberate: there
+    is no valid configuration where they disagree.
+
+    ⚠️ Extraction costs a MEASURED median 5.54 s (5 reps, live model, live
+    transcript) and used to run inline on the request thread. The research
+    recommends a synchronous write on the strength of Mem0's p95 of 1.44 s; this
+    box measures 4x that, and the repo's standing rule is to replay a borrowed
+    constant against local data before trusting it. So the write is async here,
+    as a departure recorded on a local measurement rather than a preference.
+    """
+    global _operator_fact_worker
+    from ..config import get_settings
+
+    if not get_settings().memory.facts_from_graph:
+        _operator_fact_worker = None
+        return None
+    try:
+        from ..services.operator_fact_worker import OperatorFactWorker
+        from ..services.operator_fact_writer import make_handler
+
+        def _repo():
+            cfg = get_settings().graph
+            driver = get_neo4j_driver() if cfg.enabled else None
+            if driver is None:
+                return None
+            from ..repositories.operator_fact_repository import (
+                OperatorFactRepository,
+            )
+
+            return OperatorFactRepository(driver, cfg.database)
+
+        _operator_fact_worker = OperatorFactWorker(
+            make_handler(_repo, get_settings)
+        )
+        _operator_fact_worker.start()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[OperatorFactWorker] init failed (non-fatal): %s", e)
+        _operator_fact_worker = None
+    return _operator_fact_worker
 
 
 def get_fact_extraction_worker():
