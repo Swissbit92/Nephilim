@@ -51,15 +51,15 @@ sys.path.insert(0, os.path.abspath(ROOT))
 #: Deliberately unusual, so a hit cannot come from the base model's priors.
 #: (statement to make, question to ask later, keys that count as recalled)
 TAUGHT = [
-    ("my favourite band is Harrowgate Lantern",
+    ("my favourite band is Marrowfield Drift",
      "what's my favourite band?",
-     ("harrowgate", "lantern")),
-    ("i've started fencing on thursday mornings",
-     "what do i do on thursday mornings?",
-     ("fencing", "fence")),
-    ("my dog is called Tulliver",
+     ("marrowfield", "drift")),
+    ("i've started pottery on friday nights",
+     "what do i do on friday nights?",
+     ("pottery", "potter")),
+    ("my dog is called Wickham",
      "what's my dog called?",
-     ("tulliver",)),
+     ("wickham",)),
 ]
 
 #: NEVER told to her, and chosen to share NO SUBJECT with any stored fact.
@@ -147,10 +147,28 @@ def teach(sid=None):
         reply = say(sid, statement)
         print(f"  said: {statement}")
         print(f"   ->   {reply[:100]}")
-    # Extraction runs every N messages; pad so the interval is crossed.
-    for filler in ("tell me something nice", "mm", "go on"):
+    # ⚠️ PAD PAST THE CONFIGURED INTERVAL, which is the real one on production.
+    #
+    # The gate fires every `MEMORY_FACT_EXTRACTION_INTERVAL` USER turns, and
+    # production runs 10. A 6-turn teaching session therefore extracts NOTHING,
+    # correctly — measured on production 2026-10-22, 0/3 stored with the gate
+    # behaving exactly as configured.
+    #
+    # 🔴 THAT IS A REAL PRODUCT GAP, not a harness artifact: a conversation
+    # shorter than 10 user turns loses its facts entirely, because there is no
+    # session-end hook to flush on. Lowering the interval is NOT the fix —
+    # OLLAMA_NUM_PARALLEL=1 means a background extraction is serialised against
+    # her generation, so halving the interval doubles GPU contention with her
+    # replies. The fix is a flush on session end, which does not exist yet.
+    #
+    # So this harness pads to 11 user turns to test the DEPLOYED configuration
+    # rather than a convenient one.
+    fillers = ("tell me something nice", "mm", "go on", "and?", "nice",
+               "keep going", "mhm", "ok")
+    for filler in fillers:
         say(sid, filler)
-    print("  (padded to cross the extraction interval)")
+    print(f"  (padded with {len(fillers)} fillers -> "
+          f"{3 + len(fillers)} user turns, past the interval of 10)")
     return sid
 
 
