@@ -1,0 +1,450 @@
+{
+  "_comment": "FROZEN 2026-10-23. THE GOLD SET IS REAL DATA, NOT INVENTED CASES -- every fact below was actually written to the live store by the extractor, and the 10  ones are the probe-made facts that produced the measured defect (she answered 'Marrowfield Drift' from a superseded probe). A detector validated only on cases I wrote is a recorded failure mode in this repo, which is why the labels are attached to real rows. The PAIR labels are hand-assigned and are the whole point: the hard part is not finding the contradictions, it is NOT flagging the look-alikes.",
+  "frozen_on": "2026-10-23",
+  "operator_id": "user_be5d9dbe",
+  "facts": [
+    {
+      "id": "01M5F0VF53WNYVE24XNDJ2ANWP",
+      "text": "His name is Ben and he prefers to be called that",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:00.995884+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF5NY8PVTTQFA7ZHZYX6",
+      "text": "Ben is vegetarian and does not eat meat",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.013120+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF5QP04Z5Q1CBA6FWY83",
+      "text": "Ben enjoys eggs benedict and apple juice for breakfast",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.015242+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF5R92Q079AZ0PMJAJ28",
+      "text": "Ben prefers Celsius for temperature",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.016896+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF5TZJSGWENWHNC5MF1K",
+      "text": "Ben likes gaming, especially RPGs like Witcher 3 and Cyberpunk 2077",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.018207+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF5VTHGGCGES4P9GRKB9",
+      "text": "Ben plays GTA 5",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.019596+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF5WWBEM22ESH04AWQWV",
+      "text": "Ben reads general-interest books such as Animal Farm and Jordan Peterson's 12 Rules for Life",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.020565+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF5XSAD2TR3C83VZEEMX",
+      "text": "Ben goes to the gym",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.021604+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF5ZV4JNK0JCATCCNKQM",
+      "text": "Ben enjoys beach activities and reading on the beach",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.023072+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF60A69R7FBR1SHVBPW6",
+      "text": "Ben bought 2.5 BTC in 2021 and is a long-term holder",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.024182+00:00",
+      "key": "btc_bought"
+    },
+    {
+      "id": "01M5F0VF619MV95QXHABZ8JYCT",
+      "text": "Ben holds about 2 BTC now",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.025696+00:00",
+      "key": "btc_holds"
+    },
+    {
+      "id": "01M5F0VF63VK17D0KJJ80DFRRX",
+      "text": "Ben sold his car in June or July 2026",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.027378+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF64A775J6Z3C90E6MGC",
+      "text": "Ben gets anxious when markets drop sharply",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.028435+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF650R5J5N92FF16ACBP",
+      "text": "Ben wants to optimise his tax position on Bitcoin gains",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.029535+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF66096236X0JNM3BXB6",
+      "text": "Ben was deciding between a Ledger Nano X and a Trezor Model T as his first hardware wallet",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.030901+00:00",
+      "key": "wallet_choice"
+    },
+    {
+      "id": "01M5F0VF677MDB1E8CD48HD224",
+      "text": "Ben is thinking about quitting his job to start his own business",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.031898+00:00",
+      "key": "quit_long"
+    },
+    {
+      "id": "01M5F0VF69W10DEYMMMGMSEHFM",
+      "text": "Ben is concerned about an eight-month money runway",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.033129+00:00",
+      "key": "runway_long"
+    },
+    {
+      "id": "01M5F0VF6AXR0B0WYCERP34G17",
+      "text": "Ben's family thinks quitting would be reckless",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.034460+00:00",
+      "key": "family_long"
+    },
+    {
+      "id": "01M5F0VF6B94X3RWM56MDRZ9M6",
+      "text": "Ben is analysing a dataset at work and finds the pattern elusive but close",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.035414+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF6CA4PM6F65QWN5KAFY",
+      "text": "Ben often feels misunderstood",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.036358+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF6DY0GV1ASNG3V4W4YF",
+      "text": "Ben likes to be in control during sex",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.037321+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF6ERMS2WHSKKKP8DHXS",
+      "text": "Ben prefers sex at home",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.038502+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF6FPCT9YVRDADNGCPP7",
+      "text": "Ben has a preference for deep-throating and being dominated",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.039504+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF6GZADH4Q0EVVDMAKFS",
+      "text": "Ben likes rough, intense and primal sex",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.040477+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF6HEX1SRD4GFZCGSRBE",
+      "text": "Ben is into deepthroating and anal",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.041424+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF6J5NQTG8ZE3WR5A5TZ",
+      "text": "Ben enjoys being watched during sex",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.042865+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF6K2E06XERXD1JKMWQ3",
+      "text": "Ben enjoys detailed, explicit and lewd descriptions",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.043933+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF6MW2FC1GPY28FCT1QY",
+      "text": "Ben is into fantasies involving big black cocks",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.044965+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF6NBRGG03AR79C2WW5T",
+      "text": "Ben likes to be called Daddy during sex",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.045969+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF6PD0CE80T87EMAMEVB",
+      "text": "Ben enjoys romantic and intimate activities alongside explicit ones",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.046910+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF6RXCSHS5V0YCDMGRX8",
+      "text": "Ben wanted to buy her a red dress and high heels",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.048049+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5F0VF6S2JYDN2ZWS4QD1RQF",
+      "text": "Ben is in a romantic relationship with her and talks about a future together",
+      "asserted_by": "operator_curated",
+      "retired": false,
+      "created_at": "2026-10-21T10:42:01.049043+00:00",
+      "key": null
+    },
+    {
+      "id": "01M5HKEAR87YZD0F87XR51R7F0",
+      "text": "The user's favorite band is The Rusted Compass",
+      "asserted_by": "user",
+      "retired": true,
+      "created_at": "2026-10-22T10:45:22.312173+00:00",
+      "key": "band_rusted"
+    },
+    {
+      "id": "01M5HKEARXRJ71BAXRS2F52FVJ",
+      "text": "The user's cat is called Pemberton",
+      "asserted_by": "user",
+      "retired": true,
+      "created_at": "2026-10-22T10:45:22.333805+00:00",
+      "key": "cat_pemberton"
+    },
+    {
+      "id": "01M5HKTZDWS4BYKMFZG7CDD4NR",
+      "text": "The user practices fencing on Thursday mornings",
+      "asserted_by": "user",
+      "retired": true,
+      "created_at": "2026-10-22T10:52:16.700210+00:00",
+      "key": "hobby_fencing"
+    },
+    {
+      "id": "01M5HKTZE3VRHX4W6P0MQ41JYR",
+      "text": "The user has a dog named Tulliver",
+      "asserted_by": "user",
+      "retired": true,
+      "created_at": "2026-10-22T10:52:16.707468+00:00",
+      "key": "dog_tulliver"
+    },
+    {
+      "id": "01M5HMCJMDE4D50FKRRCNR1NZH",
+      "text": "Money runway of 8 months",
+      "asserted_by": "user",
+      "retired": false,
+      "created_at": "2026-10-22T11:01:53.421523+00:00",
+      "key": "runway_short"
+    },
+    {
+      "id": "01M5HMCJMKFRNJN1A4NHXR80SF",
+      "text": "Considering quitting job to start own venture",
+      "asserted_by": "user",
+      "retired": false,
+      "created_at": "2026-10-22T11:01:53.427939+00:00",
+      "key": "quit_short"
+    },
+    {
+      "id": "01M5HMCJMQFEZPC41G60QK0K94",
+      "text": "Has a family that thinks the decision is reckless",
+      "asserted_by": "user",
+      "retired": false,
+      "created_at": "2026-10-22T11:01:53.432008+00:00",
+      "key": "family_short"
+    },
+    {
+      "id": "01M5HPP7453YW10APR170QDVR5",
+      "text": "The user's favourite band is Marrowfield Drift",
+      "asserted_by": "user",
+      "retired": true,
+      "created_at": "2026-10-22T11:42:06.469851+00:00",
+      "key": "band_marrowfield"
+    },
+    {
+      "id": "01M5HPP74D9710CS6H0QXJSE1A",
+      "text": "The user's dog is called Wickham",
+      "asserted_by": "user",
+      "retired": true,
+      "created_at": "2026-10-22T11:42:06.477511+00:00",
+      "key": "dog_wickham"
+    },
+    {
+      "id": "01M5HPP74HJB26VBJ0Z5GX61BG",
+      "text": "The user has started pottery on Friday nights",
+      "asserted_by": "user",
+      "retired": true,
+      "created_at": "2026-10-22T11:42:06.481485+00:00",
+      "key": "hobby_pottery"
+    },
+    {
+      "id": "01M5MXRKN6D48PAT2395RBTY2R",
+      "text": "Favorite band is Halloway Verge",
+      "asserted_by": "user",
+      "retired": true,
+      "created_at": "2026-10-23T17:43:28.166472+00:00",
+      "key": "band_halloway"
+    },
+    {
+      "id": "01M5MXRKNZB905720F609WQS83",
+      "text": "Has a tortoise named Pennyworth",
+      "asserted_by": "user",
+      "retired": true,
+      "created_at": "2026-10-23T17:43:28.191938+00:00",
+      "key": "tortoise_pennyworth"
+    },
+    {
+      "id": "01M5MXRKP3CZB12XHBPM9ZV7M3",
+      "text": "Started falconry on Saturday mornings",
+      "asserted_by": "user",
+      "retired": true,
+      "created_at": "2026-10-23T17:43:28.195361+00:00",
+      "key": "hobby_falconry"
+    }
+  ],
+  "pairs": [
+    {
+      "a": "band_rusted",
+      "b": "band_marrowfield",
+      "label": "contradiction",
+      "why": "favourite band is single-valued; two different bands cannot both be it"
+    },
+    {
+      "a": "band_rusted",
+      "b": "band_halloway",
+      "label": "contradiction",
+      "why": "same"
+    },
+    {
+      "a": "band_marrowfield",
+      "b": "band_halloway",
+      "label": "contradiction",
+      "why": "same"
+    },
+    {
+      "a": "dog_tulliver",
+      "b": "dog_wickham",
+      "label": "contradiction",
+      "why": "THE dog's name is single-valued. Jaccard 0.20 -- lexical similarity CANNOT see this"
+    },
+    {
+      "a": "hobby_fencing",
+      "b": "hobby_pottery",
+      "label": "compatible",
+      "why": "MULTI-VALUED predicate: a person can have many hobbies on different days. A 'same predicate -> contradiction' rule destroys these"
+    },
+    {
+      "a": "hobby_fencing",
+      "b": "hobby_falconry",
+      "label": "compatible",
+      "why": "same"
+    },
+    {
+      "a": "hobby_pottery",
+      "b": "hobby_falconry",
+      "label": "compatible",
+      "why": "same"
+    },
+    {
+      "a": "btc_bought",
+      "b": "btc_holds",
+      "label": "compatible",
+      "why": "TEMPORAL EVOLUTION, not contradiction: bought 2.5 in 2021, holds ~2 now. He sold some. Both are true and both are worth keeping"
+    },
+    {
+      "a": "cat_pemberton",
+      "b": "dog_wickham",
+      "label": "compatible",
+      "why": "DIFFERENT SUBJECTS (cat vs dog). My own word-overlap sweep scored this pair 0.50 and flagged it as the store's only near-duplicate -- a false positive, while missing the real dog contradiction at 0.20"
+    },
+    {
+      "a": "cat_pemberton",
+      "b": "tortoise_pennyworth",
+      "label": "compatible",
+      "why": "different animals"
+    },
+    {
+      "a": "quit_long",
+      "b": "quit_short",
+      "label": "paraphrase",
+      "why": "same claim, different words. Superseding either loses nothing but flagging it as a contradiction would retire a TRUE fact"
+    },
+    {
+      "a": "runway_long",
+      "b": "runway_short",
+      "label": "paraphrase",
+      "why": "same claim"
+    },
+    {
+      "a": "family_long",
+      "b": "family_short",
+      "label": "paraphrase",
+      "why": "same claim"
+    }
+  ],
+  "notes": {
+    "wallet_choice": "'deciding between a Ledger Nano X and a Trezor Model T' is ONE fact naming two options. An object-splitting detector could read it as two conflicting wallet facts. No pair label, because it must never become a pair at all."
+  }
+}
