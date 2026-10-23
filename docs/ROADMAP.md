@@ -86,11 +86,37 @@ Two consequences the sequencing makes concrete, both recorded in
   persisted, so an unflushed session is picked up by the first sweep after
   restart.
 
-- [ ] 🔴 **Two contradictory facts about the same thing coexist in the store, and both reach her prompt.**
-  Found 2026-10-23 while measuring something else. The live store holds *both*
-  "The user has a dog named Tulliver" and "The user's dog is called Wickham",
-  both `asserted_by=user`, both `origin=learned`, both **current**, and both
-  injected every turn as numbered facts. She will assert one of them at random.
+- [ ] 🔴 **Contradictory facts coexist in the store, reach her prompt, and DEMONSTRABLY produce wrong answers.**
+  Found 2026-10-23 while measuring something else, then confirmed to be
+  user-visible during the post-deploy verification. Two live groups:
+
+  | subject | coexisting current facts |
+  |---|---|
+  | favourite band | "The user's favorite band is The Rusted Compass" · "The user's favourite band is Marrowfield Drift" · "Favorite band is Halloway Verge" |
+  | dog | "The user has a dog named Tulliver" · "The user's dog is called Wickham" |
+
+  All `asserted_by=user`, all `origin=learned`, all **current**, all injected
+  every turn as numbered facts. ⚠️ **This is not theoretical.** Asked "what's my
+  favorite band?" she answered **"Marrowfield Drift"** — confidently, and from a
+  superseded test run. Asked with the British spelling she refused. One question,
+  three stored answers, and the reply depends on phrasing.
+
+  ⚠️ **Partly self-inflicted and worth saying so:** the three band facts come
+  from three successive learning-verification runs of mine. The test fact sets
+  were deliberately unusual so a hit could not come from priors, but nothing
+  retired the previous set, so each run left a contradiction behind. **Cleaning
+  up the test-made facts is a prerequisite for trusting any future recall
+  measurement**, and the recall arm of the 2026-10-23 verification scored 2/3
+  purely because of this (all three facts were present in the rendered block).
+
+  **The fix has two halves, and only the second is research.** (a) Retire the
+  superseded test facts — `OperatorFactRepository.invalidate_fact` already
+  exists and `origin`/`source_session_id` identify them, so this is a script,
+  not a design. (b) Detect the shape going forward: the writer's `_norm` exact
+  containment cannot, and neither can similarity — group by subject+predicate
+  and compare objects. ADR-021 owns the embedding half; ⚠️ its contradiction
+  ordering is **not** resolving these today, which is itself a finding against
+  that ADR's write path.
 
   ⚠️ **A near-duplicate check cannot find this, and mine did not.** I ran a
   word-overlap sweep and reported the store clean on the strength of it; the two
