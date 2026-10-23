@@ -24,6 +24,7 @@ from fastapi import HTTPException
 
 from ..config import get_settings
 from ..context_framing import frame_injected_context, frame_numbered_facts
+from .fact_window import window_since_last_firing
 from .operator_fact_worker import FactJob
 from ..memory_fact_retrieval import render_facts_narrative, select_facts_for_injection
 
@@ -983,28 +984,11 @@ def _apply_post_turn_updates(state: ChatTurnState, deps: ChatDeps) -> None:
         # flipped: fix by SHAPE, not by file, which this repo has recorded as a
         # lesson from two other repos.
         user_turns = sum(1 for m in state.db_messages if m.get("role") == "user") + 1
-
-        def _window_since_last_firing(msgs: list, interval: int) -> list:
-            """Every message since the Nth-from-last USER turn.
-
-            🔴 ONE DEFINITION FOR BOTH EXTRACTION PATHS. A fixed `[-20:]` tail
-            is SMALLER than an interval of 10, because she replies in
-            multi-message bubbles — 20 messages is about 7 user turns. Measured
-            on production: the gate fired correctly and extraction still
-            returned `0 facts`, because the stated facts had scrolled out of the
-            window before the firing.
-
-            Consecutive firings tile the conversation with no gap, which is the
-            property that matters: a fact stated inside a gap is lost forever.
-            """
-            uidx = [i for i, m in enumerate(msgs) if m.get("role") == "user"]
-            start = uidx[-interval] if len(uidx) > interval else 0
-            return msgs[start:]
         if (deps.fact_extraction_worker and _mem.facts_enabled and state.user_id
                 and user_turns % _mem.fact_extraction_interval == 0):
             try:
                 from ..fact_extraction_worker import ExtractionJob  # noqa: PLC0415
-                recent_for_facts = _window_since_last_firing(
+                recent_for_facts = window_since_last_firing(
                     deps.message_repo.get_messages_by_session(state.session_id),
                     _mem.fact_extraction_interval,
                 )
@@ -1067,7 +1051,7 @@ def _apply_post_turn_updates(state: ChatTurnState, deps: ChatDeps) -> None:
                 # turn", computed from the list itself. No stored cursor, no
                 # magic multiplier, and it cannot be smaller than the interval
                 # it is paired with.
-                recent_messages = _window_since_last_firing(
+                recent_messages = window_since_last_firing(
                     all_messages_updated, fact_interval
                 )
 
