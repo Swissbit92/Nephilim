@@ -1,0 +1,97 @@
+{
+  "btc_bought": {
+    "slot": "crypto:btc",
+    "value": "2.5 BTC",
+    "single_valued": false
+  },
+  "btc_holds": {
+    "slot": "holds:BTC",
+    "value": "2",
+    "single_valued": false
+  },
+  "wallet_choice": {
+    "slot": "opinion:hardware_wallet",
+    "value": "Ledger Nano X and Trezor Model T",
+    "single_valued": false
+  },
+  "quit_long": {
+    "slot": "job:plan",
+    "value": "start his own business",
+    "single_valued": false
+  },
+  "runway_long": {
+    "slot": "concerned_about",
+    "value": "eight-month money runway",
+    "single_valued": false
+  },
+  "family_long": {
+    "slot": "opinion:family",
+    "value": "quitting would be reckless",
+    "single_valued": false
+  },
+  "band_rusted": {
+    "slot": "favourite:band",
+    "value": "The Rusted Compass",
+    "single_valued": false
+  },
+  "cat_pemberton": {
+    "slot": "pet:cat",
+    "value": "Pemberton",
+    "single_valued": false
+  },
+  "hobby_fencing": {
+    "slot": "hobby",
+    "value": "fencing on Thursday mornings",
+    "single_valued": false
+  },
+  "dog_tulliver": {
+    "slot": "pet:dog",
+    "value": "Tulliver",
+    "single_valued": false
+  },
+  "runway_short": {
+    "slot": "financial:runway",
+    "value": "8 months",
+    "single_valued": true
+  },
+  "quit_short": {
+    "slot": "opinion",
+    "value": "Considering quitting job to start own venture",
+    "single_valued": false
+  },
+  "family_short": {
+    "slot": "family:opinion",
+    "value": "reckless",
+    "single_valued": false
+  },
+  "band_marrowfield": {
+    "slot": "favourite:band",
+    "value": "Marrowfield Drift",
+    "single_valued": false
+  },
+  "dog_wickham": {
+    "slot": "pet:dog",
+    "value": "Wickham",
+    "single_valued": false
+  },
+  "hobby_pottery": {
+    "slot": "hobby",
+    "value": "pottery on Friday nights",
+    "single_valued": false
+  },
+  "band_halloway": {
+    "slot": "favourite:band",
+    "value": "Halloway Verge",
+    "single_valued": false
+  },
+  "tortoise_pennyworth": {
+    "slot": "pet:tortoise",
+    "value": "Pennyworth",
+    "single_valued": false
+  },
+  "hobby_falconry": {
+    "slot": "hobby",
+    "value": "falconry on Saturday mornings",
+    "single_valued": false
+  }
+}
