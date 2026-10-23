@@ -113,6 +113,87 @@ class EpisodeRepository:
             )
         return episode_id
 
+    def fact_cursor(self, operator_id: str, session_id: str) -> Optional[dict]:
+        """The high-water mark for fact extraction on this session, or None.
+
+        Returns `{"at": <timestamp>, "message_id": <id>}`. `None` means this
+        session has never had a successful extraction, and the caller should
+        treat the whole transcript as uncovered.
+
+        A `read()`, projecting named scalars rather than the node, per the
+        `graph_driver` contract.
+        """
+        rows = read(
+            self._driver,
+            """
+            MATCH (e:Episode {operator_id: $operator_id, session_id: $session_id})
+            WHERE e.fact_cursor_at IS NOT NULL
+            RETURN e.fact_cursor_at         AS at,
+                   e.fact_cursor_message_id AS message_id
+            LIMIT 1
+            """,
+            self._database,
+            operator_id=operator_id, session_id=session_id,
+        )
+        if not rows:
+            return None
+        return {"at": rows[0]["at"], "message_id": rows[0].get("message_id") or ""}
+
+    def advance_fact_cursor(self, operator_id: str, session_id: str, *,
+                            cursor_at: str, cursor_message_id: str = "",
+                            message_count: int = 0, persona_key: str = "",
+                            started_at: str = "") -> str:
+        """Move this session's fact-extraction high-water mark.
+
+        ⚠️ `write()`, NOT `read()`. A Cypher `SET` under a read transaction
+        fails with "Writing in read access mode not allowed" — already hit once
+        in this repo on `invalidate_fact`. `write()` returns rows too, so there
+        is no reason to reach for `read()` here.
+
+        ⚠️ `started_at` IS `ON CREATE` ONLY, UNLIKE `record_episode`, WHICH SETS
+        IT UNCONDITIONALLY. 229 `:Episode` nodes already carry a correct
+        `started_at` from `scripts/utils/backfill_episodes.py`. A flush knows
+        only its own window and would overwrite that with the window's first
+        message — corrupting the history of every session it touches. The
+        asymmetry is deliberate and is pinned by a test.
+
+        ⚠️ THIS REPOSITORY IS DUMB ABOUT MONOTONICITY, ON PURPOSE. It writes
+        whatever `cursor_at` it is given, including one that moves backwards.
+        Refusing a rewind here would put the compare-and-advance in the wrong
+        place: it has to happen at the single consumer (the worker thread),
+        which re-reads the stored cursor at execution time. Putting it at the
+        enqueue site, or splitting it across both, is exactly the shape of
+        Mem0 #6515's TOCTOU race. The responsibility boundary is pinned by a
+        test asserting the repo accepts a rewind.
+
+        `$operator_id` appears in the MERGE pattern AND in the parameters,
+        for the reason `link_chronology` already documents: `guarded_write` can
+        only refuse a write whose owner it can read off the parameters.
+        """
+        stamp = now_iso()
+        rows = write(
+            self._driver,
+            """
+            MERGE (e:Episode {operator_id: $operator_id, session_id: $session_id})
+              ON CREATE SET e.episode_id = $episode_id,
+                            e.created_at = $stamp,
+                            e.started_at = $started_at
+            SET e.fact_cursor_at         = $cursor_at,
+                e.fact_cursor_message_id = $cursor_message_id,
+                e.message_count          = $message_count,
+                e.persona_key            = $persona_key,
+                e.last_touched           = $stamp
+            RETURN e.episode_id AS episode_id
+            """,
+            self._database,
+            operator_id=operator_id, session_id=session_id,
+            episode_id=new_id(), cursor_at=cursor_at,
+            cursor_message_id=cursor_message_id or "",
+            message_count=int(message_count), persona_key=persona_key or "",
+            started_at=started_at or cursor_at, stamp=stamp,
+        )
+        return rows[0]["episode_id"] if rows else ""
+
     def link_chronology(self, operator_id: str) -> int:
         """Build the `CONTINUES` chain in `started_at` order. Returns edges made.
 
@@ -176,6 +257,8 @@ class EpisodeRepository:
                    e.ended_at      AS ended_at,
                    e.message_count AS message_count,
                    e.persona_key   AS persona_key,
+                   e.last_touched  AS last_touched,
+                   e.fact_cursor_at AS fact_cursor_at,
                    prev.session_id AS continues_session_id
             ORDER BY e.started_at DESC
             LIMIT $limit
