@@ -123,7 +123,7 @@ def _shutdown() -> None:
 
 # ----------------- FastAPI App -----------------
 
-app = FastAPI(title="Local Coordinator (Chat-only)", version="0.9.2", lifespan=lifespan)
+app = FastAPI(title="Local Coordinator (Chat-only)", version="0.9.3", lifespan=lifespan)
 
 # Add CORS middleware
 app.add_middleware(
