@@ -25,6 +25,7 @@ from ..schemas import (
 )
 from ..services import media_storage, persona_lines
 from ..services.media_fixture import build_probe_png
+from ..services.session_flush_service import flush_session_facts
 from ..services.media_storage import MediaStorageError
 
 router = APIRouter(tags=["sessions"])
@@ -142,14 +143,20 @@ def delete_session(session_id: str):
     if not session_repo.session_exists(session_id):
         raise HTTPException(status_code=404, detail="Session not found.")
 
-    # Media first: the FK cascade removes the session_media_dirs ROW but cannot
+    # 🔴 FLUSH FIRST, BEFORE ANYTHING CAN FAIL. Deleting a session discards
+    # every fact stated in it, and the FK cascade takes the messages with it.
+    # Placed ahead of the media quarantine on purpose: a filesystem failure
+    # there must not be able to prevent the extraction.
+    flush_status = flush_session_facts(session_id, reason="delete")
+
+    # Media next: the FK cascade removes the session_media_dirs ROW but cannot
     # touch the filesystem, so deleting the session first would orphan the
     # directory with nothing left able to name it.
     images = _quarantine_session_media(session_id)
 
     # Delete session (messages will be cascade deleted)
     session_repo.delete_session(session_id)
-    return {"ok": True, "images": images}
+    return {"ok": True, "images": images, "facts_flushed": flush_status}
 
 
 @router.post("/sessions/{session_id}/messages")
@@ -236,6 +243,19 @@ def clear_session_messages(session_id: str):
     if not session_repo.session_exists(session_id):
         raise HTTPException(status_code=404, detail="Session not found.")
 
+    # 🔴 FLUSH BEFORE THE ROWS GO. /reset is the one moment a conversation is
+    # explicitly declared over, and the extraction gate only fires every
+    # MEMORY_FACT_EXTRACTION_INTERVAL user turns — measured 2026-10-23, 287 of
+    # 292 real sessions (98.3%) never reach 10 user turns, so almost every
+    # conversation that actually happens loses its facts here.
+    #
+    # The job carries the message rows BY VALUE, so deleting them immediately
+    # after is safe; the ordering requirement is against the READ. A flush
+    # placed after the delete reads an empty transcript and still reports
+    # success, which is why an AST order pin guards this line rather than a
+    # behavioural test.
+    flush_status = flush_session_facts(session_id, reason="reset")
+
     # Delete all messages for this session
     message_repo.delete_messages_by_session(session_id)
 
@@ -249,6 +269,10 @@ def clear_session_messages(session_id: str):
 
     # Update session updated_at timestamp
     session_repo.update_session_timestamp(session_id)
+
+    # Named, never silent: a flush that quietly did nothing must be
+    # distinguishable from one that worked. Both clients ignore extra keys.
+    cleared["facts_flushed"] = flush_status
 
     return {"ok": True, "cleared": cleared}
 
