@@ -2,7 +2,7 @@
 title: Threat Level
 status: active
 created: 2026-07-04
-last_reviewed_on: 2026-07-19
+last_reviewed_on: 2026-10-23
 review_in: 6 months
 applies_to: nephilim
 threat_level: Low
@@ -85,6 +85,7 @@ influencing a tool call** — see Accepted risks.
 Risks accepted for now, with rationale:
 - **`AUTH_REQUIRED=false`** — accepted for the localhost-only, single-user deployment. Must flip to `true` (with real JWT-secret handling) before any network exposure. See [SECURITY.md](../SECURITY.md).
 - **Leaked-credential rotation unconfirmed** — the historical Atlas `Eeva_Admin` URI (and Brave/JWT) were once committed and pushed ([ADR-002](decisions/002-remove-mongodb-mcp.md)); rotation is an **outstanding action item** tracked in [SECURITY.md](../SECURITY.md). MongoDB is no longer used by nephilim, but the pushed credential must still be treated as compromised.
+- **The live `BRAVE_API_KEY` was written to a world-readable log, by a second and unrelated vector** — `mcp_client_stdio` passed it as `-e BRAVE_API_KEY=<value>` in `argv`, and a `subprocess.TimeoutExpired` traceback logged the whole command. Gitignored, so never committed or pushed, and one occurrence — but the key is current (hash-verified against `.env`) and the file is readable by any local process. **The code path is fixed (v0.2.3, value passed via the child environment, 4 tests pin it); the key itself is NOT rotated and only the operator can close that.** Full write-up in [SECURITY.md](../SECURITY.md). ⚠️ The generalisable control: a secret in a command line is a secret in every crash report, process listing and subprocess exception message — pass credentials through the environment, never through `argv`.
 - **LLM prompt injection via retrieved content** — inherent to any LLM app, and currently **unbounded at the tool-selection layer**. The ADR-004 trust-hierarchy check that this document used to cite was never reachable in production and is now deleted; the surviving controls gate *what a tool may do* (interceptor) and *what enters memory* (`sanitize_memory_write`), not *what the model is influenced to call*. Accepted for a localhost single-user deployment where the only untrusted input is web-search results the user asked for. Revisit before any network exposure, before adding write-capable tools, or if the ADR-009 inner-wisdom (memory-as-tools) work proceeds.
 
 ## Subsystem — Telegram gateway (`services/telegram-gateway/`)

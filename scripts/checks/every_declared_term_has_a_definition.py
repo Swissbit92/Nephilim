@@ -57,6 +57,7 @@ GOVERNED = [
     ("src/coordinator/identity_shapes.py", "EXPERTISE_LEVELS", "EXPERTISE_LEVEL_DEFINITIONS"),
     ("src/coordinator/repositories/memory_fact_repository.py",
      "PREDICATE_VOCABULARY", "PREDICATE_DEFINITIONS"),
+    ("src/coordinator/fact_slots.py", "SINGLE_VALUED_SLOTS", "SLOT_DEFINITIONS"),
     ("src/coordinator/repositories/neo4j_rule_repository.py", "RULE_TYPES", "RULE_TYPE_DEFINITIONS"),
     ("src/coordinator/repositories/neo4j_rule_repository.py", "POLARITIES", "POLARITY_DEFINITIONS"),
     ("src/coordinator/repositories/neo4j_rule_repository.py", "ORIGINS", "ORIGIN_DEFINITIONS"),

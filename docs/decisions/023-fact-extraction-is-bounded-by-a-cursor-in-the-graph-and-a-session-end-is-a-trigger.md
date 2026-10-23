@@ -193,7 +193,14 @@ built** and remains an open roadmap item.
   trigger.
 - Paraphrase is still not deduped (dedup is exact by design), and the flush
   **increases** the rate at which near-duplicates and contradictions accumulate
-  because it writes facts from sessions that previously wrote none. ⚠️ The store
+  because it writes facts from sessions that previously wrote none.
+  ⚠️ **Quantified 2026-10-23 and now the main argument for finishing Phase 4.**
+  Before this ADR only 5 of 292 real sessions could write a fact at all; after
+  it, all of them can. The three coexisting "favourite band" facts that produced
+  a confidently wrong answer were written by a test harness, but the mechanism is
+  the same one every real session now uses. Contradiction detection is researched
+  and measured but **not wired** — see `docs/ROADMAP.md`. Until it is, the store
+  relies on `scripts/utils/retire_probe_facts.py` and on the operator noticing. ⚠️ The store
   already holds a live contradiction — "The user has a dog named Tulliver" and
   "The user's dog is called Wickham", both current, both injected every turn.
   ADR-021's embedding work owns dedup; the contradiction is a roadmap item.

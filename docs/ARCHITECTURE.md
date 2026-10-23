@@ -2,7 +2,7 @@
 title: Architecture
 status: active
 created: 2026-04-19
-last_reviewed_on: 2026-10-22
+last_reviewed_on: 2026-10-23
 review_in: 6 months
 applies_to: nephilim
 published_url: https://claude.ai/code/artifact/335a787e-3444-4eb1-8b1b-b217319da38f
@@ -480,6 +480,9 @@ Layered: **routes → services → repositories → models**, mirrored on the fr
 | `repositories/operator_fact_repository.py` | `(:Fact)-[:ABOUT]->(:Operator)` with `origin` + `asserted_by`. ⚠️ `:Fact` is deliberately NOT a `Shape`: `apply_card` expires everything absent from the card, and a learned fact is absent by definition. |
 | `repositories/episode_repository.py` | `:Episode` + `CONTINUES`, pointers only — no message text, because `idn.cq06` requires the graph to REFUSE "what did she say three weeks ago". `Thread`/`PART_OF` deliberately NOT built. |
 | `services/operator_fact_worker.py` | Extraction OFF the request thread (it costs a measured median 5.54 s). `stop()` is registered with the lifespan, before the graph driver closes. |
+| `services/fact_window.py` | ONE definition of both extraction windows — the interval window and the cursor window — with the tiling argument beside the functions it constrains. The cursor window is closed at BOTH ends (`>=`), because `_now()` is second-precision and she replies in bubbles, so a strict `>` drops a same-second sibling. |
+| `services/session_flush_service.py` | Extraction when a conversation ENDS, not only on the interval. Measured: 287 of 292 real sessions (98.3%) never reach 10 user turns, so the interval alone could never fire for almost anything that actually happens. Every outcome is a NAMED status surfaced in the route response. |
+| `fact_slots.py` | ⚠️ **DATA ONLY — ZERO CALLERS IN `src/`.** The cardinality registry for contradiction detection: 10 declared single-valued slots, each carrying the uniqueness argument that licenses retiring a fact, plus 13 explicitly refused ones. Measured 13/13 in-sample and 12/12 out-of-sample against a shipped exact-containment baseline of 0 of 4. ⚠️ It INVERTS the raise-on-unknown discipline used elsewhere here: an unknown slot accretes, because refusing it would drop the fact. Nothing consumes it yet — see `docs/ROADMAP.md`. |
 | `identity_source.py` | The overlay seam: graph → card, floor-guarded. ADR-019's byte-identity boundary lives here. |
 | Configuration | Per-subsystem settings package (llm/search/memory/wallet/auth/routing/lore/agent) + `get_settings()` | `config/` |
 | Composition root | `startup.py` = thin orchestrator (`initialize_all()` ordering + `build_app_state()`), re-exporting `get_*`/`init_*` singletons split by cluster into `di/{repositories,services,jupiter}.py` (2026-08-22); `dependencies.py` = FastAPI `Depends` providers (`require_*`→503-on-uninit, `optional_*`→None) resolving `startup.get_X()` at call time | `app_state.py`, `dependencies.py`, `startup.py`, `di/`, `server.py` |

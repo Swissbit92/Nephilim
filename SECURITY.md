@@ -58,11 +58,33 @@ compromised regardless.**
 | Credential | Status (2026-07-04) | Action |
 |-----------|---------------------|--------|
 | MongoDB Atlas `Eeva_Admin` URI | Rotation **unconfirmed** — no longer used by nephilim, but shared across the E.E.V.A. ecosystem | Rotate on the Atlas side; record the date here |
-| Brave API key | Rotation **unconfirmed** — still in active use | Rotate in the Brave dashboard; the live `.env` then holds the new value |
+| Brave API key | Rotation **unconfirmed** — still in active use, and **exposed a SECOND time by a different vector** (see below) | Rotate in the Brave dashboard; the live `.env` then holds the new value |
 | JWT secret | N/A locally — no real `JWT_SECRET_KEY` was set (auth is off); the only committed default has been removed | Generate a fresh secret when enabling auth |
 
 > This table is the source of truth for rotation status. Update the **Status** column (and
 > add the rotation date) once each provider-side rotation is completed.
+
+#### Second exposure of the Brave key — the code is fixed, the key is not
+
+Found 2026-09-24 while auditing the legacy search path, and **independent of the
+2026-07-04 committed-`.env` exposure above**: the live `BRAVE_API_KEY` was written into
+`logs/launchd-backend.err.log`. `mcp_client_stdio` passed it as `-e BRAVE_API_KEY=<value>`
+on the `docker run` command line, and on `subprocess.TimeoutExpired` Python puts the entire
+command into the exception message, which the traceback then logged.
+
+- **Blast radius.** The log is gitignored, so the value was never committed or pushed — but
+  it is **world-readable on disk** and the key is current (hash-verified against `.env`).
+  One occurrence.
+- **The code path is FIXED (v0.2.3).** A bare `-e BRAVE_API_KEY` with the value supplied in
+  the child process's environment, so it never enters `argv`. Four tests pin it.
+- ⚠️ **STILL OUTSTANDING: rotate the key that was already written.** Fixing the writer does
+  not unwrite the log line. This is an operator action — Brave dashboard → API Keys →
+  generate new, revoke old — and it is the one security item on this repo's roadmap that
+  code cannot close.
+
+**The general lesson, which generalises past this key:** a secret passed on a command line
+is a secret in every crash report, every process listing and every subprocess exception
+message. Pass credentials through the environment, never through `argv`.
 
 ## Scope
 

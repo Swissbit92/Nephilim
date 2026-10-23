@@ -1,0 +1,78 @@
+{
+  "btc_bought": {
+    "slot": "crypto:holding",
+    "value": "2.5 BTC"
+  },
+  "btc_holds": {
+    "slot": "crypto:holding",
+    "value": "2 BTC"
+  },
+  "wallet_choice": {
+    "slot": "crypto:holding",
+    "value": "hardware wallet"
+  },
+  "quit_long": {
+    "slot": "other",
+    "value": "Ben is thinking about quitting his job to start his own business"
+  },
+  "runway_long": {
+    "slot": "finance:concern",
+    "value": "eight-month money runway"
+  },
+  "family_long": {
+    "slot": "other",
+    "value": "Ben's family thinks quitting would be reckless"
+  },
+  "band_rusted": {
+    "slot": "favourite:band",
+    "value": "The Rusted Compass"
+  },
+  "cat_pemberton": {
+    "slot": "pet:cat",
+    "value": "Pemberton"
+  },
+  "hobby_fencing": {
+    "slot": "hobby",
+    "value": "fencing"
+  },
+  "dog_tulliver": {
+    "slot": "pet:dog",
+    "value": "Tulliver"
+  },
+  "runway_short": {
+    "slot": "finance:concern",
+    "value": "8 months"
+  },
+  "quit_short": {
+    "slot": "work:employer",
+    "value": "other"
+  },
+  "family_short": {
+    "slot": "other",
+    "value": "Has a family that thinks the decision is reckless"
+  },
+  "band_marrowfield": {
+    "slot": "favourite:band",
+    "value": "Marrowfield Drift"
+  },
+  "dog_wickham": {
+    "slot": "pet:dog",
+    "value": "Wickham"
+  },
+  "hobby_pottery": {
+    "slot": "hobby",
+    "value": "pottery"
+  },
+  "band_halloway": {
+    "slot": "favourite:band",
+    "value": "Halloway Verge"
+  },
+  "tortoise_pennyworth": {
+    "slot": "pet:other_animal",
+    "value": "Pennyworth"
+  },
+  "hobby_falconry": {
+    "slot": "hobby",
+    "value": "falconry"
+  }
+}

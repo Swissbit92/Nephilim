@@ -5,6 +5,89 @@ All notable changes to the NEPHILIM project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.3] - 2026-10-23
+
+### Researched and measured — contradiction detection. NOT WIRED.
+
+Nothing in this section changes behaviour: `src/coordinator/fact_slots.py` has
+**zero callers in `src/`**, and no flag enables anything.
+
+- **The store accumulated contradictions and gave a confidently wrong answer.**
+  Three live "favourite band" facts and two dog names, all injected every turn.
+  Asked for his favourite band she answered **"Marrowfield Drift"** — from a
+  superseded test fact; asked with the British spelling she refused. One
+  question, three stored answers, reply depending on phrasing. The 10 probe-made
+  facts were retired by hand (`scripts/utils/retire_probe_facts.py`, 45 → 35
+  current, invalidated not deleted), so the store is clean — but the session-end
+  flush raises the recurrence rate, because it now writes facts from the 97.9% of
+  sessions that previously wrote none.
+- 🔴 **Lexical similarity is the WRONG RELATION, not a mis-tuned one.** Swept at
+  every threshold on 13 pairs hand-labelled from real rows: best achievable 3/4
+  found with 1/6 falsely flagged. The *compatible* cat/dog pair scores Jaccard
+  **0.50** while the *contradictory* dog/dog pair scores **0.20** — the
+  compatible pair scores **higher**, so no threshold separates them at any value.
+  ⚠️ This is the sweep that had previously reported the store clean.
+- **What works: a closed slot vocabulary plus DECLARED cardinality.** Asking the
+  model to judge cardinality scores 9/13 (it said `single_valued: false` on 18 of
+  19 facts); declaring it scores **13/13 in-sample, 12/12 out-of-sample, 0 false
+  positives**, against a shipped exact-containment baseline of **0 of 4**.
+- **Added `src/coordinator/fact_slots.py`** — 10 declared single-valued slots,
+  each carrying the uniqueness argument that licenses a destructive action, plus
+  13 explicitly refused slots each with its reason. Registered in
+  `every_declared_term_has_a_definition.py` (72 terms / 11 vocabularies).
+  ⚠️ It **inverts this repo's raise-on-unknown discipline on purpose**: an
+  unknown slot accretes, because refusing it would drop the fact and lose memory.
+- ⚠️ **Three caveats, stated rather than buried.** (1) The result is
+  **precision, not accuracy** — only **2 of 21** held-out facts land in a slot
+  that can fire, and **38%** land in `other`. (2) Four slots were cut from the
+  licensed set **after seeing held-out data**; mitigated only by every cut being
+  one-way and each reason recorded. (3) The **slot-collision channel is
+  UNMEASURED** — two facts about genuinely different things in one single-valued
+  slot is the only way this retires something true, and no real instance exists
+  because the operator has one dog and one name.
+
+### Corrected
+
+- **ADR-021 amended on three counts.** Graphiti's `0.9` Jaccard is
+  entity-**name** dedup behind an entropy pre-check and `0.6` cosine is a
+  candidate-**retrieval** knob — **Graphiti uses no similarity threshold for
+  contradiction at all**, so the "borrowed contradiction constants that must be
+  refitted" were never contradiction constants. `FactConflict` should not be
+  built (demanded by no competency question) while
+  `(:Fact)-[:SUPERSEDES]->(:Fact)` already is. And cardinality belongs on
+  `(predicate, qualifier)`, which is why the dormant `SINGLE_VALUED_PREDICATES`
+  would not have caught this.
+- 🔴 **A safety claim of mine was wrong.** I wrote that a false positive
+  "silently deletes a true memory". It does not: `invalidate_fact` closes both
+  clocks and never deletes, and a competency question's negative fixture
+  *requires* the old version to survive. A false positive makes a memory
+  **invisible, reversibly, by one `SET`**. The correct control is a ledger plus
+  an un-retire path — not a review queue, which is worse on evidence (94% of
+  developers failed to detect sabotage in review; 56% accepted it even when
+  flagged).
+- **The ADR-021 phase presentation.** `docs/ROADMAP.md` carried a stale
+  six-phase item asserting "the READ PATH IS NOT [accepted]" directly above the
+  corrected breakout. The breakout is now authoritative and the stale item is
+  marked superseded, kept for its design rationale.
+- **Phase 3 is NOT next, and the reason is arithmetic**: ~35 facts in under 900
+  tokens against a 2000-token cap, every one injected every turn. There is
+  nothing to retrieve. **Phase 4's open half is the contradiction work.**
+- **The abstention figure steering that decision is stale.** Phase 2's 94%
+  fabrication predates `RECALL_INSTRUCTION` shipping; negative controls now score
+  0 of 5. ⚠️ 5 is not a rate — "probably fixed, not re-measured" — and
+  re-running it is the cheapest high-value item on the roadmap.
+
+### Security
+
+- **The live `BRAVE_API_KEY` was written to a world-readable log by a second,
+  unrelated vector** — passed in `argv` as `-e BRAVE_API_KEY=<value>`, surfaced
+  by a `subprocess.TimeoutExpired` traceback. Never committed or pushed
+  (gitignored), one occurrence, **code fixed in v0.2.3** with 4 tests pinning
+  the environment-passing form. ⚠️ **The key itself is still unrotated — an
+  operator action.** Recorded in `SECURITY.md` and `docs/THREAT_LEVEL.md`.
+  Generalisable control: a secret in a command line is a secret in every crash
+  report and process listing.
+
 ## [0.9.2] - 2026-10-23
 
 ### Fixed — she learns from short conversations, which is almost all of them

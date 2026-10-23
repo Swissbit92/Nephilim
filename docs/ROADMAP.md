@@ -2,7 +2,7 @@
 title: Roadmap
 status: active
 created: 2026-04-19
-last_reviewed_on: 2026-10-22
+last_reviewed_on: 2026-10-23
 review_in: 3 months
 applies_to: nephilim
 ---
@@ -32,6 +32,95 @@ Two consequences the sequencing makes concrete, both recorded in
   at an array index.
 
 ## Next (this month)
+
+- [ ] 🔴 **Re-measure abstention. Cheapest high-value item on this list.**
+  Phase 2 (2026-10-18) measured her **confidently answering 94% of questions she
+  cannot know** — baseline 0.938, arms 0.688–0.938, inventing a hometown, a twin
+  sister, a skin tone and the operator's job — and concluded that **Phase 3
+  should be gated on abstention, not distinctiveness**. That is still the
+  headline defect of record.
+
+  ⚠️ **But the figure predates the fix.** `context_framing.RECALL_INSTRUCTION`
+  now ships in every turn and says, verbatim, *"If it is genuinely not in the
+  list, say you don't know; do not guess and do not fill it in. Inventing a
+  detail about his real life is worse than admitting you weren't told."*
+  Negative controls on 2026-10-23 scored **0 fabrications of 5**.
+
+  ⚠️ **5 is not a rate.** Phase 2 used 8 negative controls × 5 arms × 2 reps. So
+  the honest statement is **"probably fixed, not re-measured"**, and a stale 94%
+  is currently steering a phase decision. The instrument already exists:
+  `scripts/research/phase2/run_ab.py`, negative-control stratum, against the
+  live config. Cheap, and it either retires the blocker or confirms it.
+
+- [ ] 🔴 **Move the tool firing rate — the highest ceiling of any arm tested.**
+  Phase 2's typed-tool arm is the most informative result in the programme and
+  it is good news for that architecture:
+
+  | | recall | n |
+  |---|---|---|
+  | fact delivered by a tool call | **1.000** (Wilson 95% [0.74, 1.00]) | 11 |
+  | tool did not fire | 0.419 | 43 |
+  | firing rate | **17.1%** (Wilson [0.10, 0.28]) | 12/70 |
+
+  A tool-delivered fact was used **perfectly in every observed case**. Arm E
+  loses overall *only* on the firing rate, so **the gate is delivery, not
+  representation** — the path needs the rate moved, not a redesign. Nobody in
+  the literature has isolated delivery mechanism from retrieval quality, because
+  nobody separated the two arms. `run_ab.py --arms E_tool` is the instrument,
+  and it must be re-run on any model or hardware change.
+
+- [ ] 🔴 **Contradiction detection — researched and measured, NOT wired. This is Phase 4's open half.**
+  Branch `feature/contradiction-detection`, 6 commits, **zero callers in
+  `src/`**, nothing enabled. The store is clean *today* because the 10 probe-made
+  facts were retired by hand, so this is about stopping recurrence — and the
+  session-end flush ([ADR-023](decisions/023-fact-extraction-is-bounded-by-a-cursor-in-the-graph-and-a-session-end-is-a-trigger.md))
+  **raises the rate**, because it now writes facts from the 97.9% of sessions
+  that previously wrote none.
+
+  **What was measured:**
+
+  | approach | contradictions found | compatible wrongly flagged |
+  |---|---|---|
+  | shipped `_norm` exact containment | **0 of 4** | 0 |
+  | best achievable lexical similarity | 3/4 | 1/6 |
+  | model asked for cardinality | 9/13 pairs | — |
+  | **closed slot vocabulary + DECLARED cardinality** | **4/4** | **0** |
+
+  In-sample 13/13, out-of-sample 12/12, 0 false positives.
+
+  ⚠️ **Lexical similarity is the WRONG RELATION, not mis-tuned.** The
+  *compatible* cat/dog pair scores Jaccard **0.50** while the *contradictory*
+  dog/dog pair scores **0.20** — the compatible pair scores higher, so no
+  threshold separates them at any value. Facts that disagree about one thing are
+  lexically distant by construction.
+
+  **Shipped so far:** `src/coordinator/fact_slots.py` — 10 declared
+  single-valued slots, each carrying the uniqueness argument that licenses a
+  destructive action, plus 13 explicitly refused slots each with its reason;
+  registered in `every_declared_term_has_a_definition.py` (72 terms / 11
+  vocabularies). It **inverts this repo's raise-on-unknown discipline on
+  purpose**: an unknown slot accretes, because refusing it would drop the fact
+  and lose memory.
+
+  ⚠️ **Three caveats that must not be read past.** (1) The result is
+  **precision, not accuracy** — only **2 of 21** held-out facts land in a slot
+  that can fire at all and **38%** land in `other`. (2) Four slots
+  (`diet`, `work:employer`, `work:role`, `identity:nickname`) were cut from the
+  licensed set **after seeing held-out data**, which is fitting to held-out
+  data; mitigated only by every cut being one-way (fewer slots can fire, so
+  false positives can only fall) and each reason being recorded in
+  `REJECTED_SLOTS`. (3) The **slot-collision channel is UNMEASURED** — two facts
+  about genuinely different things in one single-valued slot (two dogs, a second
+  home) is the only way this retires something true, and no real instance exists
+  in either fixture because the operator has one dog and one name.
+
+  **Still to build, ledger FIRST:** the slotter service, `supersede_fact` on the
+  repository, the writer wiring, a shadow stage that logs without retiring, and
+  a ledger plus un-retire path. Then INV-9 (*a fact retires only by declaration,
+  never by a score*) once its check exists and has been watched failing — it is
+  **designed, not declared**, because this repo does not assert guards it has
+  not written.
+
 
 - [x] ✅ **A fact stated in a session shorter than 10 user turns is lost forever — FIXED 2026-10-23 (v0.9.2).**
   The extraction gate fires every `MEMORY_FACT_EXTRACTION_INTERVAL` **user
@@ -248,14 +337,26 @@ Two consequences the sequencing makes concrete, both recorded in
     detection, and the only groupings available without it are the two
     `prf.cq03`'s own negative fixture forbids. A test asserts the refusal.
   - [ ] **Phase 2 — SUPERSEDED, not run.** Kept for the record only.
-  - [ ] **Phase 3 — read path indexes. NOT NEXT.** A vector + full-text index
-    earns its place when the store is too big to inject. It holds 36 facts in
-    760 tokens and she gets all of them every turn.
-  - [x] **Phase 4 — "user turns only" DONE.** Both extraction paths physically
-    redact assistant content. ⚠️ Still open: grammar-constrained typed
-    extraction, and dedup beyond exact containment.
+  - [ ] **Phase 3 — read-path indexes. NOT NEXT, and the reason is arithmetic.**
+    A vector + full-text index earns its place when the store is too big to
+    inject. Measured 2026-10-23: **~35 facts in under 900 tokens against a
+    2000-token cap**, and **she receives every one of them every turn**. There is
+    nothing to retrieve, so an index would be search over a list that is already
+    entirely in the prompt. Revisit when the block approaches the cap — roughly
+    100 facts at the current average — not before.
 
-- [ ] 🔴 **Agentic memory — ADR-021 implementation, six phases.** [ADR-021](decisions/021-agentic-memory-is-one-graph-with-scoped-truth.md) decided the design on 2026-10-17: facts, episodes, threads and her trait evolution in the graph, message text staying in SQLite, working memory staying in the context window. **The write path and schema are Accepted; the READ PATH IS NOT** — it is gated on Phase 2 below. Priority input from the owner, not derivable from code: *both* remembering and evolving, **remembering first**.
+    ⚠️ **AND WHAT ADR-021 SAYS GATES THIS IS STALE.** The gate was moved from
+    distinctiveness to **abstention** by Phase 2's amendment (she fabricated 94%
+    of what she could not know). That measurement predates `RECALL_INSTRUCTION`
+    shipping and is probably obsolete — see "Re-measure abstention" in Next.
+  - [~] **Phase 4 — half done, and its OPEN HALF is the contradiction work.**
+    "User turns only" is DONE: both extraction paths physically redact assistant
+    content (INV-7). ⚠️ **Still open — grammar-constrained typed extraction and
+    dedup beyond exact containment — is exactly the branch described in
+    "Contradiction detection" below.** That is Phase 4 continuing, not a side
+    quest, and it is the next phase to finish rather than Phase 3.
+
+- [~] ⚠️ **SUPERSEDED 2026-10-23 — the original six-phase write-up, kept for its reasoning only.** The per-phase breakout above is **authoritative**; this item is the 2026-10-17 plan and two of its claims are now false. (a) Its header said *"the READ PATH IS NOT [accepted]"* — the read path is **OPEN** and has been live since v0.9.0; it opened on a different measurement (self-recall 8/15 → 15/15) and the Phase 2 gate it names was never run. (b) Its Phase 2 description presumes a voice cliff that did not reproduce. Read the phase bodies below for the *design rationale*, which remains good, and the breakout above for *state*. Priority input from the owner, still current and not derivable from code: *both* remembering and evolving, **remembering first**.
 
   **Phase 0 — foundations. Do first; irreversible if skipped.** Five things, all cheap now and expensive-to-impossible later. (1) `expired_at` — transaction time cannot be reconstructed afterwards. (2) `asserted_by`, set from the SQLite `role` column and never by the LLM — three of the 12 live fact rows are facts about the assistant's own reasoning and one stored her phrasing back at the user. (3) A **tombstone log outside the graph**, keyed on a natural key rather than a UUID, so a rebuild cannot resurrect a retracted fact. (4) An append-only `identity_resolution` crosswalk so a wrong entity merge is undoable — Graphiti's merge is destructive and has no undo. (5) `extractor_version` + `ontology_version` stamped on every write so an old extraction can be replayed against a new vocabulary. ⚠️ I first described this phase as "two columns"; it is five, and four of them were already day-1 irreversible items on the ecosystem migration list.
 
