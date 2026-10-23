@@ -169,3 +169,84 @@ class TestEveryWriteIsGuardable:
                 if kw and not ({"operator_id", "persona_id", "pid", "p"} & kw):
                     offenders.append(ast.unparse(n)[:60])
         assert not offenders, f"writes with no owner parameter: {offenders}"
+
+
+class TestFactCursor:
+    """The fact-extraction high-water mark, hosted on the episode it describes.
+
+    🔴 WHY THE CURSOR LIVES HERE AND NOT IN SQLITE. A high-water mark must live
+    in the SAME STORE as the write it authorises, or it can advance past a
+    window that was never persisted. The facts' system of record is the graph.
+    If Neo4j is unavailable the fact write does not happen, so a SQLite cursor
+    would advance over an unwritten window and turn a transient outage into
+    permanent loss. The correct degradation is NO ADVANCE.
+
+    This also gives `:Episode` its first live producer: before this, the only
+    callers of `record_episode` were `scripts/utils/backfill_episodes.py` and
+    these tests, so 229 nodes existed and nothing in `src/` ever wrote one.
+    """
+
+    def test_a_session_with_no_episode_has_no_cursor(self, repo):
+        assert repo.fact_cursor(_OP, "sess-never-seen") is None
+
+    def test_advance_then_read_round_trips(self, repo):
+        repo.advance_fact_cursor(
+            _OP, "sess-a", cursor_at="2026-10-23T12:00:05",
+            cursor_message_id="m42", message_count=7, persona_key="gwen",
+            started_at="2026-10-23T11:59:00")
+        got = repo.fact_cursor(_OP, "sess-a")
+        assert got == {"at": "2026-10-23T12:00:05", "message_id": "m42"}
+
+    def test_it_does_not_clobber_started_at_on_a_backfilled_episode(self, repo):
+        """🔴 THE REGRESSION THAT WOULD CORRUPT 229 LIVE NODES.
+
+        `record_episode` SETs `started_at` unconditionally. A flush knows only
+        its own window, so if `advance_fact_cursor` did the same it would
+        rewrite the true start of every session it touched. Hence `ON CREATE
+        SET` for that one field, and hence this test.
+        """
+        repo.record_episode(_OP, "sess-b", started_at="2026-07-05T15:39:00",
+                            message_count=129, persona_key="gwen")
+        repo.advance_fact_cursor(
+            _OP, "sess-b", cursor_at="2026-10-23T12:00:05",
+            cursor_message_id="m99", message_count=129, persona_key="gwen",
+            started_at="2026-10-23T11:00:00")   # the window's first message
+        rows = repo.recent_episodes(_OP, limit=50)
+        row = next(r for r in rows if r["session_id"] == "sess-b")
+        assert row["started_at"] == "2026-07-05T15:39:00", (
+            "advance_fact_cursor overwrote started_at; the backfilled history "
+            "of this session is gone")
+
+    def test_it_creates_the_episode_when_none_exists(self, repo):
+        eid = repo.advance_fact_cursor(
+            _OP, "sess-c", cursor_at="2026-10-23T12:00:05",
+            cursor_message_id="m1", started_at="2026-10-23T12:00:00")
+        assert eid
+        assert repo.fact_cursor(_OP, "sess-c")["at"] == "2026-10-23T12:00:05"
+
+    def test_it_sets_last_touched(self, repo):
+        repo.advance_fact_cursor(_OP, "sess-d", cursor_at="2026-10-23T12:00:05")
+        rows = repo.recent_episodes(_OP, limit=50)
+        row = next(r for r in rows if r["session_id"] == "sess-d")
+        assert row.get("last_touched"), "last_touched was not written"
+
+    def test_the_repository_accepts_a_rewind_because_the_handler_owns_monotonicity(
+            self, repo):
+        """The responsibility boundary, pinned.
+
+        Monotonicity is enforced at the single consumer — the worker thread —
+        which re-reads the stored cursor at execution time. Enforcing it here
+        too would split the compare-and-advance across two places, which is the
+        shape of Mem0 #6515's TOCTOU race. So the repo is deliberately dumb and
+        this test says so, to stop a future reader "fixing" it.
+        """
+        repo.advance_fact_cursor(_OP, "sess-e", cursor_at="2026-10-23T12:00:10")
+        repo.advance_fact_cursor(_OP, "sess-e", cursor_at="2026-10-23T12:00:01")
+        assert repo.fact_cursor(_OP, "sess-e")["at"] == "2026-10-23T12:00:01", (
+            "the repo refused a rewind; monotonicity belongs to the handler")
+
+    def test_two_sessions_keep_separate_cursors(self, repo):
+        repo.advance_fact_cursor(_OP, "sess-f", cursor_at="2026-10-23T12:00:01")
+        repo.advance_fact_cursor(_OP, "sess-g", cursor_at="2026-10-23T13:00:01")
+        assert repo.fact_cursor(_OP, "sess-f")["at"] == "2026-10-23T12:00:01"
+        assert repo.fact_cursor(_OP, "sess-g")["at"] == "2026-10-23T13:00:01"
