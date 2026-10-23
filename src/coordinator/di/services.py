@@ -122,8 +122,26 @@ def init_operator_fact_worker():
 
             return OperatorFactRepository(driver, cfg.database)
 
+        def _episode_repo():
+            """Where the fact-extraction cursor lives.
+
+            Same driver and same gate as `_repo` deliberately: the cursor must
+            live in the SAME STORE as the write it authorises, or it can advance
+            past a window that was never persisted. If the graph is unavailable
+            both return None together, the handler refuses to extract, and the
+            window is re-covered on the next trigger.
+            """
+            cfg = get_settings().graph
+            driver = get_neo4j_driver() if cfg.enabled else None
+            if driver is None:
+                return None
+            from ..repositories.episode_repository import EpisodeRepository
+
+            return EpisodeRepository(driver, cfg.database)
+
         _operator_fact_worker = OperatorFactWorker(
-            make_handler(_repo, get_settings, get_user_profile_repo)
+            make_handler(_repo, get_settings, get_user_profile_repo,
+                         _episode_repo)
         )
         _operator_fact_worker.start()
     except Exception as e:  # noqa: BLE001

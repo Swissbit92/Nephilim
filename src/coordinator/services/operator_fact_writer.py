@@ -58,7 +58,8 @@ def _norm(text: str) -> str:
     return _WS.sub(" ", (text or "").strip().lower()).rstrip(".,;!?")
 
 
-def make_handler(repo_factory, settings_factory, profile_repo_factory=None):
+def make_handler(repo_factory, settings_factory, profile_repo_factory=None,
+                 episode_repo_factory=None):
     """Build the worker's handler. Factories so nothing is captured at import.
 
     🔴 ONE EXTRACTION, BOTH WRITES. The first version of this enqueued the worker
@@ -78,10 +79,69 @@ def make_handler(repo_factory, settings_factory, profile_repo_factory=None):
     def handle(job: FactJob) -> int:
         from ..fact_extractor import FactExtractor
         from ..llm_client import create_llm_client
+        from .fact_window import cap_window_from_oldest, window_since_cursor
 
         mem = settings_factory().memory
         if not job.user_id or not job.messages:
             return 0
+
+        messages = job.messages
+        advance_to, advance_id = job.cursor_to, job.cursor_message_id
+        episode_repo = episode_repo_factory() if episode_repo_factory else None
+
+        if job.use_cursor:
+            # 🔴 THE COMPARE-AND-ADVANCE LIVES HERE, at the single consumer.
+            # The worker is one daemon thread, so this is the only point at
+            # which two overlapping triggers (a sweep and a /reset, say) are
+            # serialised. Doing it at the enqueue site is Mem0 #6515's race.
+            if episode_repo is None:
+                # Extracting without being able to advance means repeating this
+                # window forever, every trigger, at 5.54 s a time. Refuse.
+                logger.warning(
+                    "[OperatorFactWriter] cursor requested for session %s but no "
+                    "episode repository — refusing to extract, because a window "
+                    "that cannot be marked done would be re-extracted forever",
+                    job.session_id[:8],
+                )
+                return 0
+
+            stored = episode_repo.fact_cursor(job.user_id, job.session_id) or {}
+            stored_at = stored.get("at") or ""
+
+            if stored_at and job.cursor_to and job.cursor_to <= stored_at:
+                logger.info(
+                    "[OperatorFactWriter] session %s (%s): already covered to %s "
+                    "— skipping", job.session_id[:8], job.reason, stored_at,
+                )
+                return 0
+
+            messages, advance_to, advance_id, has_new = window_since_cursor(
+                job.messages, stored_at or None)
+            if not has_new:
+                # The window is non-empty (the boundary second is re-included by
+                # design) but nothing new arrived. Extracting it would burn an
+                # LLM call to rediscover stored facts, and under
+                # OLLAMA_NUM_PARALLEL=1 that makes her slower to answer.
+                logger.info(
+                    "[OperatorFactWriter] session %s (%s): nothing new since %s",
+                    job.session_id[:8], job.reason, stored_at,
+                )
+                return 0
+
+            messages, leftover = cap_window_from_oldest(
+                messages, mem.flush_max_user_turns)
+            if leftover:
+                # The cursor must advance only over what was actually sent, so
+                # the target is recomputed from the CAPPED window.
+                if messages:
+                    advance_to = str(messages[-1].get("timestamp") or "")
+                    advance_id = str(messages[-1].get("id") or "")
+                logger.warning(
+                    "[OperatorFactWriter] session %s (%s): capped at %d user "
+                    "turn(s), %d left for the next trigger",
+                    job.session_id[:8], job.reason, mem.flush_max_user_turns,
+                    leftover,
+                )
 
         # An empty card, as the inline path did, so no persona sampling override
         # can leak into the extractor — this repo has a recorded defect where a
@@ -89,21 +149,33 @@ def make_handler(repo_factory, settings_factory, profile_repo_factory=None):
         extractor = FactExtractor(
             create_llm_client({}, temperature=settings_factory().ollama.temp_fact_extraction)
         )
-        out = extractor.extract_facts(job.messages, persona_key=job.persona_key)
+        out = extractor.extract_facts(messages, persona_key=job.persona_key)
         candidates = [
             str(t).strip()
             for t in (list(out.get("facts") or []) + list(out.get("background") or []))
             if str(t).strip()
         ]
-        if not candidates:
-            return 0
-
+        # 🔴 THE SQLITE WRITE IS NOT CONDITIONAL ON THE GRAPH, AND USED TO BE.
+        # `if repo is None: return 0` and `if not candidates: return 0` both sat
+        # ABOVE the profile update, so a Neo4j outage lost the SQLite write too
+        # and `_operator_facts`' SQLite fallback had nothing to fall back to —
+        # a graph outage took out BOTH stores. The second early return lost an
+        # extracted NAME whenever no facts came with it. Fixed by SHAPE rather
+        # than by file: the profile update now runs from one place at the end,
+        # on any successful extraction, whatever the graph did.
         repo = repo_factory()
         if repo is None:
             logger.warning(
-                "[OperatorFactWriter] no graph repository — %d fact(s) not written",
+                "[OperatorFactWriter] no graph repository — %d fact(s) not "
+                "written to the graph; the SQLite profile is still updated",
                 len(candidates),
             )
+            _update_sqlite_profile(job, out)
+            return 0
+
+        if not candidates:
+            _update_sqlite_profile(job, out)
+            _advance(job, episode_repo, advance_to, advance_id)
             return 0
 
         existing = {_norm(r["text"]) for r in repo.current_facts(job.user_id, limit=1024)}
@@ -132,18 +204,57 @@ def make_handler(repo_factory, settings_factory, profile_repo_factory=None):
 
         # The SAME extraction result also updates the SQLite profile, so the two
         # stores cannot diverge the way two independent extractions did.
-        if profile_repo_factory is not None:
-            try:
-                prepo = profile_repo_factory()
-                if prepo is not None:
-                    profile = prepo.get_or_create_profile(job.user_id)
-                    profile.update_from_session(out)
-                    prepo.update_profile(profile)
-            except Exception as e:  # noqa: BLE001
-                logger.warning(
-                    "[OperatorFactWriter] SQLite profile update failed "
-                    "(non-fatal, the graph write stands): %s", e
-                )
+        _update_sqlite_profile(job, out)
+        _advance(job, episode_repo, advance_to, advance_id)
         return written
+
+    def _update_sqlite_profile(job: FactJob, out: dict) -> None:
+        if profile_repo_factory is None:
+            return
+        try:
+            prepo = profile_repo_factory()
+            if prepo is not None:
+                profile = prepo.get_or_create_profile(job.user_id)
+                profile.update_from_session(out)
+                prepo.update_profile(profile)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "[OperatorFactWriter] SQLite profile update failed "
+                "(non-fatal, the graph write stands): %s", e
+            )
+
+    def _advance(job: FactJob, episode_repo, advance_to: str, advance_id: str) -> None:
+        """Move the high-water mark, but only on a completed extraction.
+
+        🔴 ADVANCES EVEN WHEN NOTHING WAS WRITTEN. A window containing no facts
+        has still been looked at, and refusing to mark it done means every
+        quiet session is re-extracted on every trigger, forever, and the
+        boundary never moves.
+
+        🔴 AND NEVER ADVANCES WHEN THE WRITE COULD NOT HAPPEN. Reached only
+        after the graph repo was available and the extractor returned without
+        raising. A full queue, a process death with a job queued, a raising
+        extractor or an unavailable repo all leave the cursor where it was, so
+        the next trigger re-covers the window. The failure mode is repeated
+        work, never a hole — which is the entire reason this is a cursor and
+        not a sliding window.
+        """
+        if not (job.use_cursor and episode_repo is not None and advance_to):
+            return
+        try:
+            episode_repo.advance_fact_cursor(
+                job.user_id, job.session_id,
+                cursor_at=advance_to, cursor_message_id=advance_id,
+                message_count=job.session_message_count,
+                persona_key=job.persona_key,
+                started_at=job.session_started_at,
+            )
+        except Exception as e:  # noqa: BLE001
+            # A cursor that failed to advance is safe: re-coverage, not loss.
+            logger.warning(
+                "[OperatorFactWriter] session %s: cursor did not advance "
+                "(non-fatal, the window will be re-covered): %s",
+                job.session_id[:8], e,
+            )
 
     return handle

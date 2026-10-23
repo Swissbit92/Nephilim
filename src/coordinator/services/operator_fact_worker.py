@@ -49,6 +49,30 @@ class FactJob:
     persona_key: str
     messages: list[dict[str, Any]]
 
+    #: Cursor mode. All defaulted, so every existing construction keeps working
+    #: and the interval gate is unaffected until it opts in.
+    #:
+    #: `use_cursor` makes the handler re-read the stored high-water mark at
+    #: EXECUTION time and skip a job already covered. That compare-and-advance
+    #: has to live at the single consumer: the worker is one daemon thread, so
+    #: it is the only place two overlapping triggers are serialised. Doing it at
+    #: the enqueue site instead is the shape of Mem0 #6515's TOCTOU race, where
+    #: the dedup snapshot is stale by the time the check runs and concurrent
+    #: writers both insert.
+    use_cursor: bool = False
+    #: The candidate high-water mark: the timestamp of the last message the
+    #: trigger saw. Compared against the stored cursor, never trusted over it.
+    cursor_to: str = ""
+    cursor_message_id: str = ""
+    #: Which trigger built this job — "gate", "reset", "delete" or "sweep".
+    #: Reaches the worker's per-job log line, so production can answer "did a
+    #: short session's facts land, and what made it happen" without a dashboard.
+    reason: str = "gate"
+    #: `ON CREATE` only, so a flush cannot overwrite a backfilled episode's
+    #: true start with its own window's first message.
+    session_started_at: str = ""
+    session_message_count: int = 0
+
 
 class OperatorFactWorker:
     """Single daemon thread, bounded queue, drains on shutdown."""
@@ -125,9 +149,13 @@ class OperatorFactWorker:
                 return
             try:
                 written = self._handler(job)
+                # `reason` is in the line so production can answer "did a
+                # short session's facts land, and which trigger did it" from
+                # the log alone. A fix nobody can verify in production is a
+                # fix on trust.
                 logger.info(
-                    "[OperatorFactWorker] session %s: wrote %d fact(s)",
-                    job.session_id[:8], written,
+                    "[OperatorFactWorker] session %s (%s): wrote %d fact(s)",
+                    job.session_id[:8], job.reason, written,
                 )
             except Exception as e:  # noqa: BLE001 - a bad job must not kill the thread
                 logger.warning(

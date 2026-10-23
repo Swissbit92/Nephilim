@@ -38,6 +38,62 @@ class MemorySettings(BaseSettings):
         description="Number of messages before triggering auto-summarization",
         alias="MEMORY_SUMMARIZATION_INTERVAL"
     )
+    flush_enabled: bool = Field(
+        default=True,
+        alias="MEMORY_FLUSH_ENABLED",
+        description=(
+            "Extract a session's facts when the session ENDS, not only when it "
+            "crosses `fact_extraction_interval` user turns. Measured 2026-10-23 "
+            "on the live store: 287 of 292 real sessions (98.3%) never reach 10 "
+            "user turns, median 1 and mean 2.0, so the interval gate alone can "
+            "never fire for almost every conversation that actually happens. A "
+            "fresh 3-fact / 3-turn session stored 0 of 3 in SQLite and 0 of 3 "
+            "in the graph. Lowering the interval is NOT the fix: "
+            "OLLAMA_NUM_PARALLEL=1 serialises extraction against her "
+            "generation, so halving it doubles GPU contention with her replies."
+        ),
+    )
+    flush_sweep_seconds: int = Field(
+        default=900, ge=0, le=86400,
+        alias="MEMORY_FLUSH_SWEEP_SECONDS",
+        description=(
+            "How often the idle sweeper looks for sessions to flush. 0 disables "
+            "the sweeper while KEEPING the /reset and delete triggers. The "
+            "sweeper is the load-bearing one: the Telegram gateway has no /new, "
+            "no /end and no idle timeout, and at a median of 1 user turn the "
+            "dominant way a conversation ends is silence."
+        ),
+    )
+    flush_idle_seconds: int = Field(
+        default=1800, ge=60, le=604800,
+        alias="MEMORY_FLUSH_IDLE_SECONDS",
+        description=(
+            "How long a session must be untouched before the sweeper treats it "
+            "as over. Keyed on `chat_sessions.updated_at`, which is maintained "
+            "on every write by SessionRepository.update_session_timestamp."
+        ),
+    )
+    flush_sweep_max: int = Field(
+        default=10, ge=1, le=200,
+        alias="MEMORY_FLUSH_SWEEP_MAX",
+        description=(
+            "Sessions flushed per sweep pass. Bounded because the worker queue "
+            "is 64 deep and `enqueue()` returns False when full — an unbounded "
+            "pass would silently drop most of its own work, which looks like "
+            "coverage and is not."
+        ),
+    )
+    flush_max_user_turns: int = Field(
+        default=20, ge=1, le=200,
+        alias="MEMORY_FLUSH_MAX_USER_TURNS",
+        description=(
+            "Cap on the user turns one flush covers. Trimmed from the OLDEST "
+            "end, so the cursor advances only over what was actually sent to "
+            "the extractor; trimming the newest end would move the cursor past "
+            "turns nothing read, which is the one failure the cursor exists to "
+            "prevent. The remainder is picked up by the next trigger."
+        ),
+    )
     fact_extraction_interval: int = Field(
         default=10,
         ge=5,
