@@ -455,9 +455,25 @@ So: the catastrophic risk is ruled out, a subtle cost is **neither ruled in nor
 out**, and the voice question is now *partly* measured rather than unmeasured.
 It should still not be cited as settled.
 
-⚠️ Still unmeasured: **tool-firing under the larger block** — the one axis
-Deflanderization (arXiv 2510.13586) names, where richer in-character content cut
-function-argument exact match 0.359 → 0.226.
+⚠️ **CORRECTED 2026-10-23 — this paragraph had the arrow backwards.** It read
+"richer in-character content cut function-argument exact match 0.359 → 0.226".
+Checked against the source (Deflanderization, arXiv 2510.13586, CPDC 2025 Round
+2, Table 1, API track): **0.226 is the persona-heavy ZeroShot baseline** and
+**0.359 is the de-flanderized condition**, with persona instructions and
+world-setting text STRIPPED. Function-NAME match moved 0.622 → 0.714 over the
+same change. So the thesis stands — persona content hurts structured output —
+but the baseline is the LOW number and it is *stripping* persona that improves
+accuracy. The correction is recorded rather than overwritten because the
+reversed figure was propagated to `docs/ROADMAP.md` from here.
+
+⚠️ It also degrades ARGUMENTS (+59% relative) far more than NAMES (+15%), which
+means **"the tool still fires" is not evidence of health** — and firing is
+precisely what `scripts/research/tool_calling_vs_history.py` measures (it has no
+gold value for arguments at all). The axis was therefore measured properly in
+2026-10-23's `scripts/research/image_args/run_arms.py` against the live
+grammar-constrained path, not by adding an arm to the firing harness. See
+[ADR-023](023-fact-extraction-is-bounded-by-a-cursor-in-the-graph-and-a-session-end-is-a-trigger.md)
+for the sibling work and `docs/LESSONS_LEARNED.md` 2026-10-23.
 
 ---
 

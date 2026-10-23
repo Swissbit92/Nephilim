@@ -11,6 +11,107 @@ applies_to: nephilim
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
 
+## 2026-10-23 — A guard stopped guarding because the code moved, and it reported PASSED while the bug was back
+
+**What happened.** The extraction window lived in a nested closure inside
+`_apply_post_turn_updates`. A pin,
+`test_the_live_code_slices_by_user_turn_not_a_fixed_tail`, existed specifically
+to stop a fixed `[-20:]` tail coming back — that mismatch had already been the
+defect twice. The session-end flush needed to reuse the window, so the closure
+was lifted to `services/fact_window.py`.
+
+Every test still passed. Then, as a deliberate check, `return msgs[-20:]` was
+reintroduced **in the new module** and the suite was re-run. The pin still said
+**PASSED**. It parses `inspect.getsource(css._apply_post_turn_updates)`, and the
+function it guards no longer lives in that source. Zero tests caught it.
+
+Worse, the same test class carried a **private copy** of the production slice
+(`TestTheWindowCoversTheInterval._window`), so four behavioural tests had been
+exercising a duplicate of the algorithm rather than the algorithm. Both halves
+of the guard were pointing at something other than the code that ships.
+
+After repair — the scan covers all three window functions and matches any
+negative tail on a message list, and the behavioural tests bind to the import —
+the same injected bug fails **4 tests**.
+
+**What we learned.** A source-scanning guard is coupled to a *location*, while
+the thing it guards is a *behaviour*, and a refactor silently breaks that
+coupling without touching either. Nothing in a green suite distinguishes "this
+property holds" from "this guard can no longer see the property". And a test
+that re-implements production logic to test it directly is the same failure in
+a different costume: it keeps passing precisely because it is not production.
+
+This is the third instance of the blind-spot class already recorded for
+source-scanning checks here, and the first where the blindness was caused by a
+*legitimate* refactor rather than by an input shape nobody considered.
+
+**How to apply.**
+- **When you move code a guard watches, re-run the guard against the bug it
+  exists to catch.** Not the suite — the bug. Reintroduce it, confirm red,
+  remove it.
+- A guard that parses source must name every location the logic can live in,
+  and widen its pattern beyond the variable names that happened to exist the
+  day it was written.
+- **Never let a test hold its own copy of production logic.** If the logic is
+  not importable, that is the defect to fix first; the copy will diverge and
+  the divergence will be invisible.
+- A negative assertion ("no fixed tail anywhere in here") cannot fail by
+  deletion, so removing the code it scans converts it into a guard that can
+  never fail. Treat an un-failable assertion as absent.
+
+## 2026-10-23 — A high-water mark must live in the store it authorises, and the sweeper that checked it was silently dead
+
+**What happened.** Two findings from building the session-end flush.
+
+**First, the design.** The obvious fix was to reuse the periodic window and let
+the writer's dedup absorb the overlap. A survey of production systems said
+otherwise: every system that re-extracts and dedups has shipped
+duplicate-data bugs — Mem0 #6515 (a TOCTOU race where the dedup snapshot is
+stale by the time the hash check runs, so concurrent writers both insert),
+Graphiti #1872 (duplicate edges for one fact), #1734 (identically-named nodes
+unmerged because candidate retrieval is embedding-similarity-based and misses
+exact string matches below the cosine threshold) — while the two keeping a true
+watermark (Cognee `pipeline_status`, Letta's sleeptime
+`Group.last_processed_message_id`) have none reported. The design changed to a
+cursor on the strength of that.
+
+The non-obvious corollary took longer: **the cursor belongs in the same store as
+the write it authorises.** Hosting it in SQLite with a graph fallback felt
+safer and is strictly worse — if Neo4j is down the fact write does not happen,
+so a SQLite cursor would advance over an unwritten window and turn a transient
+outage into *permanent* loss. The correct degradation is no advance at all. This
+is the opposite of the read path, where `_operator_facts` falls back to SQLite
+because a stale answer beats a failed turn. Read paths and write paths want
+opposite fallbacks, and the word "fallback" hides that.
+
+**Second, the sweeper.** `chat_sessions.updated_at` is written by
+`BaseRepository._now()` and is `Z`-suffixed; `graph_ids.now_iso()` is `+00:00`
+aware. Comparing them raises `TypeError: can't compare offset-naive and
+offset-aware datetimes` — and the sweeper's own `except Exception` would have
+swallowed it on **every pass**. The result would have been a sweeper that
+logged "started", logged nothing unusual, and never flushed anything. It was
+caught only because a test asserted that a sweep pass *reports a count*, and
+my first tests used invented naive timestamps that could never have found it.
+All 334 real rows use the `Z` form.
+
+**What we learned.** The word "fallback" is doing two incompatible jobs: on a
+read it means "answer anyway", on a write it means "lose the record of what you
+did". And a broad `except Exception` around a scheduled pass converts a type
+error into indistinguishable silence — the same shape as judging a batch job by
+its successes instead of its runs, which this ecosystem has already paid for
+once.
+
+**How to apply.**
+- **Ask which store a watermark authorises, and put it there.** If the answer is
+  "two stores", the design is wrong, not the storage.
+- A background pass must **return and log a count per outcome**, and a test must
+  assert it does. "It ran" is not a result.
+- **Two clocks in one comparison is a defect until proven otherwise.** Normalise
+  at the boundary, and write the test in the format the database actually
+  holds — checked, not remembered.
+- Prefer re-coverage to advancement on every uncertain path: repeated work is
+  visible and bounded, a gap is silent and permanent.
+
 ## 2026-10-22 — The feature had never worked, and four days of measuring the rendering never asked whether anything was stored
 
 **The cheapest finding of the whole programme, and it came last.** Three sessions

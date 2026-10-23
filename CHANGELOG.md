@@ -5,6 +5,84 @@ All notable changes to the NEPHILIM project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2026-10-23
+
+### Fixed — she learns from short conversations, which is almost all of them
+
+- **A fact stated in a session shorter than 10 user turns was lost forever.**
+  The extraction gate fires every `MEMORY_FACT_EXTRACTION_INTERVAL` **user
+  turns** and there was no session-end hook. Measured against the live store:
+  **287 of 292 real sessions (98.3%) never reach 10 user turns**, median **1**,
+  mean **2.0** — only five could ever have fired, two of them the same July
+  Telegram conversation. A fresh 3-fact, 3-user-turn session stored **0 of 3**
+  in SQLite and **0 of 3** in the graph while she engaged with all three facts.
+  ⚠️ Lowering the interval is not the fix: `OLLAMA_NUM_PARALLEL=1` serialises
+  extraction against her generation, so it would trade lost facts for slower
+  replies and still lose a one-turn session.
+- **A graph outage silently lost the SQLite write too.** `if repo is None:
+  return 0` sat above the profile update, and `_operator_facts` falls back to
+  SQLite on any graph failure — so the fallback had nothing to fall back to.
+  The same shape one line up lost an extracted **name** whenever no facts came
+  with it. Fixed by shape: the profile update runs from one place at the end.
+- **A guard had gone blind.** `test_the_live_code_slices_by_user_turn_not_a_fixed_tail`
+  parses one function's source; when the window moved to a module so the flush
+  could reuse it, the pin kept reporting PASSED with `return msgs[-20:]`
+  reintroduced in the new module. It now scans every window function, and the
+  same injected bug fails **4 tests** instead of 0. A private copy of the
+  production slice in the same test class was deleted in favour of the import.
+
+### Added
+
+- **A fact-extraction cursor on `:Episode`** (`fact_cursor_at`,
+  `fact_cursor_message_id`) — see
+  [ADR-023](docs/decisions/023-fact-extraction-is-bounded-by-a-cursor-in-the-graph-and-a-session-end-is-a-trigger.md).
+  This gives `:Episode` its **first live producer**; previously only the
+  backfill script ever wrote one. Zero new labels or relationships, so C17 is
+  unchanged at 14/11 and no registry needed an entry.
+  ⚠️ A cursor, not a sliding window, on evidence: every surveyed system that
+  re-extracts and dedups has shipped duplicate-data bugs (Mem0 #6515 TOCTOU,
+  Graphiti #1872, #1734) while the two keeping a true watermark (Cognee
+  `pipeline_status`, Letta sleeptime `last_processed_message_id`) have not.
+  ⚠️ Nobody upstream has shipped this fix — Cognee PR #5352 named the exact
+  failure mode and was **closed unmerged**.
+  ⚠️ No SQLite fallback cursor, deliberately: a watermark must live in the store
+  it authorises, or it advances over a window that was never persisted.
+- **Session-end flush** on `/reset` (`DELETE /sessions/{id}/messages`, used by
+  both clients) and `DELETE /sessions/{id}`, both flushing **before** the rows
+  go, each guarded by an **AST order pin** because the failure is silent.
+  Every outcome is a named status surfaced as `facts_flushed` in the response.
+- **An idle sweeper**, keyed on `chat_sessions.updated_at`.
+  ⚠️ **Ships OFF** (`MEMORY_FLUSH_SWEEP_SECONDS=0`; intended live value 900).
+  It is the load-bearing trigger — the Telegram gateway has no `/new`, `/end` or
+  idle timeout and the median session is one turn — but 323 historical sessions
+  are already idle, so it must not run before
+  `scripts/utils/seed_fact_cursors.py`. **Seed, flip, restart.**
+  ⚠️ It would have been **silently dead**: `updated_at` is `Z`-suffixed while
+  `graph_ids.now_iso()` is tz-aware, and comparing them raises a `TypeError`
+  that its own `except Exception` would have swallowed on every pass.
+- `recent_episodes` now projects `last_touched` and `fact_cursor_at`, so the
+  flush is verifiable in production rather than only in tests.
+- `services/fact_window.py` — one definition of both extraction windows, with
+  the tiling argument written out next to the functions it constrains.
+- Five `MEMORY_FLUSH_*` settings, each carrying the measurement that justifies it.
+
+### Corrected
+
+- **ADR-022 had the Deflanderization arrow backwards.** It read function-argument
+  exact match "0.359 → 0.226"; the source (arXiv 2510.13586, Table 1, API track)
+  has **0.226 as the persona-heavy baseline** and **0.359 with persona stripped**.
+  The thesis stands, the direction was wrong, and the reversed figure had already
+  propagated to `docs/ROADMAP.md`.
+
+### Known issues
+
+- **Two contradictory facts about the same thing coexist and both reach her
+  prompt** — "a dog named Tulliver" and "dog is called Wickham", both current,
+  both `asserted_by=user`. ⚠️ A word-overlap check cannot find this (Jaccard
+  **0.20**, one shared word) and mine reported the store clean on that basis.
+  The flush increases the rate, because it writes facts from the 97.9% of
+  sessions that previously wrote none.
+
 ## [0.9.1] - 2026-10-22
 
 ### Fixed — the learning loop closes

@@ -33,25 +33,77 @@ Two consequences the sequencing makes concrete, both recorded in
 
 ## Next (this month)
 
-- [ ] 🔴 **A fact stated in a session shorter than 10 user turns is lost forever.**
-  Measured on production 2026-10-22, after the learning loop was fixed and
-  verified at 3/3: the extraction gate fires every
-  `MEMORY_FACT_EXTRACTION_INTERVAL` **user turns** (live value 10), and there is
-  **no session-end hook to flush on**. A six-turn conversation extracts nothing,
-  correctly, and the facts in it are never seen again.
+- [x] ✅ **A fact stated in a session shorter than 10 user turns is lost forever — FIXED 2026-10-23 (v0.9.2).**
+  The extraction gate fires every `MEMORY_FACT_EXTRACTION_INTERVAL` **user
+  turns** (live value 10) and there was **no session-end hook to flush on**.
 
-  ⚠️ **Lowering the interval is NOT the fix.** `OLLAMA_NUM_PARALLEL=1` means a
-  background extraction call is **serialised against her generation**, not
-  overlapped — so halving the interval doubles GPU contention with her replies.
-  Extraction costs a measured **median 5.54 s**; moving it off the request
-  thread removed it from the response path but not from the GPU.
+  **How bad it actually was, measured against the live store:** of 292 real
+  sessions with at least one user turn, **287 (98.3%) never reach 10 user
+  turns**. Median **1**, mean **2.0**. Only five could ever have fired, and two
+  of those are the same July Telegram conversation — which also explains the
+  historical `memory_facts` rows that describe the conversation rather than the
+  operator: the rare firings caught arbitrary windows. A fresh 3-fact,
+  3-user-turn session stored **0 of 3** in SQLite and **0 of 3** in the graph
+  while she engaged with all three facts conversationally.
 
-  The fix is a **flush on session end**, which does not exist. Candidate
-  triggers, cheapest first: the existing `/reset` and session-delete paths; a
-  last-touched sweep in the already-scheduled prewarm job; an explicit
-  end-of-conversation signal from the Telegram gateway. ⚠️ Whichever is chosen
-  must reuse `_window_since_last_firing` so the flush window and the periodic
-  window cannot drift apart — that mismatch has now been the defect **twice**.
+  **The fix is a cursor, not a window.** Surveyed 2026-10-23: every production
+  memory system that re-extracts and dedups has shipped duplicate-data bugs
+  (Mem0 #6515 TOCTOU, Graphiti #1872 duplicate edges, #1734 unmerged nodes),
+  while the two keeping a true watermark (Cognee `pipeline_status`, Letta
+  sleeptime `last_processed_message_id`) have not. ⚠️ **And nobody upstream has
+  shipped this fix** — Cognee PR #5352 named our exact failure mode ("the
+  debounce has no timer, so they wait for a next call that may never come") and
+  was **closed unmerged**, so the tiling argument is written out in
+  `services/fact_window.py` rather than cited.
+
+  **The cursor lives on `:Episode` in the graph**, giving that label its first
+  live producer (before this, only `scripts/utils/backfill_episodes.py` wrote
+  one). A high-water mark must sit in the same store as the write it
+  authorises, or it can advance past a window that was never persisted — so
+  there is deliberately **no SQLite fallback cursor**: if Neo4j is down the
+  fact write does not happen, and a SQLite cursor would convert a transient
+  outage into permanent loss. Correct degradation is **no advance**, i.e.
+  re-coverage. Zero new labels or relationships, so C17 is unchanged at 14/11
+  and no registry needed touching.
+
+  **Triggers wired:** `/reset` (`DELETE /sessions/{id}/messages`, used by both
+  the React UI and the Telegram gateway) and `DELETE /sessions/{id}`, both
+  flushing **before** the rows go, each guarded by an AST order pin because the
+  failure is silent — a flush after the delete reads an empty transcript and
+  still reports success.
+
+  ⚠️ **STILL OFF: the idle sweeper** (`MEMORY_FLUSH_SWEEP_SECONDS=0`, intended
+  live value 900). It is the **load-bearing** trigger — the Telegram gateway
+  has no `/new`, no `/end` and no idle timeout, and at a median of one user turn
+  the dominant way a conversation ends is silence — but 323 historical sessions
+  are already idle, so enabling it before `scripts/utils/seed_fact_cursors.py`
+  has run would re-extract months of transcript at 5.54 s each while contending
+  with her replies. **Order: seed, then flip, then restart.**
+
+  No shutdown flush, deliberately: `worker.stop()` joins for 10 s while one
+  extraction costs a median 5.54 s, so a shutdown flush of more than one
+  session enqueues work the join abandons. Unnecessary anyway — the cursor is
+  persisted, so an unflushed session is picked up by the first sweep after
+  restart.
+
+- [ ] 🔴 **Two contradictory facts about the same thing coexist in the store, and both reach her prompt.**
+  Found 2026-10-23 while measuring something else. The live store holds *both*
+  "The user has a dog named Tulliver" and "The user's dog is called Wickham",
+  both `asserted_by=user`, both `origin=learned`, both **current**, and both
+  injected every turn as numbered facts. She will assert one of them at random.
+
+  ⚠️ **A near-duplicate check cannot find this, and mine did not.** I ran a
+  word-overlap sweep and reported the store clean on the strength of it; the two
+  facts share **one** word ("user") for a Jaccard of **0.20** against a 0.50
+  threshold. Two facts asserting *different values for the same thing* are
+  lexically distant almost by construction, so similarity is the wrong
+  instrument — the right one groups by subject+predicate and compares objects.
+
+  The writer's dedup is `_norm` **exact containment** and cannot catch it;
+  ADR-021's contradiction ordering is not resolving it either. ⚠️ The
+  session-end flush **increases the rate**, because it writes facts from the
+  97.9% of sessions that previously wrote none. This is the recommended next
+  item.
 
 - [ ] **Measure tool-firing under the 794-token injected block.** The one axis
   Deflanderization (arXiv 2510.13586) names and the only one still unmeasured —
