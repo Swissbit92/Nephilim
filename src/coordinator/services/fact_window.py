@@ -93,7 +93,7 @@ permanent loss. The correct degradation is NO ADVANCE -- re-coverage next time.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 
 def count_user_turns(msgs: list[dict[str, Any]]) -> int:
@@ -127,7 +127,7 @@ def window_since_last_firing(msgs: list, interval: int) -> list:
 
 def window_since_cursor(
     msgs: list[dict[str, Any]],
-    cursor_at: Optional[str],
+    cursor_at: str | None,
 ) -> tuple[list[dict[str, Any]], str, str, bool]:
     """Everything at or after `cursor_at`, plus where the cursor would move to.
 

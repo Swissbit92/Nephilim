@@ -113,7 +113,7 @@ class EpisodeRepository:
             )
         return episode_id
 
-    def fact_cursor(self, operator_id: str, session_id: str) -> Optional[dict]:
+    def fact_cursor(self, operator_id: str, session_id: str) -> dict | None:
         """The high-water mark for fact extraction on this session, or None.
 
         Returns `{"at": <timestamp>, "message_id": <id>}`. `None` means this

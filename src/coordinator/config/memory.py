@@ -54,14 +54,20 @@ class MemorySettings(BaseSettings):
         ),
     )
     flush_sweep_seconds: int = Field(
-        default=900, ge=0, le=86400,
+        default=0, ge=0, le=86400,
         alias="MEMORY_FLUSH_SWEEP_SECONDS",
         description=(
-            "How often the idle sweeper looks for sessions to flush. 0 disables "
-            "the sweeper while KEEPING the /reset and delete triggers. The "
-            "sweeper is the load-bearing one: the Telegram gateway has no /new, "
-            "no /end and no idle timeout, and at a median of 1 user turn the "
-            "dominant way a conversation ends is silence."
+            "How often the idle sweeper looks for sessions to flush. The "
+            "sweeper is the LOAD-BEARING trigger: the Telegram gateway has no "
+            "/new, no /end and no idle timeout, and at a median of 1 user turn "
+            "the dominant way a conversation ends is silence. "
+            "⚠️ DEFAULTS TO 0 (OFF) DELIBERATELY, and 900 is the intended live "
+            "value. 323 historical sessions are already idle, so a sweeper "
+            "running before `scripts/utils/seed_fact_cursors.py` has set each "
+            "session's cursor would re-extract months of transcript at a "
+            "measured 5.54 s a time, contending with her replies the whole way. "
+            "Seed first, then set this in .env. 0 keeps the /reset and delete "
+            "triggers working, so the defect is still fixed for an explicit end."
         ),
     )
     flush_idle_seconds: int = Field(

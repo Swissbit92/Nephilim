@@ -144,6 +144,18 @@ def init_operator_fact_worker():
                          _episode_repo)
         )
         _operator_fact_worker.start()
+
+        # The idle sweeper, started only once the worker exists -- it has
+        # nothing to enqueue into otherwise. Defaults OFF
+        # (MEMORY_FLUSH_SWEEP_SECONDS=0) so a deploy cannot begin re-extracting
+        # 323 idle historical sessions before their cursors are seeded; the
+        # /reset and delete triggers work regardless.
+        try:
+            from ..services.session_flush_service import start_flush_sweeper
+
+            start_flush_sweeper()
+        except Exception as e:  # noqa: BLE001
+            logger.debug("[SessionFlush] sweeper start failed (non-fatal): %s", e)
     except Exception as e:  # noqa: BLE001
         logger.warning("[OperatorFactWorker] init failed (non-fatal): %s", e)
         _operator_fact_worker = None

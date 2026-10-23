@@ -245,3 +245,154 @@ class TestTheOperatorIsResolvedTheSameWayTheReadPathDoes:
         assert state["worker"].jobs[0].user_id == "user_be5d9dbe", (
             "resolving the operator differently from the read path is how a "
             "fact gets written where nothing reads it")
+
+
+class TestTheIdleSweep:
+    """🔴 THE LOAD-BEARING TRIGGER.
+
+    /reset and DELETE only cover sessions the user explicitly ends. The Telegram
+    gateway has no /new, no /end and no idle timeout; the web UI has no
+    end-of-conversation signal at all; and at a MEDIAN OF ONE USER TURN the
+    dominant way a conversation ends here is silence. Without the sweep the
+    flush would reach a minority of the 287 affected sessions.
+    """
+
+    def _rows(self):
+        return [
+            {"id": "fresh", "updated_at": "2026-10-23T12:00:00", "message_count": 6},
+            {"id": "idle", "updated_at": "2026-10-23T10:00:00", "message_count": 6},
+            {"id": "ancient", "updated_at": "2026-10-20T10:00:00", "message_count": 2},
+            {"id": "empty", "updated_at": "2026-10-20T10:00:00", "message_count": 0},
+        ]
+
+    def test_only_idle_sessions_with_messages_are_candidates(self, wired):
+        F, _s = wired
+        got = F.sweep_candidates(self._rows(), idle_seconds=1800,
+                                 now_iso="2026-10-23T12:00:30", limit=10)
+        assert "idle" in got and "ancient" in got
+        assert "fresh" not in got, "a session touched 30s ago is not over"
+        assert "empty" not in got, "a session with no messages has nothing to extract"
+
+    def test_the_cap_is_honoured(self, wired):
+        F, _s = wired
+        got = F.sweep_candidates(self._rows(), idle_seconds=1800,
+                                 now_iso="2026-10-23T12:00:30", limit=1)
+        assert len(got) == 1, (
+            "an uncapped pass would overflow the 64-deep worker queue and "
+            "silently drop most of its own work")
+
+    def test_an_unparseable_timestamp_is_skipped_not_crashed(self, wired):
+        F, _s = wired
+        rows = [{"id": "bad", "updated_at": "not-a-date", "message_count": 3}]
+        assert F.sweep_candidates(rows, idle_seconds=1800,
+                                  now_iso="2026-10-23T12:00:30", limit=10) == []
+
+    def test_sweep_seconds_zero_starts_no_thread(self, wired, monkeypatch):
+        from coordinator.config import get_settings
+        F, _s = wired
+        monkeypatch.setattr(get_settings().memory, "flush_sweep_seconds", 0,
+                            raising=False)
+        assert F.start_flush_sweeper() is None, (
+            "0 must disable the sweeper while KEEPING the /reset and delete "
+            "triggers")
+
+    def test_flush_disabled_starts_no_thread(self, wired, monkeypatch):
+        from coordinator.config import get_settings
+        F, _s = wired
+        monkeypatch.setattr(get_settings().memory, "flush_enabled", False,
+                            raising=False)
+        assert F.start_flush_sweeper() is None
+
+    def test_the_sweeper_waits_for_an_idle_gpu_before_each_pass(self, wired):
+        """⚠️ OLLAMA_NUM_PARALLEL=1 — an extraction is SERIALISED against her
+        generation. Sweeping mid-reply makes her slower to answer, which is the
+        exact cost that rules out simply lowering the extraction interval. So
+        the call is asserted to be present, not assumed."""
+        F, _s = wired
+        src = inspect.getsource(F.start_flush_sweeper)
+        assert "wait_for_idle" in src, (
+            "the sweeper does not wait for the GPU; it will contend with her "
+            "replies under OLLAMA_NUM_PARALLEL=1")
+        tree = ast.parse(textwrap.dedent(src))
+        waits = _first_lineno_in_tree(tree, "wait_for_idle")
+        sweeps = _first_lineno_in_tree(tree, "run_sweep_once")
+        assert waits is not None and sweeps is not None
+        assert waits < sweeps, "the sweep runs before waiting for the GPU"
+
+    def test_a_sweep_pass_reports_a_count_per_status(self, wired):
+        F, state = wired
+        from coordinator import startup
+
+        class _SessRepo:
+            def get_all_sessions(self):
+                return [{"id": "idle", "updated_at": "2026-01-01T00:00:00",
+                         "message_count": 6}]
+
+            def get_session(self, session_id):
+                return {"id": session_id, "persona_key": "gwen"}
+
+        startup.get_session_repo = lambda: _SessRepo()
+        counts = F.run_sweep_once()
+        assert counts == {F.ENQUEUED: 1}, (
+            "a sweep pass must report what it did; a pass that returns nothing "
+            "is indistinguishable from a pass that found nothing")
+        assert state["worker"].jobs[0].reason == "sweep"
+
+    def test_a_session_repo_failure_is_named_not_silent(self, wired):
+        F, _s = wired
+        from coordinator import startup
+
+        class _Boom:
+            def get_all_sessions(self):
+                raise RuntimeError("db gone")
+
+        startup.get_session_repo = lambda: _Boom()
+        assert F.run_sweep_once() == {F.FAILED: 1}
+
+
+def _first_lineno_in_tree(tree, call_name: str):
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        name = f.id if isinstance(f, ast.Name) else (
+            f.attr if isinstance(f, ast.Attribute) else "")
+        if name == call_name:
+            return node.lineno
+    return None
+
+
+class TestItParsesTheTIMESTAMPFORMATTHEDATABASEACTUALLYUSES:
+    """⚠️ VALIDATED AGAINST LIVE DATA, NOT INVENTED CASES.
+
+    The first version of these tests used naive `2026-10-23T12:00:00`
+    timestamps. All 334 real `chat_sessions.updated_at` values are
+    `...T..:..:..Z` — written by `BaseRepository._now()` — while
+    `graph_ids.now_iso()` is `+00:00` aware. Comparing the two raised
+    `TypeError: can't compare offset-naive and offset-aware datetimes`, and the
+    sweeper's own `except Exception` would have swallowed it on every pass:
+    a sweeper that looked started, logged nothing unusual and never flushed
+    anything.
+
+    A detector validated only on cases I wrote is a recorded failure mode in
+    this repo. These use the real shapes.
+    """
+
+    def test_the_Z_suffixed_sqlite_format_against_the_aware_graph_clock(self, wired):
+        F, _s = wired
+        rows = [{"id": "idle", "updated_at": "2026-10-21T11:08:12Z",
+                 "message_count": 6}]
+        got = F.sweep_candidates(rows, idle_seconds=1800,
+                                 now_iso="2026-10-23T17:07:26.423932+00:00",
+                                 limit=10)
+        assert got == ["idle"], (
+            "the live Z-suffixed SQLite format did not compare against the "
+            "aware graph clock; every sweep pass would raise and be swallowed")
+
+    def test_a_fresh_Z_suffixed_session_is_not_swept(self, wired):
+        F, _s = wired
+        rows = [{"id": "fresh", "updated_at": "2026-10-23T17:07:00Z",
+                 "message_count": 6}]
+        assert F.sweep_candidates(
+            rows, idle_seconds=1800,
+            now_iso="2026-10-23T17:07:26.423932+00:00", limit=10) == []

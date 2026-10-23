@@ -25,8 +25,8 @@ from ..schemas import (
 )
 from ..services import media_storage, persona_lines
 from ..services.media_fixture import build_probe_png
-from ..services.session_flush_service import flush_session_facts
 from ..services.media_storage import MediaStorageError
+from ..services.session_flush_service import flush_session_facts
 
 router = APIRouter(tags=["sessions"])
 logger = logging.getLogger(__name__)

@@ -193,3 +193,154 @@ def _persona_of(session_id: str) -> str:
         return str(row.get("persona_key") or "")
     except Exception:  # noqa: BLE001
         return ""
+
+
+# --------------------------------------------------------------------------- #
+# THE IDLE SWEEP — the load-bearing trigger
+# --------------------------------------------------------------------------- #
+#
+# 🔴 /reset AND DELETE ARE NOT ENOUGH, and it is worth being plain about why.
+# They only cover sessions the user explicitly ends. The Telegram gateway has
+# no /new, no /end and no idle timeout, the web UI has no end-of-conversation
+# signal at all, and at a median of ONE user turn the dominant way a
+# conversation ends here is silence. Without a sweep the flush would help a
+# minority of the 287 affected sessions.
+#
+# `chat_sessions.updated_at` is the signal, maintained on every write by
+# `SessionRepository.update_session_timestamp`. `get_all_sessions()` already
+# returns it `ORDER BY updated_at DESC` with a `message_count` aggregate, which
+# is exactly the query this needs, so there is no new SQL and no migration.
+#
+# NO INDEX ON `updated_at`, deliberately. 292 sessions scanned once every 900 s
+# is 292 rows; an index is a schema change with no measured benefit. The number
+# is recorded here so a future reader knows the threshold at which that stops
+# being true rather than having to re-derive it.
+#
+# NOT ON THE JUPITER APScheduler (`jupiter/strategy_scheduler.py`), which is
+# the only recurring scheduler in the coordinator: it is gated on an unrelated
+# feature, so hosting fact flushing there would couple it to Jupiter's
+# lifecycle. A daemon thread has the smaller blast radius.
+
+
+def sweep_candidates(sessions: list, *, idle_seconds: int, now_iso: str,
+                     limit: int) -> list[str]:
+    """Session ids idle longer than `idle_seconds`, newest first, capped.
+
+    Pure and synchronous so it is testable without a thread, a clock or a
+    database — the caller runs it in the daemon.
+
+    Capped because the worker queue is 64 deep and `enqueue()` returns False
+    when full. An uncapped pass would silently drop most of its own work, which
+    looks like coverage and is not.
+    """
+    import datetime as _dt
+
+    def _parse(v):
+        """Parse to a NAIVE datetime, always.
+
+        ⚠️ The two clocks in this comparison disagree about tzinfo.
+        `chat_sessions.updated_at` is written by `BaseRepository._now()`, which
+        is naive; `graph_ids.now_iso()` is timezone-aware. Comparing them
+        directly raises `TypeError: can't compare offset-naive and offset-aware
+        datetimes` -- and the sweeper's own `except Exception` would have
+        swallowed that on every pass, leaving a sweeper that looked started,
+        logged nothing unusual, and never flushed anything. Normalising both
+        sides here is the fix; the test that caught it asserts a pass reports
+        a count.
+        """
+        try:
+            parsed = _dt.datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        except Exception:  # noqa: BLE001
+            return None
+        return parsed.replace(tzinfo=None)
+
+    cutoff = _parse(now_iso)
+    if cutoff is None:
+        return []
+    cutoff = cutoff - _dt.timedelta(seconds=max(1, int(idle_seconds)))
+
+    out = []
+    for row in sessions or []:
+        if int(row.get("message_count") or 0) <= 0:
+            continue
+        touched = _parse(row.get("updated_at"))
+        if touched is None or touched > cutoff:
+            continue
+        sid = str(row.get("id") or "")
+        if sid:
+            out.append(sid)
+        if len(out) >= max(1, int(limit)):
+            break
+    return out
+
+
+def run_sweep_once() -> dict:
+    """One sweep pass. Returns a count per status, so the pass is never silent."""
+    from collections import Counter
+
+    from .. import startup
+    from ..config import get_settings
+    from ..graph_ids import now_iso
+
+    mem = get_settings().memory
+    if not mem.flush_enabled:
+        return {DISABLED: 1}
+
+    try:
+        sessions = startup.get_session_repo().get_all_sessions() or []
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[SessionFlush] sweep could not list sessions: %s", e)
+        return {FAILED: 1}
+
+    ids = sweep_candidates(
+        sessions, idle_seconds=mem.flush_idle_seconds,
+        now_iso=now_iso(), limit=mem.flush_sweep_max,
+    )
+    if not ids:
+        return {}
+
+    counts = Counter(flush_session_facts(sid, reason="sweep") for sid in ids)
+    logger.info("[SessionFlush] sweep: %d candidate(s) -> %s",
+                len(ids), dict(counts))
+    return dict(counts)
+
+
+def start_flush_sweeper() -> object | None:
+    """Start the idle sweeper in a daemon thread. Returns the thread, or None.
+
+    ⚠️ `wait_for_idle` BEFORE EACH PASS. `OLLAMA_NUM_PARALLEL=1`, so an
+    extraction is serialised against her generation rather than overlapped.
+    Sweeping while she is mid-reply would make her slower to answer, which is
+    the exact cost that rules out simply lowering the extraction interval. A
+    test asserts this call is present.
+    """
+    import threading
+
+    from ..config import get_settings
+
+    mem = get_settings().memory
+    if not mem.flush_enabled or mem.flush_sweep_seconds <= 0:
+        logger.info("[SessionFlush] sweeper not started "
+                    "(flush_enabled=%s, sweep_seconds=%s)",
+                    mem.flush_enabled, mem.flush_sweep_seconds)
+        return None
+
+    stop = threading.Event()
+
+    def _loop():
+        from .. import startup as _st
+
+        while not stop.wait(get_settings().memory.flush_sweep_seconds):
+            try:
+                _st.get_resource_arbiter().wait_for_idle(timeout=900)
+                run_sweep_once()
+            except Exception as e:  # noqa: BLE001
+                logger.debug("[SessionFlush] sweep pass failed (non-fatal): %s", e)
+
+    t = threading.Thread(target=_loop, daemon=True, name="fact-flush-sweeper")
+    t.stop_event = stop          # so a caller can stop it in a test
+    t.start()
+    logger.info("[SessionFlush] sweeper started (every %ds, idle>%ds, max %d)",
+                mem.flush_sweep_seconds, mem.flush_idle_seconds,
+                mem.flush_sweep_max)
+    return t
