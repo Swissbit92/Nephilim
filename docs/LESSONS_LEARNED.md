@@ -11,6 +11,74 @@ applies_to: nephilim
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
 
+## 2026-10-23 — The number was backwards, the harness measured the wrong half, and the answer was still no
+
+**What happened.** The last unmeasured risk from the memory programme was
+whether the ~833-token injected recall block degrades tool use. Three things
+about the plan were wrong before any measurement ran.
+
+**The figure was reversed.** The repo recorded Deflanderization (arXiv
+2510.13586) as "richer in-character content cut function-argument exact match
+0.359 → 0.226". The source has **0.226 as the persona-heavy baseline** and
+**0.359 with persona and world-setting text stripped**. The thesis survives —
+persona content hurts structured output — but the baseline is the low number,
+and it is *stripping* persona that improves accuracy. The reversed form had
+been written into ADR-022 and propagated from there to the roadmap.
+
+**The harness named in the roadmap measures the wrong half.**
+`tool_calling_vs_history.py` counts whether the tool *fired*, and has no gold
+value for arguments at all. The paper degrades arguments (+59% relative) far
+more than names (+15%), so "the tool still fires" is not evidence of health.
+The live default was not even that path: the image tool call was replaced by
+grammar-constrained `extract()`, which returns the four fields already
+separated and is therefore *easier* to score.
+
+**The existing pin was blind twice over.** All three `extract()` calls in
+`tests/integration/test_image_extract_live.py` omitted `system_prompt`, so it
+defaulted to `""` — a condition production stopped using the day
+`routes/chat.py:876` began splicing `extra_system_context` into `system`. And
+the whole file skips under `PERSONA_MODEL=test-model`, which is what the
+conftest sets, so in CI it contributed nothing.
+
+**And the planned statistics were meaningless.** `EXTRACT_TEMPERATURE = 0.0` is
+greedy, so the five reps per cell sampled nothing — a 10-probe pilot returned
+byte-identical aggregates across two arms. Replication had to come from probes;
+reps became a determinism pre-flight (0 of 232 cells differed).
+
+**The result.** Four arms, 58 frozen probes, 464 calls: **no measurable
+effect.** The pre-registered primary — contamination, the real block versus a
+length-matched placebo, paired — had **zero discordant pairs**. Not one of 42
+distinctive block tokens reached any argument in 232 extractions.
+
+**What we learned.** The most useful part was the check I nearly skipped. Four
+arms agreeing to four decimal places is exactly what a harness that silently
+ignores its own treatment looks like, so "all arms identical" had to be
+distinguished from "the arm is not wired". It was: 29 of 58 probes differ
+between `bare` and the rest, and the content effect (8 probes) is
+indistinguishable from its own length control (9). **A null is only publishable
+once you have shown the instrument can move.**
+
+Second: an un-run test is worse than a missing one, because it occupies the
+space where a guard would go. "8/8" was recorded, cited in a module docstring,
+and never executed in CI.
+
+**How to apply.**
+- **Before reporting a null, show the instrument responding to something.** A
+  manipulation check is cheap and it is the difference between a finding and a
+  wiring bug.
+- **Check the direction of a borrowed number against the source table**, not
+  against the sentence someone wrote about it. This one had been carried,
+  re-cited and propagated.
+- **Ask what the existing harness actually scores before extending it.** Adding
+  an arm to a firing counter cannot answer a question about arguments, however
+  cheap the edit looks.
+- At temperature 0, **reps are a determinism check, not replication.** Say so in
+  the pre-registration, and state the resolution (here 1/58 ≈ 1.7pp) before
+  reading any result.
+- A behaviour pin must be **run** by the default suite, in the condition
+  production builds. If it skips without a model, the property it claims to
+  guard is unguarded — now INV-8.
+
 ## 2026-10-23 — A guard stopped guarding because the code moved, and it reported PASSED while the bug was back
 
 **What happened.** The extraction window lived in a nested closure inside

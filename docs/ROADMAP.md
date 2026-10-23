@@ -105,13 +105,68 @@ Two consequences the sequencing makes concrete, both recorded in
   97.9% of sessions that previously wrote none. This is the recommended next
   item.
 
-- [ ] **Measure tool-firing under the 794-token injected block.** The one axis
-  Deflanderization (arXiv 2510.13586) names and the only one still unmeasured —
-  it found richer in-character content cutting function-argument exact match
-  **0.359 → 0.226**. `scripts/research/tool_calling_vs_history.py` already
-  varies prompt content as an arm and counts `fired` per cell; adding a third
-  arm that appends `frame_numbered_facts` is a ~3-line edit to its arm tuple,
-  and it yields the hard-wall breach count free on the same tape.
+- [x] ✅ **The injected block does NOT corrupt image arguments — measured 2026-10-23.**
+  The last unmeasured axis, and the plan for it was wrong twice over.
+
+  ⚠️ **The figure was backwards.** This item previously read "richer
+  in-character content cutting function-argument exact match **0.359 → 0.226**".
+  Deflanderization (arXiv 2510.13586, CPDC 2025 R2, Table 1, API track) has
+  **0.226 as the persona-heavy baseline** and **0.359 with persona and
+  world-setting text STRIPPED**; function-NAME match moved 0.622 → 0.714 over
+  the same change. The thesis stands, the arrow did not. Corrected at source in
+  [ADR-022](decisions/022-the-graph-is-consulted-on-every-turn-and-she-may-only-assert-what-it-returned.md).
+
+  ⚠️ **And the harness named here measures the wrong thing.**
+  `tool_calling_vs_history.py` counts whether the tool FIRED and has no gold
+  value for arguments at all. The paper degrades arguments (+59% relative) far
+  more than names (+15%), so "the tool still fires" is not evidence of health.
+  The live default is also not that path: the image tool call was replaced by
+  grammar-constrained `extract()`, which returns `subject`/`setting`/`mood`/
+  `style` already separated and is therefore *easier* to score. Measured there
+  instead, in `scripts/research/image_args/run_arms.py`.
+
+  **Four arms, 58 frozen probes (30 near / 28 far), 2 reps, 464 calls, 43 min.**
+  Reps are a determinism pre-flight only — `EXTRACT_TEMPERATURE = 0.0` is
+  greedy, and **0 of 232 cells differed between reps**, so replication comes
+  from probes. A length-matched placebo separates content from length; the
+  placebo passed `check_placebo_matching` before the run.
+
+  | arm | subject_ok | containment | contamination | mood/setting swap | style_ok |
+  |---|---|---|---|---|---|
+  | `bare` (`system_prompt=""`) | 100% | 0.99 | 0% | 0% | 100% |
+  | `prod_nomem` (persona + rules) | 100% | 0.99 | 0% | 0% | 100% |
+  | `prod_placebo` (+ 833 tok filler) | 100% | 0.99 | 0% | 0% | 100% |
+  | **`prod_mem`** (+ the real block) | 100% | 0.99 | 0% | 0% | 100% |
+
+  **VERDICT: no measurable effect.** The pre-registered primary (contamination,
+  `prod_mem` vs `prod_placebo`, paired) had **zero discordant pairs**. Not one
+  of the 42 distinctive block tokens — Pemberton, Wickham, Witcher, Trezor —
+  reached any argument in 232 extractions. The documented historical defect
+  (`mood: "dusk"`) did not reproduce under any condition.
+
+  ⚠️ **The arms are genuinely different, so this is a null and not a broken
+  harness** — 29 of 58 probes differ between `bare` and the rest. The content
+  effect (8 probes differing) is indistinguishable from its own length control
+  (9) and every difference is cosmetic: a preposition stripped, a
+  subject/setting boundary moved, with both arms scoring `subject_ok=True` and
+  containment 1.00. The persona prompt *does* change the extractor's output; it
+  does not change its correctness.
+
+  ⚠️ **Honest limits.** Powered for a one-directional shift of **≥15pp** across
+  58 probes (an exact paired sign test needs ≥6 discordant pairs for p<0.05);
+  resolution is 1/58 ≈ **1.7pp**, so no finer tolerance may be quoted, and this
+  is a null *of at least that size*, not a proof of no effect. The contamination
+  detector is **lexical**, so every rate is a lower bound — it cannot see
+  semantic leakage that re-words. The single containment miss (0.99 not 1.00) is
+  my gold's fault, not the model's: gold "sombre", output "somber".
+
+  **What it licensed:** nothing in `chat.py` changes — the full system prompt
+  keeps being passed. What *did* change is that the pin is no longer blind:
+  `tests/integration/test_image_extract_live.py` now runs **both** arms (16
+  live assertions, up from 8 in a condition production left behind), the
+  production arm asserts the measured property, and **INV-8** makes that a
+  standing constraint because the block grows with every fact she learns
+  (710 → 794 → 833 observed, 2000-token trim bound).
 
 - [ ] **The voice question needs a better instrument, or none.** The gwen-only
   frozen-gallery arm has 8 probes, so its smallest possible step is 1/8 = 0.125

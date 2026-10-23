@@ -31,6 +31,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same injected bug fails **4 tests** instead of 0. A private copy of the
   production slice in the same test class was deleted in favour of the import.
 
+### Measured — the injected block does not corrupt image arguments
+
+- **Four arms, 58 frozen probes, 464 calls: no measurable effect.** The
+  pre-registered primary (contamination — a distinctive memory-block token
+  reaching an argument the user never said — real block vs a length-matched
+  placebo, paired) had **zero discordant pairs**. All four arms scored
+  `subject_ok` 100%, containment 0.99, contamination 0%, mood/setting swap 0%,
+  style 100%. None of the 42 distinctive block tokens (Pemberton, Wickham,
+  Witcher, Trezor) reached any argument in 232 extractions, and the documented
+  historical defect (`mood: "dusk"`) did not reproduce in any condition.
+  ⚠️ **A manipulation check says this is a null, not a dead harness:** 29 of 58
+  probes differ between `system_prompt=""` and the rest. The block's *content*
+  effect (8 probes differing) is indistinguishable from its own *length* control
+  (9), and every difference is cosmetic.
+  ⚠️ Powered for ≥15pp; resolution 1/58 ≈ 1.7pp. A null **of at least that
+  size**, not proof of no effect. The detector is lexical, so rates are lower
+  bounds.
+  ⚠️ Reps are a determinism pre-flight, not replication:
+  `EXTRACT_TEMPERATURE = 0.0` is greedy and **0 of 232 cells differed**.
+
+### Fixed — the behaviour pin that could not see any of this
+
+- **`tests/integration/test_image_extract_live.py` tested a prompt production
+  does not build.** All three `extract()` calls omitted `system_prompt`, so it
+  defaulted to `""`; production passes the whole persona system prompt including
+  the 833-token recall block. The recorded "8/8" was true of a condition
+  abandoned when `routes/chat.py:876` began splicing `extra_system_context`.
+  ⚠️ It also **skipped wholesale** under `PERSONA_MODEL=test-model`, which is
+  what `tests/conftest.py:28` sets — so in CI it contributed nothing. Blind
+  twice over. Now parametrised over both arms: **16 live assertions, up from 8**,
+  with the production arm built from a frozen fixture and asserting the
+  *measured* property.
+- **INV-8 added** (8 enforced invariants, up from 7) —
+  `scripts/checks/image_pin_covers_production.py`. A standing constraint rather
+  than a one-off fix because the block **grows with every fact she learns**
+  (710 → 794 → 833 tokens observed, no code change, 2000-token trim bound), and
+  because INV-4 guards only the *history* channel into the same call.
+
 ### Added
 
 - **A fact-extraction cursor on `:Episode`** (`fact_cursor_at`,

@@ -98,6 +98,52 @@ Hence the guard is on the SIGNATURE rather than on behaviour. A new parameter is
 decision that has to be argued against this file instead of arrived at. The check was
 watched failing on a tree with `history=None` added, and passing on the real one.
 
+## The live image-extract pin exercises the prompt production builds
+
+Status: active
+Statement: At least one `extract()` call in `tests/integration/test_image_extract_live.py` passes a non-empty `system_prompt`, assembled from a FROZEN fixture rather than a live graph read.
+Falsifiable: WHEN every `extract()` call in that file omits `system_prompt`, or WHEN the file reads operator facts live via `current_facts(`, THE CHECK SHALL exit 1 and say which.
+Check: scripts/checks/image_pin_covers_production.py
+
+The companion to the invariant above, and the channel it does not cover.
+
+INV-4 guards `extract()` against conversation **history**, on the signature. The **system
+prompt** is a second channel into the same call, and nothing watched it — so for the life
+of the feature the behaviour pin measured a condition production had stopped using.
+
+Every `extract()` call in that file omitted `system_prompt`, which defaults to `""`.
+Production has not passed `""` since `routes/chat.py:876` began splicing
+`extra_system_context` into `system`. The chain is six hops and live for gwen by default:
+`chat_session_service.py:741` → `ChatBody` → `chat.py:876` → `chat.py:990` →
+`chat.py:521` → `image_gen/direct.py:69` → `extract.py:198`. Measured from the running
+backend's own log, what production passes is **833 tokens**, "42 NUMBERED recalled facts +
+8 self-facts".
+
+So the recorded 8/8 was true of a prompt nobody builds. ⚠️ And the file **skips wholesale**
+under `PERSONA_MODEL=test-model`, which is what `tests/conftest.py:28` sets — in a normal
+run and in CI it contributed nothing at all. Blind twice over, which is why the guard
+parses source and needs no model.
+
+**Why a standing constraint rather than a one-off fix.** The block is assembled from the
+operator's stored facts, so it **grows every time she learns something**: 710 tokens, then
+794, then 833, observed on three different days with no code change, against a 2000-token
+trim bound. An untested divergence that enlarges itself is not the shape a one-off fix
+holds.
+
+**The frozen-fixture half is load-bearing too.** A pin reading the live graph cannot
+distinguish a model regression from a store that grew — which is exactly how the original
+measurement became uncomparable. Hence the check also refuses a live `current_facts(`
+read inside the pin.
+
+What the parametrised arm asserts was **measured before it was written**, not assumed:
+`scripts/research/image_args/run_arms.py`, 58 frozen probes × 4 arms × 2 reps, found the
+production arm indistinguishable from a length-matched placebo (zero discordant pairs on
+the pre-registered primary). Fabricating a passing assertion is how the original pin went
+blind; writing one down that was never observed would have repeated it.
+
+The check was watched failing on the tree before the fix (exit 1, "all 3 extract() calls
+omit `system_prompt`") and passing after.
+
 ## A lifetime cache is only for a line said while the model is gone
 
 Status: active
