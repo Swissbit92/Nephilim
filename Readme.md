@@ -46,7 +46,12 @@
 
 - **7 AI Companions** (1 Legacy + 6 NEPHILIM) with psychological depth and emotional tracking
 - **Natural Multi-Message Conversations** (2-4 messages per response, like texting a real person)
-- **Advanced Memory System** — remembers you across sessions, extracts facts automatically
+- **Advanced Memory System** — remembers you across sessions and extracts facts
+  automatically into a Neo4j knowledge graph, with bi-temporal validity so a fact
+  that stops being true is superseded rather than deleted. Extraction fires both on
+  a turn interval **and when a conversation ends**, which matters more than it
+  sounds: measured on real usage, 98.3% of sessions are shorter than the interval,
+  so without the end-of-session trigger almost nothing was ever saved.
 - **Web Search with Citations** — personas autonomously search Brave API with mandatory sources
 - **Jupiter Wallet Integration** — Solana DEX trading, autonomous strategies, trade proposals (Phase 8)
 - **Google OAuth Authentication** — secure login with JWT access/refresh tokens
@@ -91,7 +96,7 @@
 | Feature | Description |
 |---------|-------------|
 | **Dynamic AI Companions** | 7 companions with unique personality, expertise, and voice |
-| **Advanced Memory System** | Importance scoring, auto-summarization, RAG semantic search, cross-session user profiles |
+| **Advanced Memory System** | Importance scoring, auto-summarization, RAG semantic search, cross-session user profiles, and a Neo4j fact graph with bi-temporal validity (`valid_from`/`valid_to` for world time, `created_at`/`expired_at` for belief time) — facts are invalidated, never deleted, so "what did you used to think?" stays answerable |
 | **Multi-Message Conversations** | 2-4 messages per response with staggered rendering (1.2s delays) |
 | **Psychological Depth** | core_wound, defense_style, growth_edge, contradiction_pairs per persona |
 | **Emotional State Tracking** | trust_level, rapport, and current_mood across conversations |

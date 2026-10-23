@@ -2,7 +2,7 @@
 title: Lessons Learned
 status: active
 created: 2026-04-19
-last_reviewed_on: 2026-10-22
+last_reviewed_on: 2026-10-23
 review_in: 12 months
 applies_to: nephilim
 ---
@@ -10,6 +10,85 @@ applies_to: nephilim
 # Lessons Learned
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
+
+## 2026-10-23 — Similarity was the wrong RELATION, and the thing I called irreversible was not
+
+**What happened.** The store accumulated contradictions — three live "favourite
+band" facts and two dog names, all injected every turn. Asked for his favourite
+band she answered **"Marrowfield Drift"** confidently, from a superseded probe;
+asked with the British spelling she refused. One question, three stored answers,
+and the reply depended on phrasing.
+
+**I had already declared this store clean, with the wrong instrument.** I ran a
+word-overlap sweep at Jaccard 0.50, found one pair above it, and reported no
+problem. The pair I found was a false positive and the real contradiction was
+invisible:
+
+```
+CONTRADICTION  Jaccard 0.20   "The user has a dog named Tulliver"
+                              "The user's dog is called Wickham"
+COMPATIBLE     Jaccard 0.50   "The user's cat is called Pemberton"
+                              "The user's dog is called Wickham"
+```
+
+Swept across every threshold, the best achievable is 3 of 4 found with 1 of 6
+falsely flagged. **The compatible pair scores higher than the contradictory
+one**, so no threshold separates them at any value. This is not a mis-tuned
+parameter — it is the wrong relation. Two facts that *disagree about one thing*
+are lexically distant almost by construction, while two facts about *different
+pets* share their whole sentence frame.
+
+**What worked instead.** Group by what the fact is *about* — a `slot` — and
+**declare** which slots hold one value. Measured: asking the model for
+cardinality scores 9/13 (it answered `single_valued: false` on 18 of 19 facts);
+declaring it scores 13/13 in-sample and 12/12 out-of-sample with zero false
+positives. Cardinality is a property of the world, not of a sentence, so there
+is nothing for a per-fact judgement to add and everything for it to get wrong.
+
+**And the safety stakes were not what I said they were.** I wrote, repeatedly,
+that "a false positive silently deletes a true memory". That is false in this
+store. `invalidate_fact` closes both clocks and never deletes; `facts_at` still
+returns the row; a competency question's negative fixture *requires* the old
+version to survive. A false positive makes a memory **invisible, reversibly, by
+one `SET`**.
+
+That correction changed the design. I was heading for a review queue on the
+strength of a danger that was not there — and review is the worse option on
+evidence: across 107 sessions of developers reviewing agent work, **94% failed
+to detect sabotage and 56% accepted it even when a monitor flagged it**, with
+acceptance falling about 10% for every 5% more repetitive alerts. A contradiction
+queue read by its own author is exactly that shape. What was actually missing was
+not a gate but an **instrument for noticing** — a ledger and an un-retire path —
+which is cheaper and does not decay.
+
+**What we learned.**
+
+- **Name the relation before choosing the metric.** "Are these two facts the
+  same?" and "do these two facts conflict?" are different questions, and
+  similarity only answers the first. Reaching for a threshold meant I never
+  asked which relation I needed.
+- **Check the actual reversibility before letting it set the design.** I spent
+  real effort on a safety architecture for a cost I had assumed. One read of
+  `invalidate_fact` would have redirected it.
+- **An in-sample score is a fit.** 13/13 was computed with a registry written by
+  someone who had read the labels. The out-of-sample 12/12 is the number that
+  means anything — and even there I cut four slots after seeing the data, which
+  is recorded rather than hidden because every cut was one-way.
+- **Read the mechanism, not the score.** The held-out set passed partly because
+  the slotter *under-assigned*: 38% of facts landed in the escape hatch and only
+  2 of 21 reached a slot that can fire. 0 false positives is a **precision**
+  result, not an accuracy one, and saying "12/12" without that is misleading.
+
+**How to apply.**
+- Before fitting a threshold, write down the relation it is supposed to measure
+  and find one labelled pair it must separate. If a *negative* pair outscores a
+  *positive* one, stop — no amount of tuning will fix it.
+- Declare what is schema; ask the model only what is content. Cardinality,
+  polarity and provenance are schema.
+- When a design's shape is driven by "this is irreversible", verify that claim
+  in code first. Reversibility changes which control is appropriate.
+- Report precision and recall separately when the detector can only fire on a
+  subset, and say what fraction of inputs it can even see.
 
 ## 2026-10-23 — The number was backwards, the harness measured the wrong half, and the answer was still no
 

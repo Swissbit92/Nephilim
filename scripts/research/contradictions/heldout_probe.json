@@ -1,0 +1,86 @@
+{
+  "name_ben": {
+    "slot": "other",
+    "value": "His name is Ben and he prefers to be called that"
+  },
+  "name_ramon": {
+    "slot": "other",
+    "value": "Ramon"
+  },
+  "diet_veg": {
+    "slot": "diet",
+    "value": "vegetarian"
+  },
+  "diet_eggs": {
+    "slot": "favourite:food",
+    "value": "eggs benedict and apple juice"
+  },
+  "nick_daddy": {
+    "slot": "sex:preference",
+    "value": "Daddy"
+  },
+  "nick_daddy2": {
+    "slot": "other",
+    "value": "Daddy"
+  },
+  "hob_gaming": {
+    "slot": "hobby",
+    "value": "gaming"
+  },
+  "hob_gta": {
+    "slot": "hobby",
+    "value": "GTA 5"
+  },
+  "hob_gym": {
+    "slot": "hobby",
+    "value": "gym"
+  },
+  "hob_beach": {
+    "slot": "hobby",
+    "value": "beach activities and reading on the beach"
+  },
+  "sex_control": {
+    "slot": "sex:preference",
+    "value": "control"
+  },
+  "sex_home": {
+    "slot": "other",
+    "value": "Ben prefers sex at home"
+  },
+  "sex_rough": {
+    "slot": "sex:preference",
+    "value": "rough, intense and primal"
+  },
+  "sex_dom": {
+    "slot": "sex:preference",
+    "value": "deep-throating and being dominated"
+  },
+  "goal_your": {
+    "slot": "other",
+    "value": "His goal is to start something of your own"
+  },
+  "goal_my": {
+    "slot": "other",
+    "value": "His goal is to start something of my own"
+  },
+  "conc_runway": {
+    "slot": "finance:concern",
+    "value": "money runway"
+  },
+  "conc_runway2": {
+    "slot": "finance:concern",
+    "value": "money runway"
+  },
+  "conc_dec": {
+    "slot": "other",
+    "value": "He is concerned about a decision"
+  },
+  "books": {
+    "slot": "hobby",
+    "value": "reading general-interest books"
+  },
+  "car": {
+    "slot": "other",
+    "value": "Ben sold his car in June or July 2026"
+  }
+}
