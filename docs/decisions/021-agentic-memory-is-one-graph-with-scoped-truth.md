@@ -2,7 +2,7 @@
 title: Agentic memory is one graph with scoped truth
 status: Accepted
 created: 2026-10-17
-last_reviewed_on: 2026-10-22
+last_reviewed_on: 2026-10-23
 review_in: 12 months
 applies_to: nephilim
 ai_summary: >
@@ -576,3 +576,79 @@ comparable published benchmark is 1–3 orders of magnitude larger on both axes.
   the identity store, its 2026-10-16 amendment, and the episodes it deferred to here
 - [ADR-019](019-the-graph-is-the-source-of-identity-not-extra-prompt-text.md) — adding
   prompt bytes is the closed change; switching a source is the free one
+
+---
+
+## AMENDMENT 2026-10-23 — contradiction handling, measured. Three of this ADR's choices are wrong.
+
+This ADR specified contradiction handling in §2: a **`FactConflict` node**,
+contradiction judged by an **LLM over fact text**, dedup gated by **borrowed
+embedding constants**, and an ordering of "interval logic first, LLM only for the
+remainder". Measured against the live store on 2026-10-23, three of those do not
+survive. Recorded here rather than behind a fresh ADR number, because a new
+number would hide that this document was wrong.
+
+**1. The borrowed constants were never contradiction constants.** This ADR says
+Graphiti's `0.6` / `15` "must be refitted before they gate anything", and several
+places in this repo call them "borrowed contradiction constants". Read against
+current Graphiti source: `_FUZZY_JACCARD_THRESHOLD = 0.9` governs **entity-NAME
+deduplication** behind an entropy pre-check with an LLM fallback, and
+`DEFAULT_MIN_SCORE = 0.6` is a candidate-**retrieval** recall knob.
+**Graphiti uses no similarity threshold for contradiction at all** — it judges on
+fact text in one LLM call and then applies a deterministic date-overlap gate. So
+there was never a contradiction constant to refit, and the refitting instruction
+was aimed at the wrong thing.
+
+**2. Similarity is the wrong RELATION for this decision, not a mis-tuned one.**
+Swept at every threshold on 13 hand-labelled pairs from real rows, the best
+achievable is 3/4 found with 1/6 falsely flagged — and the *compatible* cat/dog
+pair scores Jaccard **0.50** while the *contradictory* dog/dog pair scores
+**0.20**. The compatible pair scores higher, so no threshold can separate them.
+Facts that disagree about one thing are lexically distant by construction. This
+closes the embedding half of §2 for contradiction purposes; it says nothing about
+embeddings for *paraphrase*, which remains open and out of scope.
+
+**3. Cardinality should be DECLARED, and the unit is finer than a predicate.**
+Asking the model to judge whether a slot holds one value scored 9/13; declaring
+it scored **13/13 in-sample and 12/12 out-of-sample with zero false positives**.
+And the unit matters: `has_pet` and `has_favorite` are correctly *multi*-valued
+in `PREDICATE_VOCABULARY` (a person has several pets and several favourites), but
+"the name of **the dog**" and "favourite **band**" each admit one value. So
+cardinality belongs on `(predicate, qualifier)` — a *qualified* cardinality
+restriction. That is why the dormant `SINGLE_VALUED_PREDICATES` machinery would
+not have caught any of this.
+
+⚠️ **This appears to be novel, which is a reason for caution and not pride.**
+Surveyed 2026-10-23: no production LLM-memory system declares cardinality per
+predicate and routes supersede-vs-accrete off it. `owl:FunctionalProperty`
+(OWL 2) and SHACL `sh:maxCount` are the formal mechanisms and zero of them import
+cardinality (Cognee imports OWL's type layer and explicitly skips
+`owl:DatatypeProperty`). Cognee comes closest with a `fixed` vs `time_varying`
+split, but has an **LLM infer it per group at batch-review time** rather than
+declaring it. Mem0 post-PR #4805 is additive-only and merely **links**
+contradictions — and that link feeds an entity boost in search ranking, so two
+contradicting memories make each other *more* likely to surface together, which
+is a precise description of the defect we hit. Letta's Python repo is retired and
+its successor has no semantic conflict check at all.
+
+**4. `FactConflict` should NOT be built, and the reason is procedural.** It is
+named here and demanded by **no competency question**, and `graph_surface`'s own
+rule forbids exempting a domain concept — the `:ProposedRule` precedent was to
+write the operator's question down rather than exempt it. Meanwhile
+`(:Fact)-[:SUPERSEDES]->(:Fact)` **is** already demanded, by `tmp.cq01` ("when
+did that stop being true?", whose negative fixture requires the replacement be
+named) and `tmp.cq04` ("what changed when I corrected you?", whose negative
+fixture requires the wrong version to still exist). So supersession needs no new
+permission and the conflict node needs a question first.
+
+**5. One claim in this ADR was also simply mis-stated by me elsewhere.** I
+described a false-positive retirement as "silently deleting a true memory".
+`invalidate_fact` closes both clocks and never deletes, and `facts_at` still
+returns the row — `tmp.cq04` *requires* that. A false positive makes a memory
+**invisible, reversibly, by one `SET`**. The control that follows is therefore a
+ledger plus an un-retire path, not a review queue.
+
+**Status unchanged.** The write path and schema stay Accepted; nothing in this
+amendment is wired. See `docs/ROADMAP.md` "Contradiction detection" for what is
+built (a declared registry, zero callers) and what is not (the slotter, the graph
+write, the wiring, the ledger).
