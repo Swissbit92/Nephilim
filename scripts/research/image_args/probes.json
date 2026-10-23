@@ -1,0 +1,889 @@
+{
+  "_comment": "FROZEN. Authored before any arm was run, and the runner refuses to start on a sha mismatch -- a probe set edited mid-run invalidates the pre-registration. `allow` lists tokens that legitimately belong in an answer even though the memory block also contains them; without it the contamination detector false-positives on exactly the near probes that matter most.",
+  "n": 58,
+  "near": 30,
+  "far": 28,
+  "probes": [
+    {
+      "id": "dog.bare",
+      "bucket": "near",
+      "text": "draw me a dog running through deep snow",
+      "gold": {
+        "subject": [
+          "dog"
+        ],
+        "setting": "",
+        "mood": "",
+        "style": null
+      },
+      "shape": "bare",
+      "allow": []
+    },
+    {
+      "id": "dog.setting",
+      "bucket": "near",
+      "text": "draw me a dog running through deep snow at dusk",
+      "gold": {
+        "subject": [
+          "dog"
+        ],
+        "setting": "dusk",
+        "mood": "",
+        "style": null
+      },
+      "shape": "setting",
+      "allow": []
+    },
+    {
+      "id": "dog.mood",
+      "bucket": "near",
+      "text": "draw me a dog running through deep snow, it should feel lonely",
+      "gold": {
+        "subject": [
+          "dog"
+        ],
+        "setting": "",
+        "mood": "lonely",
+        "style": null
+      },
+      "shape": "mood",
+      "allow": []
+    },
+    {
+      "id": "cat.bare",
+      "bucket": "near",
+      "text": "draw me a cat asleep on a windowsill",
+      "gold": {
+        "subject": [
+          "cat"
+        ],
+        "setting": "",
+        "mood": "",
+        "style": null
+      },
+      "shape": "bare",
+      "allow": []
+    },
+    {
+      "id": "cat.setting",
+      "bucket": "near",
+      "text": "draw me a cat asleep on a windowsill in the morning",
+      "gold": {
+        "subject": [
+          "cat"
+        ],
+        "setting": "morning",
+        "mood": "",
+        "style": null
+      },
+      "shape": "setting",
+      "allow": []
+    },
+    {
+      "id": "cat.mood",
+      "bucket": "near",
+      "text": "draw me a cat asleep on a windowsill, it should feel peaceful",
+      "gold": {
+        "subject": [
+          "cat"
+        ],
+        "setting": "",
+        "mood": "peaceful",
+        "style": null
+      },
+      "shape": "mood",
+      "allow": []
+    },
+    {
+      "id": "beach.bare",
+      "bucket": "near",
+      "text": "draw me a quiet beach with a paperback on a towel",
+      "gold": {
+        "subject": [
+          "beach"
+        ],
+        "setting": "",
+        "mood": "",
+        "style": null
+      },
+      "shape": "bare",
+      "allow": []
+    },
+    {
+      "id": "beach.setting",
+      "bucket": "near",
+      "text": "draw me a quiet beach with a paperback on a towel at sunset",
+      "gold": {
+        "subject": [
+          "beach"
+        ],
+        "setting": "sunset",
+        "mood": "",
+        "style": null
+      },
+      "shape": "setting",
+      "allow": []
+    },
+    {
+      "id": "beach.mood",
+      "bucket": "near",
+      "text": "draw me a quiet beach with a paperback on a towel, it should feel wistful",
+      "gold": {
+        "subject": [
+          "beach"
+        ],
+        "setting": "",
+        "mood": "wistful",
+        "style": null
+      },
+      "shape": "mood",
+      "allow": []
+    },
+    {
+      "id": "dumbbells.bare",
+      "bucket": "near",
+      "text": "draw me a rack of dumbbells in an empty gym",
+      "gold": {
+        "subject": [
+          "dumbbell",
+          "gym"
+        ],
+        "setting": "",
+        "mood": "",
+        "style": null
+      },
+      "shape": "bare",
+      "allow": []
+    },
+    {
+      "id": "dumbbells.setting",
+      "bucket": "near",
+      "text": "draw me a rack of dumbbells in an empty gym at night",
+      "gold": {
+        "subject": [
+          "dumbbell",
+          "gym"
+        ],
+        "setting": "night",
+        "mood": "",
+        "style": null
+      },
+      "shape": "setting",
+      "allow": []
+    },
+    {
+      "id": "dumbbells.mood",
+      "bucket": "near",
+      "text": "draw me a rack of dumbbells in an empty gym, it should feel grim",
+      "gold": {
+        "subject": [
+          "dumbbell",
+          "gym"
+        ],
+        "setting": "",
+        "mood": "grim",
+        "style": null
+      },
+      "shape": "mood",
+      "allow": []
+    },
+    {
+      "id": "rpg.bare",
+      "bucket": "near",
+      "text": "draw me a lone swordsman on a moor, as illustration",
+      "gold": {
+        "subject": [
+          "swordsman"
+        ],
+        "setting": "",
+        "mood": "",
+        "style": "illustration"
+      },
+      "shape": "bare",
+      "allow": []
+    },
+    {
+      "id": "rpg.setting",
+      "bucket": "near",
+      "text": "draw me a lone swordsman on a moor at twilight, as illustration",
+      "gold": {
+        "subject": [
+          "swordsman"
+        ],
+        "setting": "twilight",
+        "mood": "",
+        "style": "illustration"
+      },
+      "shape": "setting",
+      "allow": []
+    },
+    {
+      "id": "rpg.mood",
+      "bucket": "near",
+      "text": "draw me a lone swordsman on a moor, it should feel ominous, as illustration",
+      "gold": {
+        "subject": [
+          "swordsman"
+        ],
+        "setting": "",
+        "mood": "ominous",
+        "style": "illustration"
+      },
+      "shape": "mood",
+      "allow": []
+    },
+    {
+      "id": "breakfast.bare",
+      "bucket": "near",
+      "text": "draw me a plate of poached eggs on toast",
+      "gold": {
+        "subject": [
+          "egg"
+        ],
+        "setting": "",
+        "mood": "",
+        "style": null
+      },
+      "shape": "bare",
+      "allow": []
+    },
+    {
+      "id": "breakfast.setting",
+      "bucket": "near",
+      "text": "draw me a plate of poached eggs on toast in the morning",
+      "gold": {
+        "subject": [
+          "egg"
+        ],
+        "setting": "morning",
+        "mood": "",
+        "style": null
+      },
+      "shape": "setting",
+      "allow": []
+    },
+    {
+      "id": "breakfast.mood",
+      "bucket": "near",
+      "text": "draw me a plate of poached eggs on toast, it should feel homely",
+      "gold": {
+        "subject": [
+          "egg"
+        ],
+        "setting": "",
+        "mood": "homely",
+        "style": null
+      },
+      "shape": "mood",
+      "allow": []
+    },
+    {
+      "id": "juice.bare",
+      "bucket": "near",
+      "text": "draw me a tall glass of apple juice on a sill",
+      "gold": {
+        "subject": [
+          "juice"
+        ],
+        "setting": "",
+        "mood": "",
+        "style": null
+      },
+      "shape": "bare",
+      "allow": []
+    },
+    {
+      "id": "juice.setting",
+      "bucket": "near",
+      "text": "draw me a tall glass of apple juice on a sill at midday",
+      "gold": {
+        "subject": [
+          "juice"
+        ],
+        "setting": "midday",
+        "mood": "",
+        "style": null
+      },
+      "shape": "setting",
+      "allow": []
+    },
+    {
+      "id": "juice.mood",
+      "bucket": "near",
+      "text": "draw me a tall glass of apple juice on a sill, it should feel bright",
+      "gold": {
+        "subject": [
+          "juice"
+        ],
+        "setting": "",
+        "mood": "bright",
+        "style": null
+      },
+      "shape": "mood",
+      "allow": []
+    },
+    {
+      "id": "book.bare",
+      "bucket": "near",
+      "text": "draw me an open paperback on a rumpled bed",
+      "gold": {
+        "subject": [
+          "paperback",
+          "book"
+        ],
+        "setting": "",
+        "mood": "",
+        "style": null
+      },
+      "shape": "bare",
+      "allow": []
+    },
+    {
+      "id": "book.setting",
+      "bucket": "near",
+      "text": "draw me an open paperback on a rumpled bed in the evening",
+      "gold": {
+        "subject": [
+          "paperback",
+          "book"
+        ],
+        "setting": "evening",
+        "mood": "",
+        "style": null
+      },
+      "shape": "setting",
+      "allow": []
+    },
+    {
+      "id": "book.mood",
+      "bucket": "near",
+      "text": "draw me an open paperback on a rumpled bed, it should feel melancholy",
+      "gold": {
+        "subject": [
+          "paperback",
+          "book"
+        ],
+        "setting": "",
+        "mood": "melancholy",
+        "style": null
+      },
+      "shape": "mood",
+      "allow": []
+    },
+    {
+      "id": "wallet.bare",
+      "bucket": "near",
+      "text": "draw me a small metal hardware wallet on a desk",
+      "gold": {
+        "subject": [
+          "wallet"
+        ],
+        "setting": "",
+        "mood": "",
+        "style": null
+      },
+      "shape": "bare",
+      "allow": []
+    },
+    {
+      "id": "wallet.setting",
+      "bucket": "near",
+      "text": "draw me a small metal hardware wallet on a desk at night",
+      "gold": {
+        "subject": [
+          "wallet"
+        ],
+        "setting": "night",
+        "mood": "",
+        "style": null
+      },
+      "shape": "setting",
+      "allow": []
+    },
+    {
+      "id": "wallet.mood",
+      "bucket": "near",
+      "text": "draw me a small metal hardware wallet on a desk, it should feel austere",
+      "gold": {
+        "subject": [
+          "wallet"
+        ],
+        "setting": "",
+        "mood": "austere",
+        "style": null
+      },
+      "shape": "mood",
+      "allow": []
+    },
+    {
+      "id": "coin.bare",
+      "bucket": "near",
+      "text": "draw me a single gold coin on black velvet, as photographic",
+      "gold": {
+        "subject": [
+          "coin"
+        ],
+        "setting": "",
+        "mood": "",
+        "style": "photographic"
+      },
+      "shape": "bare",
+      "allow": []
+    },
+    {
+      "id": "coin.setting",
+      "bucket": "near",
+      "text": "draw me a single gold coin on black velvet at dusk, as photographic",
+      "gold": {
+        "subject": [
+          "coin"
+        ],
+        "setting": "dusk",
+        "mood": "",
+        "style": "photographic"
+      },
+      "shape": "setting",
+      "allow": []
+    },
+    {
+      "id": "coin.mood",
+      "bucket": "near",
+      "text": "draw me a single gold coin on black velvet, it should feel tense, as photographic",
+      "gold": {
+        "subject": [
+          "coin"
+        ],
+        "setting": "",
+        "mood": "tense",
+        "style": "photographic"
+      },
+      "shape": "mood",
+      "allow": []
+    },
+    {
+      "id": "lighthouse.bare",
+      "bucket": "far",
+      "text": "draw me a lighthouse in a storm",
+      "gold": {
+        "subject": [
+          "lighthouse"
+        ],
+        "setting": "",
+        "mood": "",
+        "style": null
+      },
+      "shape": "bare",
+      "allow": []
+    },
+    {
+      "id": "lighthouse.setting",
+      "bucket": "far",
+      "text": "draw me a lighthouse in a storm at dawn",
+      "gold": {
+        "subject": [
+          "lighthouse"
+        ],
+        "setting": "dawn",
+        "mood": "",
+        "style": null
+      },
+      "shape": "setting",
+      "allow": []
+    },
+    {
+      "id": "lighthouse.mood",
+      "bucket": "far",
+      "text": "draw me a lighthouse in a storm, it should feel desolate",
+      "gold": {
+        "subject": [
+          "lighthouse"
+        ],
+        "setting": "",
+        "mood": "desolate",
+        "style": null
+      },
+      "shape": "mood",
+      "allow": []
+    },
+    {
+      "id": "lemons.bare",
+      "bucket": "far",
+      "text": "draw me a bowl of lemons on a wooden table",
+      "gold": {
+        "subject": [
+          "lemon"
+        ],
+        "setting": "",
+        "mood": "",
+        "style": null
+      },
+      "shape": "bare",
+      "allow": []
+    },
+    {
+      "id": "lemons.setting",
+      "bucket": "far",
+      "text": "draw me a bowl of lemons on a wooden table at midday",
+      "gold": {
+        "subject": [
+          "lemon"
+        ],
+        "setting": "midday",
+        "mood": "",
+        "style": null
+      },
+      "shape": "setting",
+      "allow": []
+    },
+    {
+      "id": "lemons.mood",
+      "bucket": "far",
+      "text": "draw me a bowl of lemons on a wooden table, it should feel cheerful",
+      "gold": {
+        "subject": [
+          "lemon"
+        ],
+        "setting": "",
+        "mood": "cheerful",
+        "style": null
+      },
+      "shape": "mood",
+      "allow": []
+    },
+    {
+      "id": "tram.bare",
+      "bucket": "far",
+      "text": "draw me a tram in a rainy city",
+      "gold": {
+        "subject": [
+          "tram"
+        ],
+        "setting": "",
+        "mood": "",
+        "style": null
+      },
+      "shape": "bare",
+      "allow": []
+    },
+    {
+      "id": "tram.setting",
+      "bucket": "far",
+      "text": "draw me a tram in a rainy city at night",
+      "gold": {
+        "subject": [
+          "tram"
+        ],
+        "setting": "night",
+        "mood": "",
+        "style": null
+      },
+      "shape": "setting",
+      "allow": []
+    },
+    {
+      "id": "tram.mood",
+      "bucket": "far",
+      "text": "draw me a tram in a rainy city, it should feel lonely",
+      "gold": {
+        "subject": [
+          "tram"
+        ],
+        "setting": "",
+        "mood": "lonely",
+        "style": null
+      },
+      "shape": "mood",
+      "allow": []
+    },
+    {
+      "id": "heron.bare",
+      "bucket": "far",
+      "text": "draw me a grey heron in shallow water",
+      "gold": {
+        "subject": [
+          "heron"
+        ],
+        "setting": "",
+        "mood": "",
+        "style": null
+      },
+      "shape": "bare",
+      "allow": []
+    },
+    {
+      "id": "heron.setting",
+      "bucket": "far",
+      "text": "draw me a grey heron in shallow water at sunrise",
+      "gold": {
+        "subject": [
+          "heron"
+        ],
+        "setting": "sunrise",
+        "mood": "",
+        "style": null
+      },
+      "shape": "setting",
+      "allow": []
+    },
+    {
+      "id": "heron.mood",
+      "bucket": "far",
+      "text": "draw me a grey heron in shallow water, it should feel still",
+      "gold": {
+        "subject": [
+          "heron"
+        ],
+        "setting": "",
+        "mood": "still",
+        "style": null
+      },
+      "shape": "mood",
+      "allow": []
+    },
+    {
+      "id": "watercycle.bare",
+      "bucket": "far",
+      "text": "draw me the water cycle, as a diagram",
+      "gold": {
+        "subject": [
+          "water cycle",
+          "water"
+        ],
+        "setting": "",
+        "mood": "",
+        "style": "diagram"
+      },
+      "shape": "bare",
+      "allow": []
+    },
+    {
+      "id": "cathedral.bare",
+      "bucket": "far",
+      "text": "draw me a cathedral nave",
+      "gold": {
+        "subject": [
+          "cathedral",
+          "nave"
+        ],
+        "setting": "",
+        "mood": "",
+        "style": null
+      },
+      "shape": "bare",
+      "allow": []
+    },
+    {
+      "id": "cathedral.setting",
+      "bucket": "far",
+      "text": "draw me a cathedral nave in the afternoon",
+      "gold": {
+        "subject": [
+          "cathedral",
+          "nave"
+        ],
+        "setting": "afternoon",
+        "mood": "",
+        "style": null
+      },
+      "shape": "setting",
+      "allow": []
+    },
+    {
+      "id": "cathedral.mood",
+      "bucket": "far",
+      "text": "draw me a cathedral nave, it should feel reverent",
+      "gold": {
+        "subject": [
+          "cathedral",
+          "nave"
+        ],
+        "setting": "",
+        "mood": "reverent",
+        "style": null
+      },
+      "shape": "mood",
+      "allow": []
+    },
+    {
+      "id": "bicycle.bare",
+      "bucket": "far",
+      "text": "draw me a rusted bicycle against a wall",
+      "gold": {
+        "subject": [
+          "bicycle"
+        ],
+        "setting": "",
+        "mood": "",
+        "style": null
+      },
+      "shape": "bare",
+      "allow": []
+    },
+    {
+      "id": "bicycle.setting",
+      "bucket": "far",
+      "text": "draw me a rusted bicycle against a wall at dusk",
+      "gold": {
+        "subject": [
+          "bicycle"
+        ],
+        "setting": "dusk",
+        "mood": "",
+        "style": null
+      },
+      "shape": "setting",
+      "allow": []
+    },
+    {
+      "id": "bicycle.mood",
+      "bucket": "far",
+      "text": "draw me a rusted bicycle against a wall, it should feel forlorn",
+      "gold": {
+        "subject": [
+          "bicycle"
+        ],
+        "setting": "",
+        "mood": "forlorn",
+        "style": null
+      },
+      "shape": "mood",
+      "allow": []
+    },
+    {
+      "id": "teapot.bare",
+      "bucket": "far",
+      "text": "draw me a chipped teapot on a stove",
+      "gold": {
+        "subject": [
+          "teapot"
+        ],
+        "setting": "",
+        "mood": "",
+        "style": null
+      },
+      "shape": "bare",
+      "allow": []
+    },
+    {
+      "id": "teapot.setting",
+      "bucket": "far",
+      "text": "draw me a chipped teapot on a stove in the morning",
+      "gold": {
+        "subject": [
+          "teapot"
+        ],
+        "setting": "morning",
+        "mood": "",
+        "style": null
+      },
+      "shape": "setting",
+      "allow": []
+    },
+    {
+      "id": "teapot.mood",
+      "bucket": "far",
+      "text": "draw me a chipped teapot on a stove, it should feel cosy",
+      "gold": {
+        "subject": [
+          "teapot"
+        ],
+        "setting": "",
+        "mood": "cosy",
+        "style": null
+      },
+      "shape": "mood",
+      "allow": []
+    },
+    {
+      "id": "violin.bare",
+      "bucket": "far",
+      "text": "draw me a violin resting on a chair, as anime",
+      "gold": {
+        "subject": [
+          "violin"
+        ],
+        "setting": "",
+        "mood": "",
+        "style": "anime"
+      },
+      "shape": "bare",
+      "allow": []
+    },
+    {
+      "id": "violin.setting",
+      "bucket": "far",
+      "text": "draw me a violin resting on a chair at twilight, as anime",
+      "gold": {
+        "subject": [
+          "violin"
+        ],
+        "setting": "twilight",
+        "mood": "",
+        "style": "anime"
+      },
+      "shape": "setting",
+      "allow": []
+    },
+    {
+      "id": "violin.mood",
+      "bucket": "far",
+      "text": "draw me a violin resting on a chair, it should feel sombre, as anime",
+      "gold": {
+        "subject": [
+          "violin"
+        ],
+        "setting": "",
+        "mood": "sombre",
+        "style": "anime"
+      },
+      "shape": "mood",
+      "allow": []
+    },
+    {
+      "id": "glacier.bare",
+      "bucket": "far",
+      "text": "draw me a glacier calving into the sea",
+      "gold": {
+        "subject": [
+          "glacier"
+        ],
+        "setting": "",
+        "mood": "",
+        "style": null
+      },
+      "shape": "bare",
+      "allow": []
+    },
+    {
+      "id": "glacier.setting",
+      "bucket": "far",
+      "text": "draw me a glacier calving into the sea at dawn",
+      "gold": {
+        "subject": [
+          "glacier"
+        ],
+        "setting": "dawn",
+        "mood": "",
+        "style": null
+      },
+      "shape": "setting",
+      "allow": []
+    },
+    {
+      "id": "glacier.mood",
+      "bucket": "far",
+      "text": "draw me a glacier calving into the sea, it should feel awed",
+      "gold": {
+        "subject": [
+          "glacier"
+        ],
+        "setting": "",
+        "mood": "awed",
+        "style": null
+      },
+      "shape": "mood",
+      "allow": []
+    }
+  ],
+  "sha256": "a121e21615884fd853e49609030b2162256f33d8cf62581f262761caef51e864"
+}

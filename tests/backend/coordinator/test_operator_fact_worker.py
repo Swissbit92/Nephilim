@@ -345,3 +345,245 @@ class TestNoEarlyReturnInThePostTurnHook:
             "the SQLite write must be skipped when the worker owns it, or "
             "extraction runs twice and the two stores disagree"
         )
+
+
+class TestTheCursorDisciplineInTheHandler:
+    """The compare-and-advance, and the rule that it only moves on success.
+
+    🔴 WHY THIS LIVES IN THE HANDLER AND NOT AT THE ENQUEUE SITE. The worker is
+    a single daemon thread, so the handler is the only point where two
+    overlapping triggers are serialised. Checking at enqueue instead is the
+    shape of Mem0 #6515, where the dedup snapshot is stale by the time the
+    check runs and both writers insert. These tests pin the boundary.
+
+    Fakes only: no graph, no model, no worker thread.
+    """
+
+    class _Episode:
+        def __init__(self, at=""):
+            self.stored = {"at": at, "message_id": "m0"} if at else None
+            self.advances = []
+
+        def fact_cursor(self, operator_id, session_id):
+            return dict(self.stored) if self.stored else None
+
+        def advance_fact_cursor(self, operator_id, session_id, *, cursor_at,
+                                cursor_message_id="", message_count=0,
+                                persona_key="", started_at=""):
+            self.advances.append({"at": cursor_at, "id": cursor_message_id,
+                                  "started_at": started_at})
+            self.stored = {"at": cursor_at, "message_id": cursor_message_id}
+            return "eid"
+
+    class _Repo:
+        def __init__(self):
+            self.added = []
+
+        def current_facts(self, operator_id, limit=256):
+            return []
+
+        def add_fact(self, operator_id, text, *, asserted_by,
+                     origin="learned", source_session_id=None):
+            self.added.append(text)
+            return "fid"
+
+    class _Profile:
+        def __init__(self):
+            self.updated = 0
+
+        def get_or_create_profile(self, user_id):
+            outer = self
+
+            class _P:
+                def update_from_session(self, out):
+                    outer.updated += 1
+            return _P()
+
+        def update_profile(self, profile):
+            pass
+
+    def _msgs(self, n, *, start=1):
+        out = []
+        for i in range(start, start + n):
+            out.append({"id": f"m{i}", "role": "user", "content": f"fact {i}",
+                        "timestamp": f"2026-10-23T12:00:{i:02d}"})
+        return out
+
+    def _run(self, *, repo, episode, job, facts=("a fact",), profile=None,
+             raises=False, max_turns=20):
+        from coordinator.services import operator_fact_writer as w
+
+        calls = {"extract": 0}
+
+        class _FX:
+            def extract_facts(_self, messages, persona_key=None):
+                calls["extract"] += 1
+                calls["window"] = [m["id"] for m in messages]
+                if raises:
+                    raise RuntimeError("extractor exploded")
+                return {"facts": list(facts), "background": [], "topics": [],
+                        "preferences": {}, "holdings": {}, "user_name": None}
+
+        class _Settings:
+            class memory:
+                facts_from_graph = True
+                flush_max_user_turns = max_turns
+            class ollama:
+                temp_fact_extraction = 0.3
+
+        import coordinator.fact_extractor as fe
+        import coordinator.llm_client as lc
+        orig_fx, orig_cl = fe.FactExtractor, lc.create_llm_client
+        fe.FactExtractor = lambda *a, **k: _FX()
+        lc.create_llm_client = lambda *a, **k: object()
+        try:
+            h = w.make_handler(lambda: repo, lambda: _Settings,
+                               (lambda: profile) if profile else None,
+                               (lambda: episode) if episode is not None else None)
+            try:
+                written = h(job)
+            except Exception:
+                written = -1
+            return written, calls
+        finally:
+            fe.FactExtractor, lc.create_llm_client = orig_fx, orig_cl
+
+    def _job(self, msgs, **kw):
+        from coordinator.services.operator_fact_worker import FactJob
+        base = dict(user_id="op", session_id="sess-1", persona_key="gwen",
+                    messages=msgs, use_cursor=True, reason="reset",
+                    cursor_to=msgs[-1]["timestamp"] if msgs else "",
+                    cursor_message_id=msgs[-1]["id"] if msgs else "")
+        base.update(kw)
+        return FactJob(**base)
+
+    # --- the measured defect ------------------------------------------------
+    def test_a_three_turn_session_is_extracted_in_full(self):
+        """The measured baseline: 3 facts in 3 user turns stored 0 of 3,
+        because `user_turns % 10` never hit zero."""
+        repo, ep = self._Repo(), self._Episode()
+        msgs = self._msgs(3)
+        written, calls = self._run(repo=repo, episode=ep, job=self._job(msgs),
+                                   facts=("f1", "f2", "f3"))
+        assert calls["extract"] == 1
+        assert calls["window"] == ["m1", "m2", "m3"]
+        assert written == 3
+        assert ep.advances and ep.advances[-1]["at"] == "2026-10-23T12:00:03"
+
+    # --- the compare-and-advance -------------------------------------------
+    def test_a_job_already_covered_is_skipped_without_extracting(self):
+        repo, ep = self._Repo(), self._Episode(at="2026-10-23T12:00:09")
+        written, calls = self._run(repo=repo, episode=ep,
+                                   job=self._job(self._msgs(3)))
+        assert written == 0
+        assert calls["extract"] == 0, "a covered job must not reach the model"
+        assert not ep.advances
+
+    def test_a_window_with_nothing_new_is_skipped_without_extracting(self):
+        msgs = self._msgs(3)
+        repo, ep = self._Repo(), self._Episode(at=msgs[-1]["timestamp"])
+        # cursor_to equal to stored -> the first guard catches it; make the job
+        # look newer so the has_new branch is the one under test.
+        written, calls = self._run(repo=repo, episode=ep,
+                                   job=self._job(msgs, cursor_to="2026-10-23T12:00:99"))
+        assert written == 0
+        assert calls["extract"] == 0, (
+            "re-extracting the boundary second burns an LLM call to rediscover "
+            "stored facts, and under OLLAMA_NUM_PARALLEL=1 that makes her slower")
+
+    def test_only_messages_after_the_cursor_are_extracted(self):
+        repo, ep = self._Repo(), self._Episode(at="2026-10-23T12:00:02")
+        _w, calls = self._run(repo=repo, episode=ep, job=self._job(self._msgs(5)))
+        assert calls["window"] == ["m2", "m3", "m4", "m5"], (
+            "the boundary second is re-included by design; anything older is not")
+
+    # --- when the cursor must and must not move -----------------------------
+    def test_the_cursor_advances_even_when_nothing_was_written(self):
+        """A factless window has still been looked at. Not marking it done means
+        every quiet session is re-extracted on every trigger, forever."""
+        repo, ep = self._Repo(), self._Episode()
+        written, _c = self._run(repo=repo, episode=ep,
+                                job=self._job(self._msgs(2)), facts=())
+        assert written == 0
+        assert ep.advances, "a factless window left the cursor behind"
+
+    def test_the_cursor_does_not_advance_when_the_extractor_raises(self):
+        repo, ep = self._Repo(), self._Episode()
+        self._run(repo=repo, episode=ep, job=self._job(self._msgs(2)), raises=True)
+        assert not ep.advances, (
+            "the cursor advanced over a window that was never extracted — a "
+            "permanent gap")
+
+    def test_the_cursor_does_not_advance_when_the_graph_repo_is_missing(self):
+        ep = self._Episode()
+        written, _c = self._run(repo=None, episode=ep, job=self._job(self._msgs(2)))
+        assert written == 0
+        assert not ep.advances, (
+            "the cursor advanced while the facts did not land; a stale cursor "
+            "beats a lost fact, which is why the cursor lives in the graph")
+
+    def test_it_refuses_to_extract_when_a_cursor_is_wanted_but_unavailable(self):
+        repo = self._Repo()
+        written, calls = self._run(repo=repo, episode=None,
+                                   job=self._job(self._msgs(2)))
+        assert written == 0
+        assert calls["extract"] == 0, (
+            "extracting without being able to mark the window done would repeat "
+            "it forever, at 5.54 s a time")
+
+    # --- the both-stores defect --------------------------------------------
+    def test_the_sqlite_profile_is_updated_even_when_the_graph_is_down(self):
+        """🔴 THE DEFECT THIS MILESTONE FIXES ON THE WAY PAST.
+
+        `if repo is None: return 0` sat ABOVE the profile update, so a Neo4j
+        outage lost the SQLite write too — and `_operator_facts` falls back to
+        SQLite on any graph failure, so the fallback had nothing to fall back
+        to. A graph outage took out BOTH stores.
+        """
+        prof = self._Profile()
+        written, _c = self._run(repo=None, episode=self._Episode(),
+                                job=self._job(self._msgs(2)), profile=prof)
+        assert written == 0
+        assert prof.updated == 1, (
+            "a graph outage also skipped the SQLite profile update — both "
+            "stores lost, and the SQLite fallback made useless")
+
+    def test_the_sqlite_profile_is_updated_when_no_facts_were_extracted(self):
+        """The same early-return shape, one line up: `if not candidates` also
+        skipped the profile update, losing an extracted NAME whenever no facts
+        came with it. Fixed by shape, not by file."""
+        prof = self._Profile()
+        written, _c = self._run(repo=self._Repo(), episode=self._Episode(),
+                                job=self._job(self._msgs(2)), facts=(), profile=prof)
+        assert written == 0
+        assert prof.updated == 1
+
+    # --- the cap ------------------------------------------------------------
+    def test_the_cap_trims_the_oldest_end_and_advances_only_that_far(self):
+        repo, ep = self._Repo(), self._Episode()
+        _w, calls = self._run(repo=repo, episode=ep,
+                              job=self._job(self._msgs(10)), max_turns=4)
+        assert calls["window"] == ["m1", "m2", "m3", "m4"], (
+            "the cap must keep the OLDEST turns; trimming the newest end would "
+            "advance the cursor past turns nothing read")
+        assert ep.advances[-1]["at"] == "2026-10-23T12:00:04", (
+            "the cursor advanced beyond the capped window")
+
+    def test_a_started_at_is_passed_through_for_on_create_only(self):
+        repo, ep = self._Repo(), self._Episode()
+        self._run(repo=repo, episode=ep,
+                  job=self._job(self._msgs(2), session_started_at="2026-07-05T15:39:00"))
+        assert ep.advances[-1]["started_at"] == "2026-07-05T15:39:00"
+
+    # --- the gate path is untouched ----------------------------------------
+    def test_a_non_cursor_job_never_reads_or_writes_the_cursor(self):
+        """The interval gate must be byte-identical in behaviour until it opts
+        in, so M2 cannot regress the path that already works."""
+        repo, ep = self._Repo(), self._Episode()
+        written, calls = self._run(
+            repo=repo, episode=ep,
+            job=self._job(self._msgs(3), use_cursor=False, reason="gate"))
+        assert calls["extract"] == 1
+        assert calls["window"] == ["m1", "m2", "m3"], "the gate's window was trimmed"
+        assert written == 1
+        assert not ep.advances, "a gate job touched the cursor"

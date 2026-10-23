@@ -186,7 +186,12 @@ class TestDeleteSession:
         # DELETE /sessions/{id} now reports media too. It does NOT share
         # /reset's derived-state clearing, so it was the obvious place for
         # images to leak out of; the count makes that visible.
-        assert resp.json() == {"ok": True, "images": 0}
+        # `facts_flushed` names what the session-end flush did. It is reported
+        # rather than logged because a flush that quietly did nothing is
+        # otherwise indistinguishable from one that worked — and "no_worker" is
+        # the correct value here, since the test wires no fact worker.
+        assert resp.json() == {"ok": True, "images": 0,
+                               "facts_flushed": "no_worker"}
 
     def test_not_found_returns_404(self):
         repos = _make_repos(session_exists=False)
@@ -285,6 +290,9 @@ class TestClearSessionMessages:
             "note": True,
             "vector_index": True,
             "images": 0,
+            # The session-end flush runs BEFORE the messages are deleted, and
+            # names its outcome. "no_worker" because this test wires none.
+            "facts_flushed": "no_worker",
         }
 
     def test_missing_rag_does_not_fail_the_reset(self):

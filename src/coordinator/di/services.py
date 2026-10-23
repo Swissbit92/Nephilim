@@ -122,10 +122,40 @@ def init_operator_fact_worker():
 
             return OperatorFactRepository(driver, cfg.database)
 
+        def _episode_repo():
+            """Where the fact-extraction cursor lives.
+
+            Same driver and same gate as `_repo` deliberately: the cursor must
+            live in the SAME STORE as the write it authorises, or it can advance
+            past a window that was never persisted. If the graph is unavailable
+            both return None together, the handler refuses to extract, and the
+            window is re-covered on the next trigger.
+            """
+            cfg = get_settings().graph
+            driver = get_neo4j_driver() if cfg.enabled else None
+            if driver is None:
+                return None
+            from ..repositories.episode_repository import EpisodeRepository
+
+            return EpisodeRepository(driver, cfg.database)
+
         _operator_fact_worker = OperatorFactWorker(
-            make_handler(_repo, get_settings, get_user_profile_repo)
+            make_handler(_repo, get_settings, get_user_profile_repo,
+                         _episode_repo)
         )
         _operator_fact_worker.start()
+
+        # The idle sweeper, started only once the worker exists -- it has
+        # nothing to enqueue into otherwise. Defaults OFF
+        # (MEMORY_FLUSH_SWEEP_SECONDS=0) so a deploy cannot begin re-extracting
+        # 323 idle historical sessions before their cursors are seeded; the
+        # /reset and delete triggers work regardless.
+        try:
+            from ..services.session_flush_service import start_flush_sweeper
+
+            start_flush_sweeper()
+        except Exception as e:  # noqa: BLE001
+            logger.debug("[SessionFlush] sweeper start failed (non-fatal): %s", e)
     except Exception as e:  # noqa: BLE001
         logger.warning("[OperatorFactWorker] init failed (non-fatal): %s", e)
         _operator_fact_worker = None

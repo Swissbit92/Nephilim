@@ -147,11 +147,16 @@ class TestTheWindowCoversTheInterval:
 
     INTERVAL = 10
 
+    #: 🔴 THIS USED TO BE A PRIVATE COPY of the production slice, and four tests
+    #: exercised the copy rather than the code that ships. The window now lives
+    #: at module scope in `coordinator.services.fact_window`, so the guard binds
+    #: to the IMPORT. A duplicated algorithm under test is a guard that can pass
+    #: while production is broken, which is the whole failure this file exists
+    #: to document -- twice over already.
     def _window(self, msgs, interval):
-        """The production slice, extracted so it can be tested directly."""
-        uidx = [i for i, m in enumerate(msgs) if m.get("role") == "user"]
-        start = uidx[-interval] if len(uidx) > interval else 0
-        return msgs[start:]
+        from coordinator.services.fact_window import window_since_last_firing
+
+        return window_since_last_firing(msgs, interval)
 
     def _convo(self, turns, bubbles=lambda t: (t % 3) + 1):
         msgs = []
@@ -203,19 +208,55 @@ class TestTheWindowCoversTheInterval:
         assert sum(1 for m in msgs[-20:] if m["role"] == "user") < 5
 
     def test_the_live_code_slices_by_user_turn_not_a_fixed_tail(self):
+        """🔴 THIS GUARD WENT BLIND ONCE AND THAT IS WHY IT SCANS TWO PLACES.
+
+        It originally parsed only `_apply_post_turn_updates`, where the window
+        was a nested closure. When the closure was lifted to
+        `coordinator.services.fact_window` so the flush could reuse it, the
+        scan kept passing while the function it guards had moved out of the
+        source it reads. Verified by reintroducing `return msgs[-20:]` in the
+        new module: this test still reported PASSED.
+
+        A guard must follow the logic it guards. Both locations are scanned, and
+        the forbidden shape is widened to any negative tail on a message list
+        rather than the two variable names that happened to exist in 2026-10.
+        """
         import ast
         import inspect
         import textwrap
 
         from coordinator.services import chat_session_service as css
+        from coordinator.services import fact_window as fw
 
-        tree = ast.parse(textwrap.dedent(
-            inspect.getsource(css._apply_post_turn_updates)))
-        # No live subscript may be a bare [-20:] on the message list.
         bad = []
-        for n in ast.walk(tree):
-            if isinstance(n, ast.Subscript):
-                src = ast.unparse(n)
-                if "all_messages_updated[-" in src or "get_messages_by_session(state.session_id)[-" in src:
-                    bad.append(src)
+        for where, src_text in (
+            ("_apply_post_turn_updates",
+             inspect.getsource(css._apply_post_turn_updates)),
+            ("fact_window.window_since_last_firing",
+             inspect.getsource(fw.window_since_last_firing)),
+            ("fact_window.window_since_cursor",
+             inspect.getsource(fw.window_since_cursor)),
+        ):
+            tree = ast.parse(textwrap.dedent(src_text))
+            for n in ast.walk(tree):
+                if not isinstance(n, ast.Subscript):
+                    continue
+                rendered = ast.unparse(n)
+                named_tail = (
+                    "all_messages_updated[-" in rendered
+                    or "get_messages_by_session(state.session_id)[-" in rendered
+                )
+                # Any `msgs[-N:]` / `messages[-N:]` slice on a message list is
+                # the same defect under a different variable name.
+                sl = n.slice
+                bare_tail = (
+                    isinstance(sl, ast.Slice)
+                    and sl.lower is not None
+                    and isinstance(sl.lower, ast.UnaryOp)
+                    and isinstance(sl.lower.op, ast.USub)
+                    and isinstance(n.value, ast.Name)
+                    and n.value.id in {"msgs", "messages", "all_messages_updated"}
+                )
+                if named_tail or bare_tail:
+                    bad.append(f"{where}: {rendered}")
         assert not bad, f"a fixed tail is back: {bad}"
