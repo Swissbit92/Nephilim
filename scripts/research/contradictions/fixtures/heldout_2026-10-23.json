@@ -1,0 +1,103 @@
+{
+  "_comment": "HELD-OUT, frozen 2026-10-23, LABELLED BEFORE THE SLOTTER WAS RUN ON IT. The 13/13 on the gold set is IN-SAMPLE: the cardinality registry was written by someone who had read those labels, so it is a fit, not a measurement. This file is drawn from the 26 real graph facts the gold set left unkeyed and from the 12 SQLite memory_facts rows -- a DIFFERENT extractor, so a different distribution. No invented cases.\n\nIts purpose is the FALSE-POSITIVE channel, which the gold set could not test: a SLOT COLLISION, where two facts about genuinely different things both land in one declared single-valued slot. Two real instances are here (diet, identity:name) and they are the rows that matter. 10 of 12 pairs are labelled compatible or paraphrase ON PURPOSE -- this set is weighted to catch over-flagging, because an over-flag makes a true memory invisible while a miss merely leaves her inconsistent.",
+  "frozen_on": "2026-10-23",
+  "labelled_before_scoring": true,
+  "facts": {
+    "name_ben": "His name is Ben and he prefers to be called that",
+    "name_ramon": "His name is Ramon",
+    "diet_veg": "Ben is vegetarian and does not eat meat",
+    "diet_eggs": "Ben enjoys eggs benedict and apple juice for breakfast",
+    "nick_daddy": "Ben likes to be called Daddy during sex",
+    "nick_daddy2": "His nickname is Daddy",
+    "hob_gaming": "Ben likes gaming, especially RPGs like Witcher 3 and Cyberpunk 2077",
+    "hob_gta": "Ben plays GTA 5",
+    "hob_gym": "Ben goes to the gym",
+    "hob_beach": "Ben enjoys beach activities and reading on the beach",
+    "sex_control": "Ben likes to be in control during sex",
+    "sex_home": "Ben prefers sex at home",
+    "sex_rough": "Ben likes rough, intense and primal sex",
+    "sex_dom": "Ben has a preference for deep-throating and being dominated",
+    "goal_your": "His goal is to start something of your own",
+    "goal_my": "His goal is to start something of my own",
+    "conc_runway": "He is concerned about the money runway",
+    "conc_runway2": "He is concerned about the money runway",
+    "conc_dec": "He is concerned about a decision",
+    "books": "Ben reads general-interest books such as Animal Farm and Jordan Peterson's 12 Rules for Life",
+    "car": "Ben sold his car in June or July 2026"
+  },
+  "pairs": [
+    {
+      "a": "diet_veg",
+      "b": "diet_eggs",
+      "label": "compatible",
+      "why": "BOTH TRUE AND BOTH PLAUSIBLY `diet`, which is DECLARED SINGLE-VALUED. Eggs are vegetarian, so these agree -- but a slotter that puts both in `diet` retires one. This is the collision channel firing on real data, and it is the single most important row in this file."
+    },
+    {
+      "a": "name_ben",
+      "b": "name_ramon",
+      "label": "compatible",
+      "why": "`identity:name` is declared single-valued and these ARE two values. But 'Ben' is what he prefers to be CALLED and 'Ramon' is from a different store written by a different extractor. The baseline already recorded the verdict: which is correct is the operator's call, not a detector's. A detector that retires one has destroyed the operator's own decision."
+    },
+    {
+      "a": "goal_your",
+      "b": "goal_my",
+      "label": "paraphrase",
+      "why": "the SAME goal in second and first person -- an artefact of the extractor reading her turn and his turn. Must not be called a contradiction."
+    },
+    {
+      "a": "conc_runway",
+      "b": "conc_runway2",
+      "label": "paraphrase",
+      "why": "byte-identical, and BOTH LIVE in memory_facts because its supersede key could never fire. Exact containment already catches this; it is here so the new path cannot make it worse."
+    },
+    {
+      "a": "nick_daddy",
+      "b": "nick_daddy2",
+      "label": "paraphrase",
+      "why": "same VALUE ('Daddy') in a single-valued slot -- the value test must stop this before cardinality is consulted."
+    },
+    {
+      "a": "hob_gaming",
+      "b": "hob_gta",
+      "label": "compatible",
+      "why": "both hobbies, both true"
+    },
+    {
+      "a": "hob_gaming",
+      "b": "hob_gym",
+      "label": "compatible",
+      "why": "both hobbies"
+    },
+    {
+      "a": "hob_gym",
+      "b": "hob_beach",
+      "label": "compatible",
+      "why": "both hobbies"
+    },
+    {
+      "a": "sex_control",
+      "b": "sex_home",
+      "label": "compatible",
+      "why": "a preference about control and one about location -- different things"
+    },
+    {
+      "a": "sex_rough",
+      "b": "sex_dom",
+      "label": "compatible",
+      "why": "overlapping preferences that coexist; the store holds six of these"
+    },
+    {
+      "a": "conc_dec",
+      "b": "conc_runway",
+      "label": "compatible",
+      "why": "two different concerns, both live"
+    },
+    {
+      "a": "books",
+      "b": "car",
+      "label": "compatible",
+      "why": "unrelated; a sanity floor"
+    }
+  ],
+  "known_limits": "One operator, two extractors. This measures generalisation across phrasings and across writers, NOT across people. And it contains no case of two simultaneously-true values in a NARROW slot (two dogs, two homes) because the operator has one of each -- that residual channel stays unmeasured and the shadow ledger is the only instrument for it."
+}
