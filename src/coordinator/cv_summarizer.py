@@ -37,7 +37,11 @@ def _llm() -> OllamaLLM:
     cfg = get_settings().ollama
     model = require_model_configured(cfg.model)
     assert_model_available(cfg.base, model)
-    return OllamaLLM(base_url=cfg.base, model=model, temperature=cfg.temperature, num_ctx=cfg.context_window, keep_alive=cfg.utility_keep_alive)
+    # `reasoning` omitted when unset, so a non-reasoning model is unaffected.
+    # A reasoning model without it returns an EMPTY summary, not an error.
+    return OllamaLLM(base_url=cfg.base, model=model, temperature=cfg.temperature,
+                     num_ctx=cfg.context_window, keep_alive=cfg.utility_keep_alive,
+                     **({} if cfg.reasoning is None else {"reasoning": cfg.reasoning}))
 
 
 # ---------------- Token counting and truncation ----------------

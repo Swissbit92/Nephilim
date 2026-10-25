@@ -55,6 +55,7 @@ class OllamaHTTPClient:
         options: dict[str, Any] | None = None,
         keep_alive: Any = None,
         timeout: httpx.Timeout | None = None,
+        think: bool | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -62,6 +63,12 @@ class OllamaHTTPClient:
         self.options = dict(options or {})
         self.keep_alive = keep_alive
         self._timeout = timeout or _DEFAULT_TIMEOUT
+        # `think` is a TOP-LEVEL request key, never an option. Ollama validates
+        # the options dict against a fixed list and answers HTTP 200 with a
+        # WARN log for anything it does not recognise, so a `think` placed in
+        # options is accepted, ignored, and indistinguishable from working.
+        # That is exactly how this control was dead on this transport.
+        self.think = think
 
     def _payload(self, prompt: str) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -72,6 +79,8 @@ class OllamaHTTPClient:
         }
         if self.keep_alive is not None:
             payload["keep_alive"] = self.keep_alive
+        if self.think is not None:
+            payload["think"] = self.think
         return payload
 
     def _post(self, prompt: str) -> dict[str, Any]:

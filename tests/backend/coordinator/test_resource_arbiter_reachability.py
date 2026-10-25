@@ -205,12 +205,26 @@ def test_every_chat_model_transport_is_guarded():
         r"OllamaLLM\s*\(|ollama\.Client\s*\(|/api/generate|/api/chat"
     )
     # Known non-callers: they describe or administer, they do not generate.
-    allowed = {
-        "services/ollama_admin.py",   # the evictor itself — guarding it would deadlock
-        "config/llm.py",              # settings prose
-        "ollama_utils.py",            # /api/tags only; does not load a model
-        "server.py",                  # /api/version health probe
-    }
+    #
+    # READ FROM THE SCRIPT, never redeclared here. This list existed twice —
+    # once in `scripts/checks/chat_model_transports_guarded.py` (the copy CI
+    # enforces) and once inline in this test. Two copies of an exemption list
+    # drift in the direction that makes both pass, which is the direction that
+    # stops the rule protecting anything, and nothing fails while they do.
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location(
+        "_inv1",
+        pathlib.Path(__file__).resolve().parents[3]
+        / "scripts" / "checks" / "chat_model_transports_guarded.py",
+    )
+    _inv1 = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_inv1)
+    allowed = set(_inv1.ALLOWED)
+
+    # And the regexes must not drift apart either.
+    assert _inv1.TRANSPORT.pattern == transport.pattern, (
+        "the INV-1 script and this test disagree about what a transport IS"
+    )
 
     offenders = []
     for path in sorted(root.rglob("*.py")):

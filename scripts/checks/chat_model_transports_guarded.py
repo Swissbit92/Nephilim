@@ -34,6 +34,8 @@ ALLOWED = {
     "config/llm.py": "settings prose, no call",
     "ollama_utils.py": "/api/tags only; does not load a model",
     "server.py": "/api/version health probe",
+    "services/ollama_think.py": "names both endpoints in prose to say where "
+                                "`think` goes; builds a dict, opens no socket",
 }
 
 

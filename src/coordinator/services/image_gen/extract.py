@@ -56,6 +56,7 @@ import logging
 import re
 from typing import Any
 
+from ..ollama_think import wire_think
 from .prompt import MAX_FIELD_CHARS, STYLE_PHRASES, GenerationIntent
 
 logger = logging.getLogger(__name__)
@@ -192,6 +193,7 @@ def extract(message: str, *, client=None, model: str | None = None,
     # the machine, so this is defence in depth — and INV-1 exists precisely
     # because the fifth transport was added by someone who had not read the
     # other four. It caught this file the first time the suite ran.
+    from ...config import get_settings
     from ..resource_arbiter import guard_chat_model
 
     guard_chat_model("image intent extraction")
@@ -202,6 +204,10 @@ def extract(message: str, *, client=None, model: str | None = None,
     messages.append({"role": "user", "content": _INSTRUCTION + (message or "")})
 
     try:
+        # A schema-constrained call is NOT immune: the grammar binds the
+        # visible content, while a reasoning model spends EXTRACT_NUM_PREDICT
+        # on its thinking stream first and returns content="" — which lands
+        # here as a json.JSONDecodeError on an empty string, not as a refusal.
         resp = client.chat(
             model=model,
             messages=messages,
@@ -211,6 +217,7 @@ def extract(message: str, *, client=None, model: str | None = None,
                 "temperature": EXTRACT_TEMPERATURE,
                 "num_predict": EXTRACT_NUM_PREDICT,
             },
+            **wire_think(get_settings().ollama.reasoning),
         )
         raw = (resp.get("message") or {}).get("content") or ""
         data = json.loads(raw)
