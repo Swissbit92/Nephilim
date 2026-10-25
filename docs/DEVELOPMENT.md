@@ -89,7 +89,7 @@ Plists and the installer live in `scripts/launchd/`. The frontend service (`serv
 
 Reachable from another machine over SSH without physical access. **Both ports must be forwarded** — the chat UI calls the backend on the absolute `:8000` URL, while auth refresh proxies through `:3001`.
 
-**Address the Mini by its Bonjour name, `Mac-mini-von-Ramon.local`.** `192.168.1.246` is a Wi-Fi DHCP lease (24h) and can move. macOS clients resolve the `.local` name reliably; use the IP only from a client without working mDNS (the old Windows laptop did). The username is `swissbit.` — the **trailing dot is part of it**.
+**Address the Mini by its Bonjour name, `Mac-mini-von-Ramon.local`.** `192.168.1.246` is a Wi-Fi DHCP lease (24h) and can move. macOS clients resolve the `.local` name reliably — the MacBook's logins arrive over an IPv6 link-local address (`fe80::…%en0`), which has no lease to expire; use the IP only from a client without working mDNS (the old Windows laptop did). The username is `swissbit.` — the **trailing dot is part of it**.
 
 **One-off:**
 
@@ -114,7 +114,7 @@ Then the whole tunnel is just `ssh nephilim` → open `http://localhost:3001`. (
 **Adding a new client (key auth).** The Mini accepts key logins; keys live in the Mini's `~/.ssh/authorized_keys` (mode 600, one line per client — append, never overwrite).
 
 1. On the client, create a key if `~/.ssh/id_ed25519.pub` does not exist: `ssh-keygen -t ed25519 -C "<you>@<machine>"`.
-2. Get the `.pub` line onto the Mini and **append** it to `authorized_keys`. Compare `ssh-keygen -lf` fingerprints on both ends before trusting it. Only the `.pub` file ever leaves the client.
+2. Get the `.pub` line onto the Mini and **append** it to `authorized_keys` (`echo '<pub line>' >> ~/.ssh/authorized_keys`). Don't rely on `ssh-copy-id` — it needs SSH password auth, which is slated to be disabled on the Mini. Compare `ssh-keygen -lf` fingerprints on both ends before trusting it. Only the `.pub` file ever leaves the client.
 3. Pin the Mini's host key instead of blind-accepting the first-connection prompt — scan it and check the fingerprint against the value below **before** adding it:
 
    ```bash
