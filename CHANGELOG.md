@@ -5,7 +5,89 @@ All notable changes to the NEPHILIM project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.0] - 2026-10-25
+
+### Fixed — the intent classifier was wrong in BOTH directions
+
+One defect produced two opposite user-visible bugs. `_INTENT_EXAMPLES_PRIMARY`
+["web_search"] is **18 of 33 crypto-and-markets**, and three of those examples
+are phrased as *feelings about the market* ("how are people feeling about the
+market", "how's the market doing today", "what's the vibe in the market
+today"). Against a 0.66 threshold with max-over-examples scoring, that means:
+
+| query | best match | score | result |
+|---|---|---|---|
+| "How are you feeling today?" | "how's the market doing today" | **0.693** | over -> routed to web |
+| "what's going on with the ECB lately?" | "how's the market doing today" | **0.613** | under -> no search |
+| "who is the current chancellor of Germany?" | "latest news in Switzerland today" | **0.560** | under -> no search |
+
+- 🔴 **She answered "How are you feeling today?" with a canned capability
+  refusal.** Observed in live production minutes after the gemma4 switch: the
+  turn routed to `web_search`, `check_scope` found `web_search` missing from
+  gwen's granted surface, and `capability_deflection` returned *"I can't go
+  looking that up — I've only got pictures and clips"* — in 0.2s, with **no
+  model call**, for a question about how she feels.
+- 🔴 **Genuine current-events questions were answered from the model's own
+  weights with no search and no warning.** Non-market phrasings fell below
+  threshold, so she answered "who is the current chancellor of Germany?"
+  confidently and possibly staleley. In the tool-firing eval these failed on
+  **both** models, which is what identifies routing rather than the model.
+- **It is not a threshold problem.** The two bugs pull in opposite directions:
+  raising the threshold to stop the false fire pushes the ECB question further
+  out of reach, and lowering it to catch the ECB question makes the false fire
+  worse. The EXAMPLES are the defect.
+- **Fix, on an existing precedent.** `operator_memory` was added 2026-10-21 for
+  the *identical defect shape* — a question with no external referent attracted
+  to `web_search` and then deflected — so this takes the same remedy: a narrow
+  `companion_chat` centroid (15 examples: her state, the relationship, her inner
+  life) whose win routes to NEEDS_NEITHER. Deliberately **not** an `llm_only`
+  catch-all, which the design note excludes because it smears toward the
+  embedding-space centre; and deliberately **not capability-gated**, because
+  whether a turn is companion chat is a property of the question, not of which
+  tools the persona holds. Plus 16 non-market `web_search` examples
+  (institutions, office-holders, product prices, tech releases, and the
+  "lately / these days / right now" register the operator actually uses).
+
+| | before | after |
+|---|---|---|
+| existing 145-sample labelled set | 0.938 | **0.945** |
+| the production failures + controls | 0.300 | **1.000** |
+| tool-firing accuracy (gemma4, 29 cases) | 83% | **100%** |
+| tool-firing misses | 5 | **0** |
+| tool-firing false positives | 1 | **0** |
+
+⚠️ **These cases were already labelled and already failing.** "how are you
+feeling today" and "how's your day been" sat in `routing_eval_set.json` as
+known failures, and the 0.66 threshold was tuned to 0.938 accuracy **accepting**
+them. This is not a new finding; what was new is that one of them reached the
+operator as a refusal. The new failures were kept in a SEPARATE probe set rather
+than added to the 145-sample guard, so 0.945 is measured on cases not fitted to.
+
+⚠️ **One accepted regression, pinned by a test rather than hidden.** "feeling
+like accumulating a bit" is labelled `wallet` and now routes to chat —
+`companion_chat` 0.701 vs `wallet` 0.687, a **0.014 margin** on a genuinely
+ambiguous phrase. Accepted because the failure direction is the safe one (she
+talks about it instead of opening a financial flow; a false wallet FIRE would be
+the dangerous direction) and because it only reaches wallet-capable personas,
+not gwen. `TestKnownAcceptedTradeOff` makes the trade visible and turns red if a
+future fix reclaims it.
+
+⚠️ **Native tool firing fell 81% -> 63% while accuracy rose to 100%.** The
+colloquial cases are now caught by the DETERMINISTIC floor rather than by the
+model's own tool call. For the operator that is the better outcome — every case
+is correct and grounded where five previously were not — but it is exactly the
+"the floor is carrying the system" signal `eval_tool_firing.py` exists to make
+visible, so it is recorded rather than buried.
+
+### Changed — a brittle source-scanning test replaced with a behavioural one
+
+`test_operator_memory_returns_none_so_it_lands_on_needs_neither` grepped the
+source for the literal `if best_intent in ("llm_only", "operator_memory"):`.
+That pinned the spelling of a tuple, not the behaviour: adding a third
+no-referent intent turned it red while the behaviour was intact, and a refactor
+that DROPPED the branch could have left it green. It now calls
+`route_by_embedding` and asserts the contract, parametrised over both
+no-referent intents. Verified by deleting the branch: red, then green restored.
 
 ### Changed — gwen's daily driver is now `gemma4:26b`
 

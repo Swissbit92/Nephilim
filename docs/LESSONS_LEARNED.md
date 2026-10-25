@@ -11,6 +11,41 @@ applies_to: nephilim
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
 
+## 2026-10-25 — an example set is a classifier, and a lopsided one fails in both directions at once
+
+**What:** two opposite production bugs, one cause. gwen answered *"How are you
+feeling today?"* with a canned capability refusal, and answered *"who is the
+current chancellor of Germany?"* from her own weights with no search. The
+classifier's `web_search` example set is **18 of 33 crypto-and-markets**, three
+of them phrased as *feelings about the market*. So an emotional question was
+lexically adjacent to the market examples and cleared the 0.66 threshold
+(0.693), while genuine non-market current events were far from them and fell
+below it (0.613, 0.560).
+
+**The transferable lesson:** when a nearest-example classifier is wrong in two
+opposite directions, the threshold cannot be the fix — moving it trades one
+error for the other. A lopsided example set does not merely under-cover the
+classes it omits; it **actively attracts** unrelated text that happens to share
+the register it over-covers. Check the composition of the examples before
+reaching for the knob.
+
+**Second lesson, about the test:** the guard on the related `operator_memory`
+branch asserted on SOURCE TEXT — it grepped for the literal
+`if best_intent in ("llm_only", "operator_memory"):`. Adding a third
+no-referent intent turned it red while the behaviour was perfectly intact, and
+a refactor that *dropped* the branch could have left it green. Replaced with a
+behavioural assertion that calls the function. This is the second instance in
+this repo of a source-scanning check guarding a spelling rather than a
+behaviour.
+
+**What I got wrong:** I reported this as a discovery. *"how are you feeling
+today"* and *"how's your day been"* were already labelled and already failing in
+`tests/evaluation/routing_eval_set.json`, and the threshold had been tuned to
+0.938 accuracy **accepting** them. The defect was known and recorded; only its
+reaching the operator as a refusal was new. A labelled eval set with known
+failures is a list of accepted bugs, and it is worth reading as one before
+claiming to have found something.
+
 ## 2026-10-23 — Similarity was the wrong RELATION, and the thing I called irreversible was not
 
 **What happened.** The store accumulated contradictions — three live "favourite

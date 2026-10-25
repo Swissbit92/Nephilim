@@ -82,6 +82,16 @@ class TestItIsNotCapabilityGated:
         assert no_tools != "web_search" and with_web != "web_search"
 
 
+class _StubModel:
+    """Minimal embeddings stand-in: one fixed vector for anything."""
+
+    def embed_query(self, text):  # noqa: D102
+        return [1.0, 0.0, 0.0]
+
+    def embed_documents(self, texts):  # noqa: D102
+        return [[1.0, 0.0, 0.0] for _ in texts]
+
+
 class TestWinningMeansNoDeflection:
     def test_needs_neither_is_the_one_intent_that_never_deflects(self):
         """Why returning None is the fix: NEEDS_NEITHER's requirement set is
@@ -90,14 +100,44 @@ class TestWinningMeansNoDeflection:
         verdict = check_scope(QueryIntent.NEEDS_NEITHER, set(), media_type=None)
         assert not verdict, "NEEDS_NEITHER must never be out-of-surface"
 
-    def test_operator_memory_returns_none_so_it_lands_on_needs_neither(self):
-        import inspect
+    @pytest.mark.parametrize("intent", ["operator_memory", "companion_chat"])
+    def test_no_referent_intents_return_none_so_they_land_on_needs_neither(self, intent):
+        """BEHAVIOURAL, deliberately — this test used to grep the source for the
+        literal `if best_intent in ("llm_only", "operator_memory"):`.
 
-        from coordinator.tools import semantic_router
+        That pinned the spelling of a tuple rather than the behaviour, so adding
+        a third no-referent intent (`companion_chat`, 2026-10-25) turned it red
+        while the behaviour it cared about was entirely intact — and, worse, a
+        refactor that renamed the variable would have turned it red while a
+        refactor that DROPPED the branch could have kept it green. This repo has
+        the failure class on record: a source-scanning check reported clean on
+        four input shapes it could not see.
 
-        src = inspect.getsource(semantic_router.route_by_embedding)
-        assert 'if best_intent in ("llm_only", "operator_memory"):' in src, (
-            "operator_memory must share llm_only's return-None path"
+        Now it calls the function and asserts the contract: an intent with no
+        external referent must route to None, which `classify_query_intent`
+        turns into NEEDS_NEITHER, the one intent `check_scope` never deflects.
+        """
+        from coordinator.tools import semantic_router as sr
+
+        # Force `intent` to win: one example set, every vector identical, so the
+        # cosine stub puts it over any threshold.
+        monkey = pytest.MonkeyPatch()
+        try:
+            monkey.setattr(sr, "_INTENT_EXAMPLES_PRIMARY",
+                           {intent: list(sr._INTENT_EXAMPLES_PRIMARY[intent])})
+            monkey.setattr(sr, "_example_vecs_primary", None)
+            monkey.setattr(sr, "_get_embeddings_model", lambda: _StubModel())
+            monkey.setattr(sr, "_cosine_similarity", lambda a, b: 0.99)
+            got = sr.route_by_embedding(
+                "anything", can_use_brave=True, can_use_wallet=True,
+                threshold=0.5, drop_llm_only_centroid=True,
+            )
+        finally:
+            monkey.undo()
+        assert got is None, (
+            f"{intent!r} won the route and returned {got!r}; it must return None "
+            "so the turn lands on NEEDS_NEITHER instead of being deflected with "
+            "the canned capability line"
         )
 
     def test_a_web_intent_without_web_tools_still_deflects(self):
