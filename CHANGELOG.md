@@ -5,6 +5,47 @@ All notable changes to the NEPHILIM project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed — the Magidonia voice brain is deleted from disk
+
+Docs-and-comments only. No code path changes; the daily driver is unchanged.
+
+- **`hf.co/TheDrummer/Magidonia-24B-v4.3-GGUF:Q4_K_M` deleted** (14 GB
+  reclaimed; 14 → 13 local models, 154.6 → 140.3 GB). It was ADR-008's voice
+  brain, the two-brain split never shipped, and the one-brain abliterated
+  Mistral has been the daily driver since 2026-07-05.
+- ⚠️ **Two things this forfeits, recorded rather than discovered later.**
+  (1) ADR-008 adopted the current model with *"Magidonia ... still pulled for
+  instant revert"* — there is now no instant revert, only a 14 GB re-pull of a
+  third-party GGUF that may no longer be published. (2) The **Magidonia voice
+  baseline is unrecoverable**: its 0.732 distinctiveness (vs abliterated's
+  0.804) can be cited from the record but never re-measured, because the frozen
+  persona-eval gallery pins the companion model in its manifest.
+- **`sampling_presets.py` now declares that it is fitted to a deleted model.**
+  The presets were tuned on 2026-06-21 *for Magidonia* and never re-tuned. That
+  is correct only because both models share a Mistral-Small base — and the
+  file's own note says Mistral-Small degrades above ~1.1 temp *unlike Gemma*, so
+  a Gemma-family daily driver would silently inherit sampling fitted to the
+  wrong curve. Re-tune before, not after, any base-family change.
+- **Three documents had been presenting Magidonia as the CURRENT daily driver**
+  — `Readme.md`, `docs/DEVELOPMENT.md` and `docs/setup/DOCKER_QUICKSTART.md` all
+  told a reader to `ollama pull` it and set it as `PERSONA_MODEL`. That was
+  stale since 2026-07-05 and, as of today, named a model that does not exist.
+  Corrected to `huihui_ai/mistral-small-abliterated:24b` at 16.4 tok/s measured.
+- **ROADMAP's model-A/B item updated with what has since been measured:** the
+  Magidonia arm struck; the named Heretic arm's tag confirmed 404 (the reasoning
+  for preferring Heretic over huihui's abliteration still stands on that item's
+  own 1/400-vs-45/400 numbers); gemma4:26b's 3.18x reproduced and its MoE
+  mechanism confirmed (`expert_count=128`, `expert_used_count=8`); and the
+  bandwidth law **fitted** on four dense models here — `tok/s x active_B = 375
+  +-4%` — which settles 70B dense as non-viable (~5.4 tok/s, 49.5 GB) and shows
+  MoE reaching only ~56% of its theoretical active-parameter win.
+- Historical references to Magidonia in ADR-004/005/006, the migration log and
+  earlier changelog entries are left **untouched** — they are records of what
+  was true then, and rewriting them would be falsifying the history. Only
+  statements about the present were changed.
+
 ## [0.9.3] - 2026-10-23
 
 ### Researched and measured — contradiction detection. NOT WIRED.

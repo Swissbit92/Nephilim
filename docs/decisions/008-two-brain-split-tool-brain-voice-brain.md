@@ -2,7 +2,7 @@
 title: "Two-brain split: tool brain + voice brain"
 status: Proposed
 created: 2026-07-05
-last_reviewed_on: 2026-07-05
+last_reviewed_on: 2026-10-25
 review_in: 12 months
 applies_to: nephilim
 ---
@@ -10,6 +10,39 @@ applies_to: nephilim
 # ADR-008: Two-brain split — tool brain + voice brain
 
 ## Status
+
+## AMENDMENT 2026-10-25 — the voice brain is deleted; the revert path this ADR relied on is gone
+
+This ADR's single-model resolution rested on a stated safety net: abliterated
+Mistral-Small was adopted with *"Magidonia evicted from RAM but still pulled for
+instant revert"*. **That net no longer exists.**
+`hf.co/TheDrummer/Magidonia-24B-v4.3-GGUF:Q4_K_M` was deleted from disk on
+2026-10-25 at the operator's instruction (14 GB reclaimed), on the grounds that
+the two-brain split never shipped and the one-brain abliterated model has been
+the daily driver without incident for nearly four months.
+
+Three consequences, stated so they are not discovered later:
+
+- **There is no instant revert.** Reverting now means a 14 GB re-pull of a
+  third-party HuggingFace GGUF, which may or may not still be published.
+- **The Magidonia voice baseline is UNRECOVERABLE.** Every distinctiveness
+  figure measured on it — chiefly the **0.732** this ADR cites, against
+  abliterated's **0.804** — can still be quoted from the record but can never be
+  re-measured, because the frozen persona-eval gallery pins the companion model
+  in its manifest. Accepted deliberately: the comparison it enables is a
+  comparison against a model nobody intends to run again.
+- **The sampling presets outlive the model they were fitted to.**
+  `sampling_presets.py` was tuned on 2026-06-21 *for Magidonia* and was never
+  re-tuned, which is correct only because both models share a Mistral-Small
+  base. A daily-driver change to a different base family inherits sampling
+  fitted to the wrong curve; the file now says so at the top.
+
+What is NOT affected: the single-model direction itself, the tool brain, the
+TB5 router-scopes-the-surface reframe, and every live behaviour. Nothing in
+this amendment changes code.
+
+### Original status (2026-07-05)
+
 
 **Supersedes [ADR-004](004-persona-safe-agentic-tool-calls.md)** — that pipeline was
 retired and deleted 2026-07-19 once the tool brain had soaked. The interceptor and
