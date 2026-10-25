@@ -114,7 +114,7 @@ Then the whole tunnel is just `ssh nephilim` → open `http://localhost:3001`. (
 **Adding a new client (key auth).** The Mini accepts key logins; keys live in the Mini's `~/.ssh/authorized_keys` (mode 600, one line per client — append, never overwrite).
 
 1. On the client, create a key if `~/.ssh/id_ed25519.pub` does not exist: `ssh-keygen -t ed25519 -C "<you>@<machine>"`.
-2. Get the `.pub` line onto the Mini and **append** it to `authorized_keys` (`echo '<pub line>' >> ~/.ssh/authorized_keys`). Don't rely on `ssh-copy-id` — it needs SSH password auth, which is slated to be disabled on the Mini. Compare `ssh-keygen -lf` fingerprints on both ends before trusting it. Only the `.pub` file ever leaves the client.
+2. Get the `.pub` line onto the Mini and **append** it to `authorized_keys` (`echo '<pub line>' >> ~/.ssh/authorized_keys`). `ssh-copy-id` does **not** work — it needs SSH password auth, which is disabled (see Hardening below) — so append over an already-authenticated session or at the Mini's console. Compare `ssh-keygen -lf` fingerprints on both ends before trusting it. Only the `.pub` file ever leaves the client.
 3. Pin the Mini's host key instead of blind-accepting the first-connection prompt — scan it and check the fingerprint against the value below **before** adding it:
 
    ```bash
@@ -128,6 +128,20 @@ Then the whole tunnel is just `ssh nephilim` → open `http://localhost:3001`. (
 Mini host key fingerprints (from `/etc/ssh`, 2026-10-25): ED25519 `SHA256:oz9iRO5QDwok6kr4jI27D/+hJsYOhAvLif5WQ5/MAn0` · ECDSA `SHA256:bFBY79WQij1rsR2R2diCbWLykd43xn73zprsdWgnaIs` · RSA `SHA256:M2Y6m8NtB5pePT11IxU4YO7PgGey8+x7XTG3qle9cd8`. If a client reports a different one, stop — either the Mini was reinstalled or something is answering in its place.
 
 Authorized clients (2026-10-25): `rzehn@rz-zephyrusduo` (old Windows laptop) and `ramon@macbook-pro-m5` (MacBook Pro M5, verified key-only login 2026-10-25). Remove a client's line from `authorized_keys` when the machine is retired.
+
+**Hardening — password login is OFF (applied 2026-10-25, OpenSSH 10.3p1).** Only public-key auth is accepted; a password-only attempt gets `Permission denied (publickey).` The policy lives in `/etc/ssh/sshd_config.d/00-hardening.conf` (root:wheel, 644):
+
+```
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+```
+
+- **Both `no` directives are required on macOS.** macOS ships `UsePAM yes` (`100-macos.conf`) and `KbdInteractiveAuthentication` defaults to `yes`, so with only `PasswordAuthentication no` PAM's keyboard-interactive path still accepts the Unix password.
+- **The `00-` prefix is load-bearing.** `Include` expands in lexicographic order and sshd keeps the FIRST value per keyword; `100-macos.conf` sorts before `99-…` (`'1' < '9'`), so a `99-` file would lose.
+- **Never set `UsePAM no`** — PAM also carries account/session handling; far larger blast radius than the problem.
+- **No restart needed.** launchd socket-activates a fresh sshd per connection, so config is read at spawn: the next new connection gets the policy and open sessions are unaffected. Validate with `sudo sshd -t` (silent = parses) and `sudo sshd -T | grep -E '^(passwordauthentication|kbdinteractiveauthentication|usepam|pubkeyauthentication)\b'`.
+- **Before changing sshd config, hold an SSH session open** (`ssh nephilim 'sleep 3600'`) as the way back in, and test from a NEW connection with `-o BatchMode=yes`. Rollback: `sudo rm /etc/ssh/sshd_config.d/00-hardening.conf` (next connection accepts passwords again).
 
 **One-click (Windows)** — save `nephilim.cmd`:
 
