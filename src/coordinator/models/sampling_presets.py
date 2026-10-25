@@ -63,6 +63,14 @@ class SamplingConfig:
 # NAMED PRESETS
 # ============================================================================
 
+# ⚠️ FITTED TO A MODEL THAT IS GONE. These values were tuned for Magidonia-24B-v4.3,
+# deleted from disk 2026-10-25. They were kept unchanged through the 2026-07-05 switch
+# to huihui_ai/mistral-small-abliterated:24b because that model shares the same
+# Mistral-Small base, so the tuning still applied. It would NOT survive a switch to a
+# different base — the note below says Mistral-Small degrades above ~1.1 temp *unlike
+# Gemma*, so a Gemma-family daily driver would inherit sampling fitted to the wrong
+# curve. Re-tune before, not after, any base-family change.
+#
 # Re-tuned 2026-06-21 for Magidonia-24B-v4.3 (Mistral-Small-3.2 base). vs the
 # original gemma2:9b values: base temperatures lowered (Mistral-Small degrades
 # above ~1.1 temp, unlike Gemma) and repeat_penalty softened to ~1.03-1.08
