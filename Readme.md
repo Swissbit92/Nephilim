@@ -157,7 +157,7 @@
 
 ### AI/ML
 - **Ollama** local LLM server (native macOS — Metal GPU acceleration automatic via Apple Silicon)
-- **Magidonia-24B-v4.3 GGUF Q4_K_M** (daily-driver persona model — Mistral-Small-3.2-based uncensored roleplay finetune by TheDrummer, ~17 tok/s on Metal)
+- **huihui_ai/mistral-small-abliterated:24b** (daily-driver persona model — abliterated Mistral-Small-24B, ~16.4 tok/s on Metal measured 2026-10-25). Magidonia-24B-v4.3 was the daily driver until 2026-07-05 and is **deleted from disk**.
 - **gemma2:9b-instruct-q5_K_M** (lightweight fallback / smoke-test model; also the `config/` package default)
 - **nomic-embed-text:latest** for embeddings
 - **FAISS CPU** for vector search and semantic retrieval
@@ -332,7 +332,7 @@ cd react-ui && npm install && cd ..
 
 ```bash
 ollama serve                                                                              # Start service (native macOS — Metal GPU automatic)
-ollama pull hf.co/TheDrummer/Magidonia-24B-v4.3-GGUF:Q4_K_M                             # Daily-driver model (~17 tok/s on Metal)
+ollama pull huihui_ai/mistral-small-abliterated:24b                               # Daily-driver model (~16.4 tok/s on Metal)
 ollama pull gemma2:9b-instruct-q5_K_M                                                    # Fallback / smoke-test model
 ollama pull nomic-embed-text:latest                                                       # Embeddings (RAG memory)
 ```
@@ -344,7 +344,7 @@ Create a `.env` file in the project root:
 ```bash
 # Required
 OLLAMA_BASE=http://127.0.0.1:11434
-PERSONA_MODEL=hf.co/TheDrummer/Magidonia-24B-v4.3-GGUF:Q4_K_M   # Daily driver; gemma2:9b-instruct-q5_K_M = fallback
+PERSONA_MODEL=huihui_ai/mistral-small-abliterated:24b   # Daily driver. NO fallback model is configured, deliberately — see CLAUDE.md
 PERSONA_TEMPERATURE=0.9
 COORD_PORT=8000
 PERSONA_DIR=personas
@@ -433,7 +433,7 @@ ssh -L 3001:localhost:3001 -L 8000:localhost:8000 <user>@<mac-mini>
                                     ▼
                     ┌─────────────────────────────────────────┐
                     │   Ollama LLM (Local Inference)           │
-                    │  • Magidonia-24B-v4.3 GGUF Q4_K_M        │
+                    │  • mistral-small-abliterated:24b         │
                     │    (daily driver, Metal GPU, ~17 tok/s)  │
                     │  • gemma2:9b-instruct-q5_K_M (fallback)  │
                     │  • nomic-embed-text (embeddings)          │

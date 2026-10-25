@@ -168,16 +168,16 @@ Run Ollama **natively** on macOS — Metal GPU acceleration is automatic on Appl
 
 ```bash
 ollama serve                                                                  # Start service (Metal GPU automatic)
-ollama pull hf.co/TheDrummer/Magidonia-24B-v4.3-GGUF:Q4_K_M                 # Daily-driver model (~17 tok/s on M4 Pro Metal)
+ollama pull huihui_ai/mistral-small-abliterated:24b                   # Daily-driver model (~16.4 tok/s on M4 Pro Metal)
 ollama pull gemma2:9b-instruct-q5_K_M                                         # Fallback / smoke-test model (config.py default)
 ollama pull nomic-embed-text:latest                                            # Embeddings (RAG memory)
 ```
 
-Set `PERSONA_MODEL=hf.co/TheDrummer/Magidonia-24B-v4.3-GGUF:Q4_K_M` in `.env` to use the daily driver. `MODEL_CONTEXT_WINDOW=16384` is wired to Ollama `num_ctx` (model max is 131K, dial up as needed). `MODEL_MAX_OUTPUT_TOKENS=400` caps per-turn generation (Ollama `num_predict`) — a backstop against runaway replies (turn latency is ~linear in output tokens at ~16 tok/s).
+Set `PERSONA_MODEL=huihui_ai/mistral-small-abliterated:24b` in `.env` to use the daily driver. (Magidonia-24B-v4.3 held this role until 2026-07-05 and was deleted from disk 2026-10-25; the sampling presets are still the ones fitted to it, which is safe only while the daily driver stays on a Mistral-Small base — see `sampling_presets.py`.) `MODEL_CONTEXT_WINDOW=16384` is wired to Ollama `num_ctx` (model max is 131K, dial up as needed). `MODEL_MAX_OUTPUT_TOKENS=400` caps per-turn generation (Ollama `num_predict`) — a backstop against runaway replies (turn latency is ~linear in output tokens at ~16 tok/s).
 
 ### Concurrency tuning (single-user — important)
 
-`OLLAMA_NUM_PARALLEL=1` is **required** on this box. Unset, Ollama opens parallel slots that split the single GPU **and** split `num_ctx` across them, and a 2nd concurrent slot is cold (no cached prefix) — two overlapping requests then crawl at ~1 tok/s instead of one running alone at ~16 tok/s (this caused a one-off 161.9s turn on 2026-06-21). It's set durably by the login LaunchAgent `com.nephilim.ollama-tuning` (`scripts/launchd/ollama-tuning.sh`), since Ollama runs as the menu-bar `Ollama.app` and `launchctl setenv` alone doesn't survive reboot. **Do NOT set `OLLAMA_MAX_LOADED_MODELS=1`** — nephilim keeps Magidonia + nomic-embed both resident; `=1` makes them evict each other (17 GB reload per RAG embedding).
+`OLLAMA_NUM_PARALLEL=1` is **required** on this box. Unset, Ollama opens parallel slots that split the single GPU **and** split `num_ctx` across them, and a 2nd concurrent slot is cold (no cached prefix) — two overlapping requests then crawl at ~1 tok/s instead of one running alone at ~16 tok/s (this caused a one-off 161.9s turn on 2026-06-21). It's set durably by the login LaunchAgent `com.nephilim.ollama-tuning` (`scripts/launchd/ollama-tuning.sh`), since Ollama runs as the menu-bar `Ollama.app` and `launchctl setenv` alone doesn't survive reboot. **Do NOT set `OLLAMA_MAX_LOADED_MODELS=1`** — nephilim keeps the persona model + the embedder both resident; `=1` makes them evict each other (17 GB reload per RAG embedding).
 
 > **Latency note:** prefill is *not* the bottleneck here (~0.4 s for the ~3.5 K-token persona prompt); generation throughput (~16 tok/s × output length) is. See memory `project_nephilim_latency_ops`.
 

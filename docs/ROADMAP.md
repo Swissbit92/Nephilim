@@ -421,7 +421,50 @@ Two consequences the sequencing makes concrete, both recorded in
   4. **Metrics:** `CrossRep-4` + `longest_shared_span ≥ 8` for repetition (stdlib, no model, excluding n-grams present in the persona card itself); probe-level pass/fail for rule violation and scene loss, every gold a short exact-matchable span.
   5. **Power:** unit of analysis is the **probe, not the generation**. m=20 probes × k=5 generations × 2 configs ≈ 200 generations ≈ 12–13 h; paired sign-flip permutation + BCa cluster bootstrap; **one pre-registered primary endpoint**. Detectable effect is a ~2/3 relative reduction from a ~30% base — 30%→20% is **not** detectable (power 0.34), so design probes to a 0.3–0.5 base rate and report it. The harness must count probes-in vs probes-scored and fail loudly if they differ.
   6. **Baseline with the constraints flag both ON and OFF** — with it off, "broke the rule" and "was never told the rule" are indistinguishable.
-- [ ] **Model A/B, gated on the ruler.** The evidence says the lever is **abliteration method and quant, not parameter count**: MultiChallenge (instruction retention / memory / self-coherence — this exact failure set) moves only 0.608 → 0.615 from 27B to 122B, while at 27B huihui's method retains 45/400 refusals vs Heretic's 1/400 and costs −7.0pp TruthfulQA vs −3.2pp. The deployed model is Mistral-Small-**3 (2501)** abliterated by huihui — two generations stale, worst-measured method. Arms: control · `coder3101/Qwen3.5-27B-heretic` @ Q6_K · a >30B **MoE** (sparse, so larger *and* faster — `gemma4:26b` measured 53.3 tok/s against the 24B dense's 16.6) · `Magidonia-24B-v4.3` (already on disk; Mistral-3.2-based RP finetune). **Gate 0 is an NSFW pass/fail screen, run first** — no benchmark measures erotic-roleplay compliance (HarmBench ASR is a poor proxy for it), and a model that refuses is useless here whatever its numbers. Reasoning-generation models run with **thinking disabled**: `MODEL_MAX_OUTPUT_TOKENS=400` means an active thinking trace returns an empty reply.
+- [ ] **Model A/B, gated on the ruler.** The evidence says the lever is **abliteration method and quant, not parameter count**: MultiChallenge (instruction retention / memory / self-coherence — this exact failure set) moves only 0.608 → 0.615 from 27B to 122B, while at 27B huihui's method retains 45/400 refusals vs Heretic's 1/400 and costs −7.0pp TruthfulQA vs −3.2pp. The deployed model is Mistral-Small-**3 (2501)** abliterated by huihui — two generations stale, worst-measured method. Arms: control · `coder3101/Qwen3.5-27B-heretic` @ Q6_K · a >30B **MoE** (sparse, so larger *and* faster — `gemma4:26b` measured 53.3 tok/s against the 24B dense's 16.6) · ~~`Magidonia-24B-v4.3`~~ **RETIRED AND DELETED 2026-10-25** (see below). **Gate 0 is an NSFW pass/fail screen, run first** — no benchmark measures erotic-roleplay compliance (HarmBench ASR is a poor proxy for it), and a model that refuses is useless here whatever its numbers. Reasoning-generation models run with **thinking disabled**: `MODEL_MAX_OUTPUT_TOKENS=400` means an active thinking trace returns an empty reply.
+
+  **UPDATED 2026-10-25 — one arm retired, one tag dead, and four of this item's claims now carry measurements.**
+
+  - **The Magidonia-24B-v4.3 arm is gone.** The model is deleted from disk (14 GB
+    reclaimed). It was ADR-008's voice brain, the two-brain design never shipped,
+    and the one-brain abliterated Mistral superseded it. Its voice baseline is
+    therefore UNRECOVERABLE: the frozen gallery's manifest pins the companion
+    model, so the historical Magidonia 0.732 distinctiveness figure can be cited
+    but never re-measured. Accepted deliberately.
+  - The named Heretic arm `coder3101/Qwen3.5-27B-heretic` **404s on ollama.com**
+    (checked 2026-10-25). The tag is stale. The REASONING for preferring a
+    Heretic-processed model over huihui's stands on this item's own numbers
+    (1/400 vs 45/400 refusals retained, -3.2pp vs -7.0pp TruthfulQA), but a
+    current build must be found first. Community Heretic releases exist on
+    Qwen3.8, not Qwen3.5.
+  - `gemma4:26b` REPRODUCED independently: 53.0 tok/s against the dense 24B's
+    16.4 = 3.18x, matching this item's 53.3/16.6. Mechanism now confirmed from
+    Ollama metadata: expert_count=128, expert_used_count=8, so ~4B active of
+    25.8B total.
+  - **The bandwidth law is FITTED, not assumed.** Across four DENSE models on this
+    box (8B 44.3 / 14.8B 25.7 / 23.6B 16.4 / 36.2B 10.5 tok/s) the product
+    `tok/s x active_B` is constant at 375 +-4%. Decode speed is a function of
+    ACTIVE parameters and nothing else. That settles two open questions: a 70B
+    dense is ~5.4 tok/s (3x SLOWER than the incumbent) and needs 49.5 GB resident
+    before image-gen, so it does not fit in 52 GB; and MoE reaches only ~56% of
+    its theoretical active-param win (gemma4's product is 212, not 375 - routing,
+    shared experts and full-width attention still cost). This supports the item's
+    core claim from a second direction: parameter count is the wrong lever, and
+    above ~24B dense it is actively negative on this hardware.
+  - The empty-reply mechanism is confirmed and the production control WORKS:
+    `OLLAMA_REASONING=false` maps correctly through langchain_ollama.OllamaLLM's
+    `reasoning` field (default -> empty string, reasoning=False -> real content).
+    But NOTHING TESTS IT, so a langchain field rename would silently return empty
+    replies. Worth a pin.
+  - Gate 0 was run. Both the incumbent and gemma4:26b pass: 60/60 probes, zero
+    empty, zero errors, under the real persona prompt - and gemma4 does so
+    UNABLIATERATED, which is the surprise given Google's card names sexually
+    explicit content as restricted.
+
+  This item is still formally gated on the ruler, which is still not built. The
+  gates run so far are narrower and more targeted than the ruler, and they
+  deliberately EXCLUDE the one axis the ruler exists to measure: voice
+  distinctiveness. Do not read a gate result as a substitute for it.
 - [ ] **Then, and only then: flip the three flags and cut a release.** Add all three to `.env.example` (open audit item, flagged three times now). `dev` integrates and is what serves; `main` releases and has not been promoted since 2026-08-22.
 - [x] **Conversation-control commands (ADR-011)** — BUILT 2026-07-16 on `feature/adr-011-conversation-commands` (coordinator 2030 / gateway 113 / React build green; the 10 pre-existing `.env`-bleed failures unchanged). Richer companion/RP command set working identically in BOTH the Telegram gateway and the React Nephilim UI, implemented as shared coordinator session-API endpoints (both clients thin callers). `/reset_persona` dropped (2026-07-16 — redundant with the terminal-side `launchctl kickstart`). **Live enablement DONE** — `data/chats.db` is at alembic `5session_notes` and the table exists (verified 2026-07-19). Delivered as QA-gated phases under one branch, not a big-bang:
   - **Tier 1 (client chrome, no backend logic):** `/help`, `/whoami` (backed by read-only `GET /sessions/{id}` metadata for parity), native menu registration (`setMyCommands`; React action buttons + composer slash-palette).
