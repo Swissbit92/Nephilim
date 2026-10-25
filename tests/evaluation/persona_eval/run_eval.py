@@ -76,6 +76,17 @@ def compute_report(results: List[dict], embed_fn: Callable[[str], List[float]],
     if len(dist) >= 2 and len(active) >= 1 and all(len(dist[p]) >= 2 for p in active):
         report["distinctiveness"] = pm.attribution_accuracy(dist, embed_fn, frozen_personas=frozen or None)
         report["mean_separation"] = pm.mean_separation(dist, embed_fn)
+        # `pairwise_auc` is ADDITIVE, never a replacement in this dict:
+        # `distinctiveness` stays because every frozen baseline on disk was
+        # measured with it, and dropping it would make this run incomparable
+        # to all of them. But it is the number to READ, because its chance
+        # level is 0.5 for any N while attribution's is 1/N — so attribution
+        # moved 0.143 -> 0.125 when gwen was added and the two historical
+        # figures either side of that (0.732 Magidonia, 0.804 abliterated) are
+        # on different rulers and must never be quoted as a comparison.
+        # It also cannot be inflated by shrinking the gallery, which is a
+        # measured trap in this repo.
+        report["pairwise_auc"] = pm.pairwise_auc(dist, embed_fn, frozen_personas=frozen or None)
     else:
         # Original message verbatim when not a gallery run (byte-identical).
         msg = "need >=2 personas with >=2 distinctiveness responses"
