@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — gwen's daily driver is now `gemma4:26b`
+
+`PERSONA_MODEL`: `huihui_ai/mistral-small-abliterated:24b` -> `gemma4:26b`
+(MoE, 128 experts / 8 active, ~4B active of 25.8B, 256K context).
+⚠️ **Requires `OLLAMA_REASONING=false`** — see the fix below; without it this
+model returns empty replies on `/api/chat`.
+
+Measured on this box, three arms, every gate under the real persona prompt with
+16 real history turns. The third arm (`qwen3-abliterated:30b-a3b`) was
+**disqualified**: 0 of 16 abstentions and 16 of 16 hallucinations on the
+negative controls, median reply 75 characters.
+
+| | incumbent | gemma4 |
+|---|---|---|
+| decode | 16.0 tok/s | **50.7 tok/s (3.18x)** |
+| median wall | 4.5s | **2.2s** |
+| hard-wall breach | 55% | **33%** |
+| breach, replies >=150ch | 61% (n=44) | **33% (n=57)** |
+| voice — attribution (chance 0.125) | 0.641 | **0.781** |
+| voice — pairwise AUC (chance 0.500) | 0.966 | **0.981** |
+| gwen's own attribution | 0.875 | **1.000** |
+| hallucination on controls | 4/16 | 4/16 |
+| valid structured JSON | 58/58 | 58/58 |
+| native tool firing | **86.0%** | 66.7% |
+
+The breach result is not a brevity artifact: gemma4 writes **longer** replies
+(median 380 vs 232 visible chars) and still breaches less, on the stratum where
+both arms have real n. That is what sank the qwen arm, whose flattering breach
+rate came from 44 of 60 replies being under 100 characters.
+
+- ⚠️ **KNOWN REGRESSION, accepted deliberately: native tool firing 86.0% ->
+  66.7%** (3 reps/arm, 87 case-runs each). It is confined almost entirely to
+  **colloquial web intent** — "what's going on with the ECB lately?" fires a
+  search on the old model and not on this one. Image and video intent are
+  100% identical on both arms; chitchat and wallet never fire on either.
+  Case-level the pattern is 6 cases worse, 1 better, exact sign test
+  **p = 0.125** — underpowered, and NO number of reps fixes that, because the
+  fixture has only 29 cases and 7 discordant. What carries weight is three
+  independent reps with **non-overlapping ranges** on both metrics plus two
+  complete reversals (3/3 -> 0/3).
+  **Why it is accepted:** that path carries **8 of 996 assistant replies (0.8%)
+  over the last 60 days**, and zero used the Brave floor, while 954 were plain
+  chat — the path that got 3x faster and breaks character less. The failure mode
+  is real though: a miss falls through to `llm` with `tools=[]`, so she answers
+  from parametric knowledge with no warning. The colloquial floor is weak on
+  **both** models (one case fails 0/3 on each), so strengthening it is
+  model-independent work and is the next item.
+- **Rollback is one `.env` line plus a kickstart.** The prior model stays on
+  disk for exactly that reason; unlike Magidonia it is NOT being deleted.
+- Corrected several `Readme.md` claims found while updating it, all wrong before
+  this change: the architecture diagram named the old model at "~17 tok/s"; a
+  **fallback model was advertised that deliberately does not exist**
+  (`require_model_configured` refuses to start rather than silently run a
+  different model) and whose tag is not even installed; and the embedder was
+  listed as `nomic-embed-text` when `bge-m3` replaced it on 2026-06-23.
+- **NOT changed: sampling.** The presets are fitted to Mistral-Small and Google
+  recommends `top_k 64` / `top_p 0.95` / `repeat_penalty 1.0` (off) for Gemma.
+  Deferred past the soak on purpose — changing sampling and the model together
+  would confound both, and Gemma's documented failure mode is **looping**, so
+  loosening the repeat penalty before watching her run is the riskier direction.
+  Also, prod runs the `langchain` backend, which silently drops `min_p`, so
+  gwen's declared `min_p 0.05` has never reached Ollama: there is less
+  Mistral-specific tuning inherited than the warning implies.
+
 ### Removed — the Magidonia voice brain is deleted from disk
 
 Docs-and-comments only. No code path changes; the daily driver is unchanged.
