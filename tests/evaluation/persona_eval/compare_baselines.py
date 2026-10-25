@@ -217,6 +217,39 @@ def main() -> int:
         f"ON={on['report'].get('flatness_rate_overall')}"
     )
 
+    # --- pairwise AUC, the N-invariant metric -------------------------------
+    # Reported, NOT gated. Two honest reasons it does not get a verdict here:
+    # the frozen baselines on disk predate it, so there is no `off` value to
+    # gate against for any of them; and its own `power_warning` says a single
+    # pair is a coin flip at the sample sizes actually run. Printing it beside
+    # the attribution number is what makes a future gate possible, because the
+    # first run that records BOTH becomes the ruler the next one can use.
+    oa = off["report"].get("pairwise_auc") or {}
+    na = on["report"].get("pairwise_auc") or {}
+    if oa.get("overall") is not None or na.get("overall") is not None:
+        print()
+        print(f"{'pairwise AUC':<20} {'OFF':>7} {'ON':>7} {'delta':>8}   (chance 0.500, N-invariant)")
+        print("-" * 46)
+        oov, nov = oa.get("overall"), na.get("overall")
+        if oov is not None and nov is not None:
+            print(f"{'OVERALL':<20} {oov:>7.3f} {nov:>7.3f} {(nov - oov):>+8.3f}")
+        else:
+            print(f"{'OVERALL':<20} {oov if oov is not None else '-':>7} "
+                  f"{nov if nov is not None else '-':>7} {'-':>8}"
+                  "   <- one arm predates this metric; no delta")
+        for src, lbl in ((na, "ON"), (oa, "OFF")):
+            if src.get("most_confusable_pair"):
+                mc = src["most_confusable_pair"]
+                print(f"  {lbl} most confusable: {mc.get('pair')} auc={mc.get('auc')}")
+            if src.get("power_warning"):
+                print(f"  {lbl} ⚠️ {src['power_warning']}")
+    elif "pairwise_auc" not in on["report"]:
+        print()
+        print("⚠️ pairwise_auc absent from the CANDIDATE report — it is produced by "
+              "run_eval.compute_report; an old runner or a hand-edited report will "
+              "silently drop it, and the attribution number alone cannot be compared "
+              "across a change in the persona count.")
+
     res = compare(off, on)
     print()
     if not res["commensurable"]:

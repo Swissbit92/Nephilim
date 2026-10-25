@@ -130,15 +130,19 @@ class LLMCompletionService:
         if get_settings().ollama.completion_backend == "http":
             from .ollama_http import OllamaHTTPClient  # noqa: PLC0415
 
+            # `reasoning` is excluded DELIBERATELY: on this transport it is a
+            # top-level `think`, and leaving it in options made the toggle a
+            # silent no-op (Ollama WARNs and returns 200 on unknown options).
             options = {
                 k: v for k, v in ollama_params.items()
-                if k not in ("base_url", "model", "keep_alive")
+                if k not in ("base_url", "model", "keep_alive", "reasoning")
             }
             self.llm = OllamaHTTPClient(
                 base_url=ollama_params["base_url"],
                 model=ollama_params["model"],
                 options=options,
                 keep_alive=ollama_params.get("keep_alive"),
+                think=ollama_params.get("reasoning"),
             )
         else:
             if "min_p" in ollama_params:

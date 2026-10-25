@@ -220,6 +220,29 @@ def check_staleness(
             f"{cur_fp}): dormant voices may have drifted"
         )
 
+    # Generation-altering ENV drift. `sampling_fingerprint` covers the per-persona
+    # sampler overrides; it does not cover the settings that apply to every
+    # persona at once, and those were compared nowhere. `reasoning` is the one
+    # that motivated this: on a reasoning model, unset versus false is not a
+    # drift in voice, it is the difference between a real reply and an EMPTY
+    # STRING (measured on gemma4:26b, 10 of 12 replies empty with it unset),
+    # so two manifests could differ that completely and this function called
+    # them identical. A warning rather than an error because nothing in a
+    # manifest says whether the model reasons at all.
+    cur_env = current.get("sampling_env") or {}
+    gal_env = gallery.get("sampling_env") or {}
+    for key in sorted(set(cur_env) | set(gal_env)):
+        cv, gv = cur_env.get(key), gal_env.get(key)
+        if cv != gv:
+            note = ""
+            if key == "reasoning":
+                note = ("  <- on a reasoning model this decides whether replies "
+                        "are produced AT ALL, not merely how they sound")
+            warnings.append(
+                f"sampling_env.{key} changed {gv!r} -> {cv!r} since the gallery "
+                f"was frozen{note}"
+            )
+
     # Per-dormant-persona definition drift.
     gh = gallery.get("persona_def_hashes", {})
     ch = current.get("persona_def_hashes", {})
@@ -358,5 +381,12 @@ def default_manifest(
             "context_window": s.ollama.context_window,
             "max_output_tokens": s.ollama.max_output_tokens,
             "completion_backend": getattr(s.ollama, "completion_backend", None),
+            # Thinking is a GENERATION-ALTERING setting and was invisible here.
+            # On a reasoning model, unset vs false is the difference between an
+            # empty reply and a real one (measured on gemma4:26b: 10 of 12
+            # replies empty with it unset, 0 of 12 with it false), so two runs
+            # could differ that completely and the manifest would call them
+            # identical. Recorded for the same reason the samplers are.
+            "reasoning": getattr(s.ollama, "reasoning", None),
         },
     )

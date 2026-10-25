@@ -134,7 +134,8 @@ class ToolBrainService:
     _PREFILL_OPENING = "Here's what I found for you — "
 
     def _synthesize_with_refusal_retry(
-        self, client, model, messages, opts, content: str, *, keep_alive=None
+        self, client, model, messages, opts, content: str, *, keep_alive=None,
+        think_kw: dict | None = None,
     ) -> tuple[str, bool]:
         """If `content` (a completed synthesis) is a spurious refusal, run ONE
         bounded prefill-steered retry (synthesis only, no tools). Returns
@@ -152,7 +153,8 @@ class ToolBrainService:
         ]
         try:
             resp = client.chat(model=model, messages=retry_messages,
-                               stream=False, keep_alive=keep_alive, options=opts)
+                               stream=False, keep_alive=keep_alive, options=opts,
+                               **(think_kw or {}))
             continuation = (_get(_get(resp, "message", {}), "content", "") or "").strip()
         except Exception as e:  # noqa: BLE001 - never break the turn
             logger.warning(f"[ToolBrain] refusal retry failed ({e}); keeping original")
@@ -203,6 +205,7 @@ class ToolBrainService:
         from ..config import get_settings
         from ..tools.registry import registry, TOOLSET_MCP_ALIASES
         from ..tools.tool_utils import format_search_results_for_llm
+        from .ollama_think import wire_think
         from .resource_arbiter import guard_chat_model
 
         # Once per TURN, not per client.chat: one turn is 1-4 /api/chat calls
@@ -218,6 +221,13 @@ class ToolBrainService:
         # bare numeric string ("-1" -> HTTP 400 'missing unit in duration'),
         # which surfaces here as a 503 naming neither the field nor the cause.
         keep_alive = type(st.ollama).wire_keep_alive(st.ollama.keep_alive)
+        # `think` is a TOP-LEVEL /api/chat key, not an option. Omitted when
+        # unset so a non-reasoning model sees a byte-identical request; sent as
+        # False for a reasoning model, without which the thinking stream eats
+        # the whole num_predict budget and `content` arrives EMPTY. Measured on
+        # gemma4:26b through this exact path: 10 of 12 replies empty with the
+        # key absent, 0 of 12 with think=False.
+        think_kw = wire_think(st.ollama.reasoning)
         decision_opts = {"temperature": 0.4, "num_predict": st.ollama.max_output_tokens,
                          "num_ctx": st.ollama.context_window}
         prose_opts = {**decision_opts, **(sampling_overrides or {})}
@@ -251,7 +261,8 @@ class ToolBrainService:
                 # tool results and is in-voice synthesis — always prose.
                 resp = client.chat(model=model, messages=messages, tools=tools,
                                    stream=False, keep_alive=keep_alive,
-                                   options=(opts if iteration == 0 else prose_opts))
+                                   options=(opts if iteration == 0 else prose_opts),
+                                   **think_kw)
                 msg = _get(resp, "message", {})
                 tcs = _get(msg, "tool_calls", None) or []
                 content = (_get(msg, "content", "") or "").strip()
@@ -266,7 +277,7 @@ class ToolBrainService:
                     if used_search:
                         content, refused = self._synthesize_with_refusal_retry(
                             client, model, messages, prose_opts, content,
-                            keep_alive=keep_alive)
+                            keep_alive=keep_alive, think_kw=think_kw)
                     return ToolBrainResult(
                         status=ST_ANSWERED, answer=content, tool_trace=trace,
                         used_search=used_search, search_results=search_results,
@@ -323,13 +334,13 @@ class ToolBrainService:
             # Iteration budget exhausted — force a final synthesis without tools.
             # This is prose by definition: no tools are offered.
             resp = client.chat(model=model, messages=messages, stream=False,
-                               keep_alive=keep_alive, options=prose_opts)
+                               keep_alive=keep_alive, options=prose_opts, **think_kw)
             fcontent = (_get(_get(resp, "message", {}), "content", "") or "").strip()
             refused = False
             if used_search:
                 fcontent, refused = self._synthesize_with_refusal_retry(
                     client, model, messages, prose_opts, fcontent,
-                    keep_alive=keep_alive)
+                    keep_alive=keep_alive, think_kw=think_kw)
             return ToolBrainResult(status=ST_ANSWERED, answer=fcontent, tool_trace=trace,
                                    used_search=used_search, search_results=search_results,
                                    refused=refused)

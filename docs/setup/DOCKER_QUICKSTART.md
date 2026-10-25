@@ -119,7 +119,7 @@ nomic-embed-text:latest                      274 MB
 **Alternative models** (if you prefer):
 ```bash
 # Daily-driver persona model — uncensored, higher quality (larger; needs more RAM)
-docker exec -it ai-companion-brain ollama pull huihui_ai/mistral-small-abliterated:24b
+docker exec -it ai-companion-brain ollama pull gemma4:26b
 
 # General purpose (censored, more formal)
 docker exec -it ai-companion-brain ollama pull llama3.1:latest
@@ -459,10 +459,10 @@ See https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-gu
 # See available models: https://ollama.com/library
 
 # Example: Pull the daily-driver persona model
-docker exec -it ai-companion-brain ollama pull huihui_ai/mistral-small-abliterated:24b
+docker exec -it ai-companion-brain ollama pull gemma4:26b
 
 # Update .env.docker
-PERSONA_MODEL=huihui_ai/mistral-small-abliterated:24b
+PERSONA_MODEL=gemma4:26b
 
 # Restart backend
 docker-compose restart backend

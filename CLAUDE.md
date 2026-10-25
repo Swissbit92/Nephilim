@@ -161,7 +161,7 @@ utils/                         # animations.ts, helpers, celestialOrder.ts
 Required in `.env`:
 ```bash
 OLLAMA_BASE=http://127.0.0.1:11434
-PERSONA_MODEL=huihui_ai/mistral-small-abliterated:24b   # daily driver since 2026-07-05 (single-model, ADR-008): 0.96 tool calls + no refusal floor + voice≈Magidonia. Prior: Magidonia-24B-v4.3-GGUF:Q4_K_M — **DELETED from disk 2026-10-25, there is no revert path and its voice baseline cannot be re-measured** (see [ADR-008](docs/decisions/008-two-brain-split-tool-brain-voice-brain.md) amendment). gemma2:9b = smoke-test
+PERSONA_MODEL=gemma4:26b   # daily driver since 2026-10-25 (MoE 128/8, ~4B active of 25.8B): 3.18x decode (50.7 vs 16.0 tok/s), hard-wall breach 55%->33%, voice MATCH-OR-BEAT (attribution 0.641->0.781, pairwise AUC 0.966->0.981, gwen 0.875->1.000). ⚠️ REQUIRES OLLAMA_REASONING=false — it is a reasoning model and without it 10 of 12 replies on /api/chat come back EMPTY. ⚠️ KNOWN REGRESSION: native tool firing 86%->67%, confined to COLLOQUIAL web intent ('what's going on with X lately?'); accepted because that path is 8 of 996 replies (0.8%) over 60 days, and the colloquial floor is weak on BOTH models. Rollback is one .env line + kickstart; the prior model stays on disk. Prior: huihui_ai/mistral-small-abliterated:24b (2026-07-05 to 2026-10-25, single-model ADR-008): 0.96 tool calls + no refusal floor. Prior: Magidonia-24B-v4.3-GGUF:Q4_K_M — **DELETED from disk 2026-10-25, there is no revert path and its voice baseline cannot be re-measured** (see [ADR-008](docs/decisions/008-two-brain-split-tool-brain-voice-brain.md) amendment). gemma2:9b = smoke-test
 PERSONA_TEMPERATURE=0.9
 COORD_PORT=8000
 PERSONA_DIR=personas

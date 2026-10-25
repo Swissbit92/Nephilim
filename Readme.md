@@ -157,9 +157,15 @@
 
 ### AI/ML
 - **Ollama** local LLM server (native macOS — Metal GPU acceleration automatic via Apple Silicon)
-- **huihui_ai/mistral-small-abliterated:24b** (daily-driver persona model — abliterated Mistral-Small-24B, ~16.4 tok/s on Metal measured 2026-10-25). Magidonia-24B-v4.3 was the daily driver until 2026-07-05 and is **deleted from disk**.
-- **gemma2:9b-instruct-q5_K_M** (lightweight fallback / smoke-test model; also the `config/` package default)
-- **nomic-embed-text:latest** for embeddings
+- **gemma4:26b** (daily-driver persona model — MoE Gemma 4, 128 experts / 8 active (~4B of 25.8B), 50.7 tok/s on Metal measured 2026-10-25. **Needs `OLLAMA_REASONING=false`** — it is a reasoning model and without that its thinking stream consumes the whole output budget, returning empty replies). Magidonia-24B-v4.3 was the daily driver until 2026-07-05 and is **deleted from disk**.
+- ~~**gemma2:9b-instruct-q5_K_M**~~ — **NOT a fallback and NOT installed.** The fallback
+  model name was removed deliberately (`require_model_configured` refuses to start rather
+  than silently run a different model), and this tag is no longer pulled. It is named here
+  only because a worktree has no `.env`, so this default once made a test called
+  `test_the_deployed_model_returns_text` exercise a 9B model at 4096 context for months
+  while passing — see docs/LESSONS_LEARNED.md.
+- **bge-m3:latest** for embeddings (8192 native context, 1024-dim, L2-normalised). `nomic-embed-text` was
+  replaced 2026-06-23: its small window 500s past 2048 tokens on the legacy `/api/embeddings` endpoint.
 - **FAISS CPU** for vector search and semantic retrieval
 - **LangChain** for LLM orchestration
 
@@ -332,7 +338,7 @@ cd react-ui && npm install && cd ..
 
 ```bash
 ollama serve                                                                              # Start service (native macOS — Metal GPU automatic)
-ollama pull huihui_ai/mistral-small-abliterated:24b                               # Daily-driver model (~16.4 tok/s on Metal)
+ollama pull gemma4:26b                               # Daily-driver model (~16.4 tok/s on Metal)
 ollama pull gemma2:9b-instruct-q5_K_M                                                    # Fallback / smoke-test model
 ollama pull nomic-embed-text:latest                                                       # Embeddings (RAG memory)
 ```
@@ -344,7 +350,7 @@ Create a `.env` file in the project root:
 ```bash
 # Required
 OLLAMA_BASE=http://127.0.0.1:11434
-PERSONA_MODEL=huihui_ai/mistral-small-abliterated:24b   # Daily driver. NO fallback model is configured, deliberately — see CLAUDE.md
+PERSONA_MODEL=gemma4:26b   # Daily driver. NO fallback model is configured, deliberately — see CLAUDE.md
 PERSONA_TEMPERATURE=0.9
 COORD_PORT=8000
 PERSONA_DIR=personas
@@ -433,9 +439,9 @@ ssh -L 3001:localhost:3001 -L 8000:localhost:8000 <user>@<mac-mini>
                                     ▼
                     ┌─────────────────────────────────────────┐
                     │   Ollama LLM (Local Inference)           │
-                    │  • mistral-small-abliterated:24b         │
-                    │    (daily driver, Metal GPU, ~17 tok/s)  │
-                    │  • gemma2:9b-instruct-q5_K_M (fallback)  │
+                    │  • gemma4:26b  (MoE 128/8)               │
+                    │    (daily driver, Metal GPU, 50.7 tok/s) │
+                    │  • NO fallback model, deliberately       │
                     │  • nomic-embed-text (embeddings)          │
                     └─────────────────────────────────────────┘
 ```

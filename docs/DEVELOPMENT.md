@@ -168,12 +168,12 @@ Run Ollama **natively** on macOS — Metal GPU acceleration is automatic on Appl
 
 ```bash
 ollama serve                                                                  # Start service (Metal GPU automatic)
-ollama pull huihui_ai/mistral-small-abliterated:24b                   # Daily-driver model (~16.4 tok/s on M4 Pro Metal)
+ollama pull gemma4:26b                   # Daily-driver model (~16.4 tok/s on M4 Pro Metal)
 ollama pull gemma2:9b-instruct-q5_K_M                                         # Fallback / smoke-test model (config.py default)
 ollama pull nomic-embed-text:latest                                            # Embeddings (RAG memory)
 ```
 
-Set `PERSONA_MODEL=huihui_ai/mistral-small-abliterated:24b` in `.env` to use the daily driver. (Magidonia-24B-v4.3 held this role until 2026-07-05 and was deleted from disk 2026-10-25; the sampling presets are still the ones fitted to it, which is safe only while the daily driver stays on a Mistral-Small base — see `sampling_presets.py`.) `MODEL_CONTEXT_WINDOW=16384` is wired to Ollama `num_ctx` (model max is 131K, dial up as needed). `MODEL_MAX_OUTPUT_TOKENS=400` caps per-turn generation (Ollama `num_predict`) — a backstop against runaway replies (turn latency is ~linear in output tokens at ~16 tok/s).
+Set `PERSONA_MODEL=gemma4:26b` in `.env` to use the daily driver. (Magidonia-24B-v4.3 held this role until 2026-07-05 and was deleted from disk 2026-10-25; the sampling presets are still the ones fitted to it, which is safe only while the daily driver stays on a Mistral-Small base — see `sampling_presets.py`.) `MODEL_CONTEXT_WINDOW=16384` is wired to Ollama `num_ctx` (model max is 131K, dial up as needed). `MODEL_MAX_OUTPUT_TOKENS=400` caps per-turn generation (Ollama `num_predict`) — a backstop against runaway replies (turn latency is ~linear in output tokens at ~16 tok/s).
 
 ### Concurrency tuning (single-user — important)
 
