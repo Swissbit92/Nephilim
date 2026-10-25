@@ -26,10 +26,27 @@ GWEN = ("common", ["brave_search"])  # holds web+image, no wallet
 
 
 def _intent(q, rarity_access=GWEN):
+    """The routed intent, with a guard against the VACUOUS PASS.
+
+    ⚠️ Every assertion below needs a live bge-m3. Without one
+    `route_by_embedding` yields nothing and the classifier falls to its safe
+    default, NEEDS_NEITHER -- so the `llm` expectations here would pass with the
+    fix DELETED, and the `web` ones would fail for a reason that has nothing to
+    do with the fix. That is why these are `requires_ollama` AND why this helper
+    asserts `classifier_available`: a skip is honest, a vacuous green is not.
+    This repo has the failure class on record -- five tests asserted canned
+    fallback text, so green meant the feature did NOT work.
+    """
     rarity, access = rarity_access
-    return classify_query_intent_ex(q, rarity, access).intent.value
+    decision = classify_query_intent_ex(q, rarity, access)
+    assert decision.classifier_available, (
+        "the semantic router was UNAVAILABLE, so this assertion would be "
+        "measuring the safe default rather than the routing fix"
+    )
+    return decision.intent.value
 
 
+@pytest.mark.requires_ollama
 class TestHerFeelingsAreNotAWebQuery:
     @pytest.mark.parametrize("q", [
         "How are you feeling today?",
@@ -46,6 +63,7 @@ class TestHerFeelingsAreNotAWebQuery:
         )
 
 
+@pytest.mark.requires_ollama
 class TestWorldStateStillSearches:
     """The mirror. A centroid that swallowed real questions would be worse."""
 
@@ -65,6 +83,7 @@ class TestWorldStateStillSearches:
         )
 
 
+@pytest.mark.requires_ollama
 class TestTheCentroidIsNotCapabilityGated:
     def test_it_applies_to_a_wallet_persona_too(self):
         # Whether a turn is companion chat is a property of the QUESTION, not of
@@ -73,6 +92,7 @@ class TestTheCentroidIsNotCapabilityGated:
         assert _intent("how are you feeling today?", ("legendary", ["brave_search", "solana_wallet"])) == "llm"
 
 
+@pytest.mark.requires_ollama
 class TestKnownAcceptedTradeOff:
     def test_feeling_like_accumulating_goes_to_chat_not_wallet(self):
         """PINS a REGRESSION, deliberately, rather than hiding it.
@@ -95,3 +115,52 @@ class TestKnownAcceptedTradeOff:
             "regression is fixed -- update the eval-set expectation and delete "
             "this test rather than editing the assertion"
         )
+
+
+class TestTheFixSurvivesHeadless:
+    """Structural guards that run with NO Ollama, so CI protects the fix.
+
+    The semantic tests above are the real behavioural evidence but they skip
+    headless. Without something here, reverting the fix would be invisible to
+    CI -- which is the whole reason the vacuous-pass guard exists above.
+    """
+
+    def test_companion_chat_centroid_exists(self):
+        import src.coordinator.tools.semantic_router as sr
+        assert "companion_chat" in sr._INTENT_EXAMPLES_PRIMARY
+
+    def test_it_reaches_both_wiring_points(self):
+        """Two separate edits are required and missing either breaks it:
+
+        1. appended to `usable` UNCONDITIONALLY (not capability-gated), else a
+           persona without the matching tool never scores it -- the exact
+           mechanism of the original operator_memory defect; and
+        2. included in the return-None branch, else winning routes to a tool
+           and `check_scope` deflects with the canned capability line.
+
+        A source check because this runs headless; the BEHAVIOURAL version is
+        test_operator_memory_intent.py::test_no_referent_intents_return_none,
+        which calls the function and is parametrised over both intents.
+        """
+        import inspect
+
+        import src.coordinator.tools.semantic_router as sr
+        src = inspect.getsource(sr.route_by_embedding)
+        assert src.count("companion_chat") >= 2, (
+            f"companion_chat appears {src.count('companion_chat')}x in "
+            "route_by_embedding; it needs the `usable` append AND the None branch"
+        )
+
+    def test_web_search_covers_non_market_current_events(self):
+        """The other half of the defect: the set was 18/33 crypto, so
+        non-market current events fell below threshold."""
+        import src.coordinator.tools.semantic_router as sr
+        web = " ".join(sr._INTENT_EXAMPLES_PRIMARY["web_search"]).lower()
+        for needed in ("central bank", "chancellor", "cost these days",
+                       "model release", "what's the latest on that"):
+            assert needed in web, f"web_search lost its non-market example: {needed!r}"
+
+    def test_every_primary_intent_keeps_enough_examples(self):
+        import src.coordinator.tools.semantic_router as sr
+        for intent, phrases in sr._INTENT_EXAMPLES_PRIMARY.items():
+            assert len(phrases) >= 15, f"{intent} has {len(phrases)}"
