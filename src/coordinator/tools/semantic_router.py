@@ -178,6 +178,56 @@ _INTENT_EXAMPLES_PRIMARY: Dict[str, List[str]] = {
         "I might buy some more",
         "maybe it's time to take some profits",
     ],
+    # 🔴 companion_chat — the EMOTIONAL/RELATIONAL register, which has no external
+    # referent and must never be routed to a web search.
+    #
+    # WHY IT EXISTS, and why it is a narrow centroid rather than an llm_only
+    # catch-all. The web_search set below is heavily market-flavoured (18 of its
+    # examples are crypto/markets), and three of them are phrased as feelings
+    # about the market: "how are people feeling about the market", "how's the
+    # market doing today", "what's the vibe in the market today". A question
+    # about HER feelings is lexically adjacent to those, so it cleared the 0.66
+    # threshold against them. Measured in live production 2026-10-25: "How are
+    # you feeling today?" scored 0.693 against "how's the market doing today"
+    # and routed to web_search, where `check_scope` answered the operator with
+    # the canned "I can't go looking that up" capability deflection -- for a
+    # question about how she feels.
+    #
+    # This is the SAME SHAPE as the operator_memory defect above (a question with
+    # no external referent attracted to web_search and then deflected), so it
+    # takes the same remedy: a narrow, NOT capability-gated centroid whose win
+    # routes to NEEDS_NEITHER.
+    #
+    # NOT an llm_only catch-all -- the design note below records why one is
+    # excluded in primary mode: a catch-all smears toward the embedding-space
+    # centre and overlaps the real intents. Everything here is the companion's
+    # own state or the relationship, never world state.
+    #
+    # ⚠️ These cases were ALREADY LABELLED AND FAILING in
+    # tests/evaluation/routing_eval_set.json ("how are you feeling today",
+    # "how's your day been") before this centroid existed. The 0.66 threshold
+    # was tuned to 0.938 accuracy ACCEPTING them. They are not new findings;
+    # what was new is that one of them reached the operator as a refusal.
+    "companion_chat": [
+        # Her state
+        "how are you feeling today",
+        "how are you feeling",
+        "are you feeling okay",
+        "how's your day been",
+        "how was your day",
+        "what have you been up to",
+        "are you doing alright",
+        "how are you holding up",
+        # The relationship
+        "did you miss me",
+        "what do you think about me",
+        "do you still want me",
+        "are you happy with us",
+        # Her inner life, as distinct from world state
+        "what's on your mind",
+        "what are you thinking about",
+        "how do you feel about that",
+    ],
     "web_search": [
         # Commands
         "search the web for the bitcoin price",
@@ -232,6 +282,38 @@ _INTENT_EXAMPLES_PRIMARY: Dict[str, List[str]] = {
         "any major news events this week",
         "what happened in the world today",
         "latest news about the election",
+        # 🔴 NON-MARKET current events. Added 2026-10-25 because the set above is
+        # 18/33 crypto-and-markets, so genuine current-events questions outside
+        # finance fell BELOW the 0.66 threshold and were answered from the
+        # model's own weights with no search and no warning. Measured misses:
+        # "what's going on with the European Central Bank lately?" 0.613,
+        # "who is the current chancellor of Germany?" 0.560, and in the
+        # tool-firing eval these failed on BOTH models, so this is a routing
+        # defect rather than a model one.
+        #
+        # The "lately / these days / right now" phrasings are deliberate: that
+        # is how the operator actually asks, and it is exactly the register the
+        # market examples do not cover.
+        # Institutions and policy
+        "what's going on with the European Central Bank lately",
+        "what has the ECB been doing recently",
+        "any updates from the central bank",
+        # People and office-holders
+        "who is the current chancellor of Germany",
+        "who is the president of France right now",
+        "who runs that company these days",
+        # Product prices and availability, outside crypto
+        "how much does a Tesla Model 3 cost these days",
+        "what do flights to Lisbon cost right now",
+        "is that still being sold",
+        # Technology releases
+        "tell me about the latest Mistral AI model release",
+        "what's new in AI this month",
+        "did they release a new version yet",
+        # Generic "what's going on with X" register
+        "what's going on with that lately",
+        "what's the latest on that",
+        "has anything changed with that recently",
     ],
 }
 
@@ -447,6 +529,10 @@ def route_by_embedding(
     # question is about the operator is a property of the question.
     if "operator_memory" in source:
         usable.append("operator_memory")
+    # Same reasoning: whether a turn is companion chat is a property of the
+    # question, not of which tools the persona holds.
+    if "companion_chat" in source:
+        usable.append("companion_chat")
     if can_use_wallet and "wallet" in source:
         usable.append("wallet")
     if can_use_brave and "web_search" in source:
@@ -490,10 +576,16 @@ def route_by_embedding(
             )
             return None
 
-    if best_intent in ("llm_only", "operator_memory"):
+    if best_intent in ("llm_only", "operator_memory", "companion_chat"):
         # NEEDS_NEITHER. For operator_memory that is the whole point: no tool can
         # answer a question about his own past, and NEEDS_NEITHER is the one
         # intent `check_scope` never deflects.
+        if best_intent == "companion_chat":
+            logger.info(
+                "[SemanticRouter] companion_chat (confidence=%.3f) — about her, "
+                "answering in voice rather than deflecting",
+                best_score,
+            )
         if best_intent == "operator_memory":
             logger.info(
                 "[SemanticRouter] operator_memory (confidence=%.3f) — about the "

@@ -573,7 +573,21 @@ class TestModuleConstants:
 class TestRouteByEmbeddingPrimaryParams:
     """New params must default to legacy behaviour and gate correctly when set."""
 
+    #: These tests exercise the THRESHOLD and MARGIN mechanics, not which
+    #: intents exist. `_make_mock_model` returns one identical vector for every
+    #: example, so every intent scores the same and the winner falls out of dict
+    #: ORDER — which means adding an intent that maps to NEEDS_NEITHER (
+    #: operator_memory, companion_chat) silently changes what these assert.
+    #: Pinning the inventory here instead keeps the mechanic under test and
+    #: leaves the inventory to TestModuleConstantsPrimary, which is where it
+    #: belongs.
+    _MECHANIC_ONLY = {
+        "wallet": list(sr._INTENT_EXAMPLES_PRIMARY["wallet"]),
+        "web_search": list(sr._INTENT_EXAMPLES_PRIMARY["web_search"]),
+    }
+
     def _patch(self, monkeypatch, query_vec):
+        monkeypatch.setattr(sr, "_INTENT_EXAMPLES_PRIMARY", self._MECHANIC_ONLY)
         _reset_globals(monkeypatch)
         monkeypatch.setattr(sr, "_example_vecs_primary", None)
         model = _make_mock_model(query_vec)
@@ -645,9 +659,15 @@ class TestModuleConstantsPrimary:
         capability-gated `wallet` set, so for a persona without a wallet they
         were filtered out by capability rather than by meaning — leaving
         `web_search` as the only usable intent, which also disables the margin
-        gate (it needs >= 2 scores)."""
+        gate (it needs >= 2 scores).
+
+        `companion_chat` added 2026-10-25 for the SAME defect one register over:
+        her feelings scored 0.693 against the market-flavoured `web_search`
+        example "how's the market doing today", cleared the 0.66 threshold, and
+        was answered with the canned capability deflection in live production.
+        Also not capability-gated, for the same reason."""
         assert set(sr._INTENT_EXAMPLES_PRIMARY.keys()) == {
-            "operator_memory", "wallet", "web_search",
+            "operator_memory", "companion_chat", "wallet", "web_search",
         }
 
     def test_primary_examples_no_llm_only(self):
