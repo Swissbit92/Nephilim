@@ -32,10 +32,10 @@ _current: ContextVar[Optional[Dict[str, Any]]] = ContextVar("research_turn", def
 def _write(record: Dict[str, Any]) -> None:
     from .config import get_settings
 
-    path = get_settings().web_search.research_trace_path
-    if not path or not isinstance(path, str):  # a mocked Settings answers truthy
-        return
     try:
+        path = get_settings().web_search.research_trace_path
+        if not path or not isinstance(path, str):  # a mocked Settings answers truthy
+            return
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         with open(target, "a", encoding="utf-8") as f:

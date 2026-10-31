@@ -624,7 +624,7 @@ def _try_tool_brain(
                                      else intent != QueryIntent.NEEDS_WEB_SEARCH
                                  ))
                 trace["status"] = result.status
-                trace["tools"] = [t["tool"] for t in result.tool_trace]
+                trace["tools"] = [t.get("tool", "?") for t in result.tool_trace]
         finally:
             # Reset rather than leave it set: this thread is returned to the
             # anyio pool and will serve a different session's turn next. A

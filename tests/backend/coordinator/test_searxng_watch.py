@@ -104,6 +104,10 @@ def test_missing_credentials_is_a_failed_send(tmp_path):
     assert watch.send_telegram("hi", env) is False
 
 
+def test_a_missing_env_file_is_a_failed_send(tmp_path):
+    assert watch.send_telegram("hi", tmp_path / "absent") is False
+
+
 def test_a_corrupt_state_file_starts_fresh(tmp_path):
     path = tmp_path / "s.json"
     path.write_text("{nope")

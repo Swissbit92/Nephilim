@@ -2,7 +2,7 @@
 title: "Layered toolkit: registry, generic web toolset, inner wisdom, skills"
 status: Accepted
 created: 2026-07-05
-last_reviewed_on: 2026-07-05
+last_reviewed_on: 2026-10-31
 review_in: 12 months
 applies_to: nephilim
 ---
@@ -262,6 +262,18 @@ rich toolset and a validated loop driver.
   eval-first gate; (d) the terminal tool becomes an injection vector —
   blocked structurally (network-none, HITL, no secrets, signing
   unreachable).
+
+### Addendum 2026-10-31: the Brave fallback no longer applies to nsfw or media search
+
+This ADR mitigated SearXNG's safesearch inconsistency with a "Brave-`off`
+fallback". That is withdrawn for nsfw personas: they never reach Brave, so they get
+no results while SearXNG is down. Image and video searches never reach Brave
+either, because its client takes no category and returned plain web results.
+
+SearXNG had also stopped running at some point with nothing noticing, so every
+search was silently going to Brave. The container now has a compose file and a
+health alert, and `WEB_SEARCH_BACKEND=routed` keeps general text search on Brave
+because SearXNG's results were worse on this IP.
 
 ## Alternatives considered
 

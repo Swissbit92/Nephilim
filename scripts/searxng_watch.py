@@ -57,7 +57,7 @@ def read_env(path: Path) -> dict[str, str]:
 
 
 def send_telegram(text: str, env_path: Path = GATEWAY_ENV) -> bool:
-    env = read_env(env_path)
+    env = read_env(env_path) if env_path.exists() else {}
     token = env.get("TG_BOT_TOKEN", "")
     # The first allowlisted id is the operator's; others are private chat partners.
     chat_id = env.get("TG_ALLOWED_CHAT_IDS", "").split(",")[0].strip()

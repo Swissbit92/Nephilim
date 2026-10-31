@@ -98,6 +98,12 @@ def test_an_unwritable_path_does_not_break_the_turn(monkeypatch, tmp_path):
     get_settings.cache_clear()
 
 
+def test_a_settings_error_does_not_break_the_turn():
+    with patch("src.coordinator.config.get_settings", side_effect=RuntimeError):
+        with research_trace.turn("eeva", "tool_brain"):
+            pass
+
+
 def test_outside_a_turn_notes_are_ignored():
     research_trace.note_search("brave", "general", 1)
     research_trace.note_fetch(True)
