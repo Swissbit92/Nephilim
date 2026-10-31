@@ -9,6 +9,7 @@ import time
 
 from fastapi import APIRouter, HTTPException
 
+from .. import research_trace
 from .. import startup  # module ref for call-time getter resolution (tests patch
                         # src.coordinator.startup.get_* to neutralize deps); cycle-free.
 from ..schemas import ChatBody, GreetBody, ImpersonateBody, NarrateBody, ResponseMetadata, SourceType
@@ -563,6 +564,7 @@ def _try_tool_brain(
                 "[out-of-surface] persona=%s intent=%s missing=%s — deflecting (%s)",
                 card.get("key"), intent.value, sorted(scope.missing), scope.reason,
             )
+            research_trace.note_deflection(card.get("key", ""))
             metadata.source_type = SourceType.LLM
             metadata.tools_used = []
             answer = build_deflection(
@@ -603,23 +605,26 @@ def _try_tool_brain(
         from ..tools.image_executor import current_session_id
         _session_token = current_session_id.set(getattr(body, "session_id", "") or "")
         try:
-            result = svc.run(persona_card=card, system_prompt=tb_system,
-                             user_message=body.message, history=hist, tools=tools,
-                             sampling_overrides=get_persona_sampling_overrides(card),
-                             # A narrowed generation turn decides at the
-                             # DECISION temperature, not the persona's prose
-                             # temperature. Measured 6 runs per arm with one
-                             # tool offered: eeva 3/6 -> 6/6. It is null for
-                             # gwen (3/6 both ways), so this is not the whole
-                             # answer — but it is free here. The usual
-                             # objection, that prose_expected=False costs a
-                             # second generation (~16 tok/s, TB6), does not
-                             # bind on a turn whose user is about to wait
-                             # five and a half minutes anyway.
-                             prose_expected=(
-                                 False if wants_generation
-                                 else intent != QueryIntent.NEEDS_WEB_SEARCH
-                             ))
+            with research_trace.turn(card.get("key", ""), "tool_brain") as trace:
+                result = svc.run(persona_card=card, system_prompt=tb_system,
+                                 user_message=body.message, history=hist, tools=tools,
+                                 sampling_overrides=get_persona_sampling_overrides(card),
+                                 # A narrowed generation turn decides at the
+                                 # DECISION temperature, not the persona's prose
+                                 # temperature. Measured 6 runs per arm with one
+                                 # tool offered: eeva 3/6 -> 6/6. It is null for
+                                 # gwen (3/6 both ways), so this is not the whole
+                                 # answer — but it is free here. The usual
+                                 # objection, that prose_expected=False costs a
+                                 # second generation (~16 tok/s, TB6), does not
+                                 # bind on a turn whose user is about to wait
+                                 # five and a half minutes anyway.
+                                 prose_expected=(
+                                     False if wants_generation
+                                     else intent != QueryIntent.NEEDS_WEB_SEARCH
+                                 ))
+                trace["status"] = result.status
+                trace["tools"] = [t["tool"] for t in result.tool_trace]
         finally:
             # Reset rather than leave it set: this thread is returned to the
             # anyio pool and will serve a different session's turn next. A
@@ -1053,14 +1058,15 @@ def _chat_inner(body: ChatBody):
 
     if brave_tools:
         # Brave search query (legacy path)
-        return query_handler.handle_brave_query(
-            system_prompt=system,
-            user_compiled=user_compiled,
-            tools=tools,
-            metadata=metadata,
-            persona_name=persona_name,
-            persona_card=card
-        )
+        with research_trace.turn(persona_key, "legacy"):
+            return query_handler.handle_brave_query(
+                system_prompt=system,
+                user_compiled=user_compiled,
+                tools=tools,
+                metadata=metadata,
+                persona_name=persona_name,
+                persona_card=card
+            )
 
     else:
         # Fallback to regular completion (tools were offered but none were

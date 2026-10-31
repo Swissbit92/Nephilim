@@ -12,6 +12,7 @@ import logging
 import re
 from typing import Optional, List, Any
 
+from .. import research_trace
 from ..tool_definitions import ToolCall
 
 logger = logging.getLogger(__name__)
@@ -99,7 +100,7 @@ class SearchExecutionService:
             media = category in MEDIA_CATEGORIES
 
             if web.backend == "routed" and self.mcp_client and not media:
-                results = self._search_brave_or_none(query, safesearch, settings)
+                results = self._search_brave_or_none(query, category, safesearch, settings)
                 if results:
                     return results
                 logger.info("[SearchExecution] Brave gave nothing, trying SearXNG")
@@ -134,13 +135,13 @@ class SearchExecutionService:
                     "is available — returning no results."
                 )
                 return None
-            return self._search_brave(query, safesearch, settings)
+            return self._search_brave(query, category, safesearch, settings)
 
         except Exception as e:
             logger.error(f"[SearchExecution] Brave search failed: {e}", exc_info=True)
             return None
 
-    def _search_brave(self, query, safesearch, settings):
+    def _search_brave(self, query, category, safesearch, settings):
         brave = settings.brave
         country = brave.country or None
         search_lang = brave.search_lang or None
@@ -159,13 +160,15 @@ class SearchExecutionService:
             safesearch=safesearch,
         )
         logger.info(f"[SearchExecution] Brave search returned {len(results)} results")
+        research_trace.note_search("brave", category, len(results))
         return results
 
-    def _search_brave_or_none(self, query, safesearch, settings):
+    def _search_brave_or_none(self, query, category, safesearch, settings):
         try:
-            return self._search_brave(query, safesearch, settings)
+            return self._search_brave(query, category, safesearch, settings)
         except Exception as e:  # noqa: BLE001 - routed mode has SearXNG behind this
             logger.warning(f"[SearchExecution] Brave search failed ({e})")
+            research_trace.note_search("brave", category, None)
             return None
 
     def _try_searxng(self, query, category, safesearch, web_settings):
@@ -194,9 +197,12 @@ class SearchExecutionService:
 
         client = SearxngClient(base, timeout=web_settings.searxng_timeout)
         try:
-            return client.search(query, category=category, safesearch=safesearch)
+            results = client.search(query, category=category, safesearch=safesearch)
+            research_trace.note_search("searxng", category, len(results))
+            return results
         except MCPError as e:
             logger.warning(f"[SearchExecution] SearXNG failed ({e})")
+            research_trace.note_search("searxng", category, None)
             # searxng-only: honour the choice, don't leak to Brave -> empty.
             # auto: fall back to Brave.
             return [] if backend == "searxng" else None

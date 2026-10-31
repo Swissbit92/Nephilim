@@ -244,3 +244,32 @@ class TestGuards:
     def test_flag_default_off(self):
         from src.coordinator.config import ToolBrainSettings
         assert ToolBrainSettings.model_fields["enabled"].default is False
+
+
+class TestResearchTrace:
+    """The route is what writes the line, so assert it through the route."""
+
+    def _lines(self, monkeypatch, tmp_path):
+        import json
+
+        from src.coordinator.config import get_settings
+
+        path = tmp_path / "t.jsonl"
+        monkeypatch.setenv("RESEARCH_TRACE_PATH", str(path))
+        get_settings.cache_clear()
+        return lambda: [json.loads(x) for x in path.read_text().splitlines()]
+
+    def test_tool_turn_writes_status_and_tools(self, monkeypatch, tmp_path):
+        lines = self._lines(monkeypatch, tmp_path)
+        result = _grounded()
+        result.tool_trace = [{"tool": "web_search", "allowed": True}]
+        _invoke(result)
+        line = lines()[0]
+        assert (line["path"], line["status"], line["tools"]) == (
+            "tool_brain", ST_ANSWERED, ["web_search"],
+        )
+
+    def test_deflected_turn_is_recorded(self, monkeypatch, tmp_path):
+        lines = self._lines(monkeypatch, tmp_path)
+        _invoke(_grounded(), card=GWEN, msg="what's the weather in Zurich tomorrow?")
+        assert lines()[0]["status"] == "deflected"

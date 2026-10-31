@@ -29,6 +29,7 @@ from typing import Any, Callable, Dict, List
 
 from .registry import registry
 from .web_tool_generators import WEB_TOOL_CATEGORY
+from .. import research_trace
 from .web_safesearch import clamp_safesearch
 from .result_filters import filter_junk_results
 
@@ -118,7 +119,9 @@ def _fetch_url_executor(arguments: Dict[str, Any], persona_card: Dict[str, Any])
 
     url = arguments.get("url", "")
     mode = arguments.get("mode", "markdown")
-    return fetch_url(url, mode)
+    content = fetch_url(url, mode)
+    research_trace.note_fetch(not content.startswith("ERROR"))
+    return content
 
 
 # Tools bound here (web toolset, reads only). Wallet + extract are handled by

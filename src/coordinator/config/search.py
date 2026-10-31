@@ -122,6 +122,14 @@ class WebSearchSettings(BaseSettings):
         ),
         alias="SEARXNG_BASE_URL",
     )
+    research_trace_path: str = Field(
+        default="",
+        description=(
+            "JSONL file for per-turn research telemetry (backend, tools, pages, "
+            "latency; never query text). Empty (default) = off."
+        ),
+        alias="RESEARCH_TRACE_PATH",
+    )
     searxng_timeout: int = Field(
         default=10, ge=1, le=60,
         description="Per-request timeout (s) for the SearXNG HTTP call.",
