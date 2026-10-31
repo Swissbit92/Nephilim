@@ -47,6 +47,10 @@ def infer_freshness(query: str) -> Optional[str]:
     return None
 
 
+# Categories Brave cannot serve: its client takes no category parameter.
+MEDIA_CATEGORIES = frozenset({"images", "videos"})
+
+
 class SearchExecutionService:
     """Service for executing web search operations via MCP client.
 
@@ -81,11 +85,10 @@ class SearchExecutionService:
                 logger.warning("[SearchExecution] Search query is empty")
                 return None
 
-            # ADR-009 Phase W: backend chain. Prefer SearXNG (self-hosted, query
-            # stays local, most-permissive safesearch) when configured; fall back
-            # to Brave. safesearch comes from the tool_call args when the model/
-            # executor set it (per-persona nsfw clamp, W2), else the global
-            # WEB_SAFESEARCH_DEFAULT.
+            # ADR-009 Phase W: backend chain. safesearch comes from the tool_call
+            # args when the model/executor set it (per-persona nsfw clamp, W2),
+            # else the global WEB_SAFESEARCH_DEFAULT. An nsfw persona reaches this
+            # with no Brave client at all, which is what keeps it off Brave.
             from ..config import get_settings
 
             settings = get_settings()
@@ -93,6 +96,14 @@ class SearchExecutionService:
             args = tool_call.arguments or {}
             safesearch = args.get("safesearch") or web.safesearch_default
             category = args.get("category") or "general"
+            media = category in MEDIA_CATEGORIES
+
+            if web.backend == "routed" and self.mcp_client and not media:
+                results = self._search_brave_or_none(query, safesearch, settings)
+                if results:
+                    return results
+                logger.info("[SearchExecution] Brave gave nothing, trying SearXNG")
+                return self._try_searxng(query, category, safesearch, web)
 
             # SearXNG needs no Brave client — try it FIRST so a SearXNG-primary
             # deployment works even with Brave unconfigured (bug surfaced by the
@@ -107,6 +118,15 @@ class SearchExecutionService:
                 )
                 return searxng_results
 
+            # search_web has no category, so Brave would answer an image search
+            # with plain web results that synthesis then presents as images.
+            if media:
+                logger.warning(
+                    f"[SearchExecution] SearXNG unavailable for {category} search; "
+                    "not falling back to Brave — returning no results."
+                )
+                return None
+
             # --- Brave fallback (or backend='brave') --------------------------
             if not self.mcp_client:
                 logger.warning(
@@ -114,29 +134,38 @@ class SearchExecutionService:
                     "is available — returning no results."
                 )
                 return None
-            brave = settings.brave
-            country = brave.country or None
-            search_lang = brave.search_lang or None
-            freshness = infer_freshness(query)
-
-            logger.info(
-                f"[SearchExecution] Executing Brave search: '{query}' "
-                f"(country={country}, lang={search_lang}, freshness={freshness}, "
-                f"safesearch={safesearch})"
-            )
-            results = self.mcp_client.search_web(
-                query,
-                country=country,
-                search_lang=search_lang,
-                freshness=freshness,
-                safesearch=safesearch,
-            )
-            logger.info(f"[SearchExecution] Brave search returned {len(results)} results")
-
-            return results
+            return self._search_brave(query, safesearch, settings)
 
         except Exception as e:
             logger.error(f"[SearchExecution] Brave search failed: {e}", exc_info=True)
+            return None
+
+    def _search_brave(self, query, safesearch, settings):
+        brave = settings.brave
+        country = brave.country or None
+        search_lang = brave.search_lang or None
+        freshness = infer_freshness(query)
+
+        logger.info(
+            f"[SearchExecution] Executing Brave search: '{query}' "
+            f"(country={country}, lang={search_lang}, freshness={freshness}, "
+            f"safesearch={safesearch})"
+        )
+        results = self.mcp_client.search_web(
+            query,
+            country=country,
+            search_lang=search_lang,
+            freshness=freshness,
+            safesearch=safesearch,
+        )
+        logger.info(f"[SearchExecution] Brave search returned {len(results)} results")
+        return results
+
+    def _search_brave_or_none(self, query, safesearch, settings):
+        try:
+            return self._search_brave(query, safesearch, settings)
+        except Exception as e:  # noqa: BLE001 - routed mode has SearXNG behind this
+            logger.warning(f"[SearchExecution] Brave search failed ({e})")
             return None
 
     def _try_searxng(self, query, category, safesearch, web_settings):

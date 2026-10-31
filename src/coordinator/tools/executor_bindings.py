@@ -91,7 +91,8 @@ def _make_search_executor(tool_name: str) -> Callable[[Dict[str, Any], Dict[str,
             "safesearch": clamped,            # per-persona floor enforced here
             "category": eff_category,
         }
-        svc = SearchExecutionService(mcp_client=get_brave_client())
+        # An nsfw persona gets no Brave client, so no branch below can reach it.
+        svc = SearchExecutionService(mcp_client=None if nsfw else get_brave_client())
         results = svc.execute_search(ToolCall(name=tool_name, arguments=args))
 
         # Deterministic junk denylist (always-on, images only): strip icon-CDN /

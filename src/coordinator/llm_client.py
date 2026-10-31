@@ -129,7 +129,9 @@ def create_llm_client(
         base=cfg.ollama.base,
         model=cfg.ollama.model,
         temperature=temp,
-        mcp_client=mcp_client,
+        # The legacy path's only use of this client is Brave, which an nsfw
+        # persona must never reach.
+        mcp_client=None if persona_card.get("nsfw") else mcp_client,
         repeat_penalty=overrides.get("repeat_penalty"),
         repeat_last_n=overrides.get("repeat_last_n"),
         min_p=overrides.get("min_p"),

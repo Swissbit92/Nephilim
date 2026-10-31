@@ -105,8 +105,11 @@ class WebSearchSettings(BaseSettings):
         default="auto",
         description=(
             "Search backend selection: 'auto' (SearXNG if searxng_base_url is "
-            "set, else Brave), 'searxng' (SearXNG only), or 'brave' (Brave only). "
-            "'auto' with no SearXNG URL == legacy Brave-only behavior."
+            "set, else Brave), 'searxng' (SearXNG only), 'brave' (Brave only), or "
+            "'routed' (text search Brave first with SearXNG behind it; images and "
+            "videos SearXNG only). 'auto' with no SearXNG URL == legacy Brave-only "
+            "behavior. On every value an nsfw persona never reaches Brave, and "
+            "neither does an image or video search."
         ),
         alias="WEB_SEARCH_BACKEND",
     )
@@ -149,7 +152,7 @@ class WebSearchSettings(BaseSettings):
     @classmethod
     def _validate_backend(cls, v: str) -> str:
         v = v.strip().lower()
-        if v not in {"auto", "searxng", "brave"}:
+        if v not in {"auto", "searxng", "brave", "routed"}:
             logger.warning(f"Invalid WEB_SEARCH_BACKEND '{v}', using 'auto'")
             return "auto"
         return v
