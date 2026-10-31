@@ -29,6 +29,7 @@ from typing import Any, Callable, Dict, List
 
 from .registry import registry
 from .web_tool_generators import WEB_TOOL_CATEGORY
+from .. import research_trace
 from .web_safesearch import clamp_safesearch
 from .result_filters import filter_junk_results
 
@@ -91,7 +92,8 @@ def _make_search_executor(tool_name: str) -> Callable[[Dict[str, Any], Dict[str,
             "safesearch": clamped,            # per-persona floor enforced here
             "category": eff_category,
         }
-        svc = SearchExecutionService(mcp_client=get_brave_client())
+        # An nsfw persona gets no Brave client, so no branch below can reach it.
+        svc = SearchExecutionService(mcp_client=None if nsfw else get_brave_client())
         results = svc.execute_search(ToolCall(name=tool_name, arguments=args))
 
         # Deterministic junk denylist (always-on, images only): strip icon-CDN /
@@ -117,7 +119,9 @@ def _fetch_url_executor(arguments: Dict[str, Any], persona_card: Dict[str, Any])
 
     url = arguments.get("url", "")
     mode = arguments.get("mode", "markdown")
-    return fetch_url(url, mode)
+    content = fetch_url(url, mode)
+    research_trace.note_fetch(not content.startswith("ERROR"))
+    return content
 
 
 # Tools bound here (web toolset, reads only). Wallet + extract are handled by
