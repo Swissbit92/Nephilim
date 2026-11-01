@@ -41,4 +41,5 @@ Accepted. `RESEARCH_SERVICE_ENABLED` defaults off and is on in production.
 - A question missed by all three proposers still goes unsearched, such as "compare Ledger and
   Trezor for a beginner".
 - A persona gains research by holding `web_search`. Gwen does not.
-- Numbers checked by `unsupported_figures` are telemetry, not proof of support.
+- Figures the evidence does not contain are enforced live: one regeneration, then those
+  sentences are removed. Support for other claims is still measured only in the eval.
