@@ -304,7 +304,7 @@ produced different text, and source mixes differed (ON `tool_brain` 9 / OFF 5;
 OFF emitted 3 `groundedness_abstain`, ON zero).
 
 **Known gap — Gwen was not in the voice gate.** `probes.json` covers 7 of the 8
-personas; `gwen` is absent (pre-existing, ADR-005 era). She is the persona this
+personas; `gwen` was absent at the time, and is in `probes.json` now. She is the persona this
 change affects most — restricted tool surface (`image_search`/`video_search`
 only), actively used via her own Telegram daemon, and the most voice-sensitive.
 She cannot simply be added: attribution is a discrimination metric, so 7→8 moves

@@ -205,8 +205,8 @@ This ADR is built on a direction, not on precision.
 
 ## Status
 
-**Proposed.** Written to be argued with. Nothing is built, no flag exists, and the reply
-path is unchanged.
+**Accepted**, as amended below. This section is the original proposal, kept as written. Part 2's
+`AssertionGate` has no callers and no flag: the second amendment superseded it.
 
 Decision 2 is the one worth the most scrutiny: it is the only part that attacks the
 largest measured defect, it is the part with no existing implementation, and it is the

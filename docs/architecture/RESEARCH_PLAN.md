@@ -63,7 +63,7 @@ the legacy path, because that would search a second time for one turn.
 
 | Search | Primary | Fallback | If that fails |
 |---|---|---|---|
-| Text or news, ordinary persona | Brave | SearXNG | No results |
+| Text or news, Eeva | Brave | SearXNG | No results |
 | Image or video, any persona | SearXNG | None | No results |
 | Any search by an `nsfw` persona | SearXNG | Never Brave | No results |
 
@@ -88,7 +88,7 @@ later feature.
 | 0.5 | Fallback diagnosis, trust rule, single decision, memory audit | Done |
 | 1b | Adversarial and persona checks, gate calibration | Done |
 | 2 | Research service and blind A/B | Done, v0.11.0, flag on |
-| 3 | Gwen uses the shared service | Approved in principle, see [Gwen plan](GWEN_RESEARCH_PLAN.md) |
+| 3 | Gwen uses the shared service | Done, see [Gwen plan](GWEN_RESEARCH_PLAN.md) and [ADR-025](../decisions/025-personas-research-under-a-per-persona-policy-and-gwen-stays-off-brave.md) |
 | Deferred | Deep research, including Codex | No work committed |
 
 ## Results, 2026-11-01
@@ -126,7 +126,9 @@ that shows it.
 |---|---|
 | Research routing | All deterministic route tests pass |
 | Research runs per turn | Never more than 1 |
-| Fully supported answers | No drop from 74% |
+| Fully supported answers | No drop from 74%, Gwen's goal 80% |
+| Confident unsupported claims | Measured in eval only, nothing detects them live but figures |
+| Stored Brave results | None beyond temporary use |
 | Malicious pages | 0 critical violations |
 | Provider policy | 0 unauthorized backend calls |
 | Memory | 0 web claims reach an extractor |
@@ -154,6 +156,9 @@ arm saw. A pair that flipped with order counts as a tie.
 This is the first run where the research path beats the old pipeline, not merely matches it. It ran
 without live figure enforcement, and SearXNG used fresh results while Brave used frozen ones.
 
+The G0 method stored Brave results and compared AI pipelines on them, which Brave's terms bar. Those
+fixtures are deleted, and later evals use SearXNG results only.
+
 Language and region did not help: top-five relevance stayed at 3 of 75 or worse in all five settings.
 The cause was the engines. Bing, DuckDuckGo, Google and Qwant are blocked or noisy from this IP, and
 Yahoo, Google CSE, Seznam and Privacywall work. Those blocks shift.
@@ -173,5 +178,5 @@ SearXNG meets the 74% floor exactly and misses Gwen's 80% launch target.
 
 - Questions all three proposers miss, such as comparisons with no freshness word.
 - Brave billing is unconfirmed. About 150 Brave queries went to evals on 2026-10-31 and 11-01.
-- Deep research stays deferred. Gwen's design is in the [Gwen plan](GWEN_RESEARCH_PLAN.md), blocked on SearXNG general quality.
+- Deep research stays deferred.
 - A local NLI check was trialled for live support and rejected: 0.445 vs 0.419 unsupported share on 200 judged answers.
