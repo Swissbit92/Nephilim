@@ -96,6 +96,10 @@ _MAX_RECYCLE_BACKOFF = 16
 #: What to ask for. Describes the SITUATION only — never the wording — so the
 #: persona supplies the voice and this file supplies none of it.
 SITUATIONS: dict[str, str] = {
+    "research_empty": (
+        "You looked something up for the person you are talking to and found "
+        "nothing you could rely on, so you cannot answer it. Say so honestly."
+    ),
     "image_ready": (
         "You made a picture for the person you are talking to, and you are "
         "handing it to them now. You have NOT seen it and do not know what is "
@@ -150,6 +154,7 @@ _GUARD = (
 
 #: Said ONLY when the model cannot be reached. Not the product.
 _FALLBACK: dict[str, str] = {
+    "research_empty": "I looked, and I couldn't find anything I can rely on for that.",
     "image_ready": "Here — I made this for you.",
     "image_failed": "I tried to make that picture and it didn't work out.",
     "image_cancelled": "I stopped making that picture.",
