@@ -184,6 +184,13 @@ class TestQueryRules:
         )
         assert "formula" not in private and "germany" not in private
 
+    def test_a_private_freshness_turn_on_a_web_intent_reaches_the_scope_guard(self, flags):
+        flags()
+        with patch("src.coordinator.services.research_policy.proposal", return_value="freshness"):
+            resp, _, _, research, _ = _gwen_turn("how much does Daddy want it")
+        research.run.assert_not_called()
+        assert "ask me straight" in str(resp["answer"])
+
     def test_only_the_recent_turns_are_used(self):
         history = [
             turn("user", "one"),

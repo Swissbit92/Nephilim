@@ -250,7 +250,8 @@ class SearchSettings(BaseSettings):
         default=False,
         description=(
             "Let an nsfw persona whose card sets `research` use the ResearchService. "
-            "Off = they deflect web questions. Their searches stay on SearXNG either way."
+            "Off = the research path is closed to them, and they keep their media tools. "
+            "Their searches stay on SearXNG either way."
         ),
         alias="RESEARCH_NSFW_ENABLED",
     )
