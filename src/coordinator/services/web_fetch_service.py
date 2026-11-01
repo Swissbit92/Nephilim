@@ -56,7 +56,7 @@ def _is_private_ip(ip: str) -> bool:
         return True
     return (addr.is_loopback or addr.is_private or addr.is_link_local
             or addr.is_reserved or addr.is_multicast or addr.is_unspecified
-            or addr in _CGNAT)
+            or (getattr(addr, "ipv4_mapped", None) or addr) in _CGNAT)
 
 
 class BlockedAddress(httpcore.ConnectError):

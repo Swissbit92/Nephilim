@@ -123,6 +123,7 @@ _PUBLIC_QUERY_WORDS = frozenset(
     "january february march april may june july august september october november december "
     "btc bitcoin eth ethereum sol solana usd eur chf".split()
 )
+_FILLER_WORDS = frozenset("a an the is are was what how why who about of do does".split())
 _YEAR_RE = re.compile(r"^(19|20)\d{2}$")
 
 
@@ -344,7 +345,7 @@ class QueryResolutionService:
     def needs_clarifying(query: str) -> bool:
         """True when nothing searchable is left: a bare command or only pronouns."""
         words = {w for w in _WORD_RE.findall((query or "").lower())}
-        content = words - _DEICTIC_TOKENS - _PUBLIC_QUERY_WORDS - {"what", "how", "why", "who"}
+        content = words - _DEICTIC_TOKENS - _FILLER_WORDS
         return not content or QueryResolutionService._is_bare_search_command(query)
 
     @staticmethod

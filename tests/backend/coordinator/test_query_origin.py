@@ -75,6 +75,11 @@ def test_assistant_text_is_not_given_to_the_rewriter(resolution_on):
     ("what about it?", True),
     ("how much does it cost?", False),
     ("Ledger Nano X cost", False),
+    ("bitcoin price", False),
+    ("weather today", False),
+    ("latest news", False),
+    ("btc price today", False),
+    ("who is he?", True),
     ("what about the 32B version?", False),
 ])
 def test_needs_clarifying(query, expected):

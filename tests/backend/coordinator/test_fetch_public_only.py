@@ -139,6 +139,7 @@ def test_an_unreachable_first_address_falls_through_to_the_next(monkeypatch):
 @pytest.mark.parametrize("ip", [
     "127.0.0.1", "::1", "::ffff:127.0.0.1", "10.0.0.1", "192.168.1.1", "172.16.0.1",
     "169.254.169.254", "fe80::1", "fc00::1", "0.0.0.0", "100.64.0.1", "100.127.255.254",
+    "::ffff:100.64.0.1", "::ffff:10.0.0.1",
 ])
 def test_blocked_addresses(ip):
     assert wf._is_private_ip(ip) is True
