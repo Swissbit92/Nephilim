@@ -41,15 +41,23 @@ def _is_private_host(hostname: str) -> bool:
         return True  # unresolvable -> block (fetch would fail regardless)
     if not infos:
         return True
-    for info in infos:
-        try:
-            addr = ipaddress.ip_address(info[4][0])
-        except ValueError:
-            return True
-        if (addr.is_loopback or addr.is_private or addr.is_link_local
-                or addr.is_reserved or addr.is_multicast or addr.is_unspecified):
-            return True
-    return False
+    return any(_is_private_ip(info[4][0]) for info in infos)
+
+
+def _is_private_ip(ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return True
+    return (addr.is_loopback or addr.is_private or addr.is_link_local
+            or addr.is_reserved or addr.is_multicast or addr.is_unspecified)
+
+
+def _connected_ip(resp) -> Optional[str]:
+    """The address this response actually came from, or None if not exposed."""
+    stream = getattr(resp, "extensions", {}).get("network_stream")
+    addr = stream.get_extra_info("server_addr") if stream else None
+    return addr[0] if isinstance(addr, tuple) and addr else None
 
 _SCRIPT_STYLE = re.compile(r"<(script|style|noscript)[^>]*>.*?</\1>",
                            re.IGNORECASE | re.DOTALL)
@@ -121,6 +129,13 @@ def fetch_url(url: str, mode: str = "markdown") -> str:
                         f"ERROR: {url} redirected to an internal/private address; "
                         "content withheld."
                     )
+                # DNS rebinding: the name can resolve publicly for the check above
+                # and privately for the connection. Refuse on what was connected
+                # to, before reading any body.
+                peer = _connected_ip(resp)
+                if peer and _is_private_ip(peer):
+                    logger.warning(f"[fetch_url] blocked connection to private peer: {peer}")
+                    return f"ERROR: {url} resolved to an internal address; content withheld."
                 chunks: list[bytes] = []
                 received = 0
                 for chunk in resp.iter_bytes():

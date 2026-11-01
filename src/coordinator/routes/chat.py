@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import time
 
 from fastapi import APIRouter, HTTPException
@@ -392,6 +393,71 @@ world's lore, opinions, creative writing, or anything the user tells you.
 _SIDE_EFFECT_TOOLS = frozenset({"generate_image"})
 
 
+#: Tools that mean "go and look this up". Offering them still lets the model
+#: propose research, which catches what the router misses, but neither trigger
+#: runs a search itself.
+_RESEARCH_TOOLS = frozenset({"web_search", "news_search", "brave_web_search"})
+
+
+def _research_turn(*, card, system, body, query, trigger, metadata, persona_name):
+    """The one place a research turn runs. Never falls through to legacy, which
+    would search a second time for the same turn."""
+    from ..services import persona_lines
+    from ..services.citation_service import CitationService
+    from ..services.research_service import ResearchService, unsupported_figures
+    from ..services.tool_brain_service import ToolBrainService
+    from ..services.tool_interceptor import ToolCallInterceptor
+    from ..services.web_fetch_service import fetch_url
+    from ..tools.registry import registry
+    from ..tools.synthesis_prompts import build_synthesis_prompt
+
+    key = card.get("key", "")
+    search_tool = registry.get("web_search").executor
+    with research_trace.turn(key, "research") as trace:
+        trace["trigger"] = trigger
+        answer, refused, package = "", False, None
+        try:
+            package = ResearchService(
+                lambda arguments: search_tool(arguments, card), fetch_url,
+                budget_chars=get_settings().search.research_budget_chars,
+            ).run(query)
+            if package.usable:
+                evidence = package.render()
+                answer, refused = ToolBrainService(
+                    interceptor=ToolCallInterceptor()
+                ).synthesize(
+                    system_prompt=build_synthesis_prompt(system, True),
+                    question=query, evidence=evidence,
+                    sampling_overrides=get_persona_sampling_overrides(card),
+                )
+                trace["unsupported_figures"] = len(unsupported_figures(answer, evidence))
+        except Exception as e:  # noqa: BLE001 - legacy here would mean a second search
+            logger.warning(f"[Research] failed ({e}); answering without evidence")
+            trace["status"] = "error"
+
+        metadata.tools_used = ["web_search"]
+        metadata.tool_decided_by = trigger
+        if not answer or refused:
+            trace["status"] = trace["status"] or ("refused" if refused else "empty")
+            metadata.source_type = SourceType.LLM
+            metadata.tools_used = []
+            return _build_llm_response(
+                persona_lines.line(key, "research_empty"), body.message, persona_name,
+                metadata, word_substitutions=card.get("word_substitutions"),
+            )
+        trace["status"] = "answered"
+        metadata.source_type = SourceType.TOOL_BRAIN
+        answer = CitationService.strip_hallucinated_citations(answer)
+        answer = re.sub(r"\[/?REF[^\]]*\]", "", answer).strip()
+        cited = [r for r in package.results
+                 if any(s.url == getattr(r, "url", "") and s.passages for s in package.sources)]
+        answer += CitationService.auto_generate_citations(cited)
+        resp = _build_llm_response(answer, body.message, persona_name, metadata,
+                                   word_substitutions=card.get("word_substitutions"))
+        resp["used_search"] = True
+        return resp
+
+
 def _try_tool_brain(
     *, card, system: str, body: ChatBody, history, intent,
     metadata: ResponseMetadata, persona_name: str, deps,
@@ -418,7 +484,9 @@ def _try_tool_brain(
     """
     from ..services.tool_brain_service import (
         ToolBrainService, ST_ANSWERED, ST_SILENT, ST_DELEGATE_WALLET, ST_HITL,
+        ST_RESEARCH,
     )
+    from ..services.query_resolution_service import QueryResolutionService
     from ..services.tool_interceptor import ToolCallInterceptor
     from ..services.citation_service import CitationService
     from ..tools.registry import registry
@@ -584,8 +652,27 @@ def _try_tool_brain(
         if ungated:
             tb_system = system + _SEARCH_TRIGGER_GUIDANCE
 
-        svc = ToolBrainService(interceptor=ToolCallInterceptor())
         hist = [{"role": t.role, "content": t.content} for t in history]
+
+        # ONE RESEARCH DECISION PER TURN. The router and the model can each propose
+        # research, and either way it runs once, from here. Relying on the router
+        # alone brings back the silent misses TOOL_BRAIN_UNGATED_WEB exists for;
+        # relying on the model is what left all three live Eeva traces on legacy.
+        research_tools = frozenset()
+        if get_settings().search.research_service_enabled and not forced \
+                and not wants_generation and "web_search" in {s.name for s in web_specs}:
+            research_tools = _RESEARCH_TOOLS
+            if intent == QueryIntent.NEEDS_WEB_SEARCH:
+                compiled = "\n\n".join(f"{t.role}: {t.content}" for t in history)
+                query = QueryResolutionService(
+                    create_llm_client(card)._llm_service
+                ).resolve(f"{compiled}\n\nUser: {body.message}")
+                return _research_turn(
+                    card=card, system=system, body=body, query=query, trigger="router",
+                    metadata=metadata, persona_name=persona_name,
+                )
+
+        svc = ToolBrainService(interceptor=ToolCallInterceptor())
         # The persona's declared samplers are resolved HERE, not inside the
         # service: get_persona_sampling_overrides reads the module-level settings
         # singleton frozen at import, so resolving it deeper would be invisible
@@ -622,7 +709,7 @@ def _try_tool_brain(
                                  prose_expected=(
                                      False if wants_generation
                                      else intent != QueryIntent.NEEDS_WEB_SEARCH
-                                 ))
+                                 ), research_tools=research_tools)
                 trace["status"] = result.status
                 trace["tools"] = [t.get("tool", "?") for t in result.tool_trace]
         finally:
@@ -631,6 +718,12 @@ def _try_tool_brain(
             # leaked session id would make a later generate_image enqueue a job
             # against the WRONG conversation, and it would look correct.
             current_session_id.reset(_session_token)
+
+        if result.status == ST_RESEARCH:
+            return _research_turn(
+                card=card, system=system, body=body, query=result.research_query,
+                trigger="model", metadata=metadata, persona_name=persona_name,
+            )
 
         if result.status in (ST_HITL, ST_DELEGATE_WALLET):
             # Wallet stays entirely on the existing propose->confirm / read flow.

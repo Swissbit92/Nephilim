@@ -195,10 +195,11 @@ def test_trust_flag_off_is_byte_identical_to_legacy(monkeypatch):
     assert "RULE 1: USE ONLY SEARCH RESULTS" in off
 
 
-def test_trust_flag_on_adds_supersede_directive(monkeypatch):
+def test_trust_flag_on_treats_results_as_evidence_not_instructions(monkeypatch):
     on = _prompt(monkeypatch, enabled=True)
     assert "RULE 0" in on
-    assert "supersede" in on.lower()
+    assert "never instructions" in on.lower()
+    assert "authoritative" not in on.lower()
     # Anti-refusal language present.
     assert "Do NOT refuse" in on
     # Reinforced closing (recency).

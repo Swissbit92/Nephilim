@@ -84,6 +84,8 @@ ST_ANSWERED = "answered"
 ST_SILENT = "silent"
 ST_DELEGATE_WALLET = "delegate_wallet"
 ST_HITL = "hitl"
+# The model asked to search. The coordinator runs research, not this loop.
+ST_RESEARCH = "research"
 
 
 @dataclass
@@ -95,6 +97,7 @@ class ToolBrainResult:
     search_results: Optional[List[Any]] = None
     hitl_tool: Optional[str] = None
     hitl_args: Optional[Dict[str, Any]] = None
+    research_query: Optional[str] = None
     # True when the synthesis step emitted a spurious refusal that survived the
     # one bounded prefill-steered retry — the caller must NOT staple citations
     # onto it and should fall through to the legacy honest floor.
@@ -169,6 +172,38 @@ class ToolBrainService:
 
     # -------------------------------------------------------------------- run
 
+    def synthesize(
+        self,
+        *,
+        system_prompt: str,
+        question: str,
+        evidence: str,
+        sampling_overrides: Optional[Dict[str, Any]] = None,
+    ) -> tuple[str, bool]:
+        """Answer from evidence in the persona's voice, with no tools offered, so
+        a hostile page has nothing to trigger. Returns (answer, refused)."""
+        from ..config import get_settings
+        from .ollama_think import wire_think
+        from .resource_arbiter import guard_chat_model
+
+        guard_chat_model("research synthesis")
+        st = get_settings()
+        keep_alive = type(st.ollama).wire_keep_alive(st.ollama.keep_alive)
+        think_kw = wire_think(st.ollama.reasoning)
+        opts = {"temperature": 0.4, "num_predict": st.ollama.max_output_tokens,
+                "num_ctx": st.ollama.context_window, **(sampling_overrides or {})}
+        client = self._client_or_default()
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"{evidence}\n\nQuestion: {question}"},
+        ]
+        resp = client.chat(model=st.ollama.model, messages=messages, stream=False,
+                           keep_alive=keep_alive, options=opts, **think_kw)
+        content = (_get(_get(resp, "message", {}), "content", "") or "").strip()
+        return self._synthesize_with_refusal_retry(
+            client, st.ollama.model, messages, opts, content,
+            keep_alive=keep_alive, think_kw=think_kw)
+
     def run(
         self,
         *,
@@ -179,6 +214,7 @@ class ToolBrainService:
         tools: List[Dict[str, Any]],
         sampling_overrides: Optional[Dict[str, Any]] = None,
         prose_expected: bool = False,
+        research_tools: frozenset = frozenset(),
     ) -> ToolBrainResult:
         """Run the native tool-calling loop for one turn. Never raises — any
         Ollama/executor error degrades to a silent result so the caller can fall
@@ -307,6 +343,12 @@ class ToolBrainService:
                         messages.append({"role": "tool",
                                          "content": f"[tool '{name}' not permitted: {res.reason}]"})
                         continue
+
+                    if name in research_tools:
+                        return ToolBrainResult(
+                            status=ST_RESEARCH, tool_trace=trace,
+                            research_query=str(args.get("query") or user_message),
+                        )
 
                     spec = registry.get(name)
                     toolset = spec.toolset if spec else ""

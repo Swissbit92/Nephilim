@@ -237,6 +237,20 @@ class SearchSettings(BaseSettings):
         ),
         alias="SEARCH_RELEVANCE_MIN_COSINE",
     )
+    research_service_enabled: bool = Field(
+        default=False,
+        description=(
+            "Route research turns through the deterministic ResearchService: one "
+            "decision per turn, proposed by the router or the model. Off = the "
+            "tool loop with the legacy force-search floor."
+        ),
+        alias="RESEARCH_SERVICE_ENABLED",
+    )
+    research_budget_chars: int = Field(
+        default=14000, ge=1000, le=40000,
+        description="Evidence text passed to synthesis, about 3.5k tokens by default.",
+        alias="RESEARCH_BUDGET_CHARS",
+    )
     synthesis_trust_results: bool = Field(
         default=False,
         description=(
