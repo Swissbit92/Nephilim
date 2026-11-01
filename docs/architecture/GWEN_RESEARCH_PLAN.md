@@ -24,7 +24,12 @@ ai_summary: "Open before giving Gwen general web research or storing anything re
 - She researches only on a clear lookup or freshness question. Scene state, G5 and G6 are deferred.
 - Research stays in summaries, labelled, keeping what the operator said apart from what she found.
 - 74% is the regression floor, 80% her launch target, on a set large enough to tell them apart.
-- G0 first needs SearXNG language and region set: neither is configured today.
+
+## G0 result, 2026-11-01
+
+With a new engine list SearXNG is usable: 74% fully supported against Brave's 84%, and Brave wins 20
+to 8 with 22 ties (p=0.036). It meets the floor and misses the 80% launch target. Whether that is
+enough for Gwen, or Brave is revisited for normal questions, is the operator's decision.
 
 ## The short answer
 
@@ -52,7 +57,7 @@ decision, and SearXNG's general results are currently junk on this IP.
 | Summaries and RAG keep assistant text, so research answers persist there | [inspected] |
 | `:Source`, `:Claim`, `:ResearchEpisode` are demanded by no competency question, so the repo's checks would block them | [inspected] |
 | Research parity evidence is Eeva's, on Brave-first routing. There is none for Gwen | [measured] |
-| SearXNG general search: 14 of 14 non-empty, but many results irrelevant (F1 gave LinkedIn, Matterhorn gave NordVPN, Zurich trains gave Gmail) | [measured] |
+| SearXNG general search was junk with the old engines; see the G0 result above | [measured] |
 | Earlier, SearXNG-first lost to Brave-first 6 to 29 with 5 ties, blind, on Eeva's questions | [measured] |
 | Local NLI (`nli-deberta-v3-small`) cannot separate supported from unsupported answers: 0.445 vs 0.419 unsupported share | [measured] |
 
@@ -143,9 +148,7 @@ decision, and SearXNG's general results are currently junk on this IP.
 
 ### G0 detail
 
-SearXNG results are junk on this IP. Try language and region settings first, then other engines.
-The Bing results look locale-confused, which is a hypothesis [unverified]. If no engine set
-reaches parity, the operator has three options, listed under open questions.
+Done. Language and region did not help, and a new engine list did. See the G0 result above.
 
 ### G2 detail, defects to fix first
 
