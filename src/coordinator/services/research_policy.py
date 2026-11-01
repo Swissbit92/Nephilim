@@ -43,6 +43,8 @@ class ResearchPolicy:
     context_turns: int = 0
     compact_sources: bool = False
     constraint_reminder: bool = False
+    #: A strong persona can talk past the question, so check that it was answered.
+    check_answered: bool = False
     #: A reply to a personal message stays in the conversation.
     personal_turns: bool = True
 
@@ -55,6 +57,7 @@ _NSFW = ResearchPolicy(
     context_turns=2,
     compact_sources=True,
     constraint_reminder=True,
+    check_answered=True,
     personal_turns=False,
 )
 

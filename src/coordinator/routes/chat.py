@@ -482,7 +482,7 @@ def _run_research(
     from ..services import persona_lines
     from ..services.citation_service import CitationService
     from ..services.research_service import (
-        ResearchService, drop_unsupported, sources_used, unsupported_figures,
+        ResearchService, dodged, drop_unsupported, sources_used, unsupported_figures,
     )
     from ..services.message_processing_service import apply_word_substitutions
     from ..services.research_policy import is_consequential, recent_user_turns
@@ -510,14 +510,19 @@ def _run_research(
             if package.usable and not weak:
                 evidence = package.render()
                 question = query
+                # The question comes last. Followed by scene context or a reminder she
+                # answered those and left the lookup out, with sources still attached.
+                preamble = []
                 if policy and policy.context_turns:
                     earlier = recent_user_turns(history, policy.context_turns)
                     if earlier:
-                        question = "They said earlier: " + " / ".join(earlier) + f"\n\n{query}"
+                        preamble.append("They said earlier: " + " / ".join(earlier))
                 if policy and policy.constraint_reminder:
                     reminder = build_constraint_reminder(card.get("key"))
                     if reminder:
-                        question = f"{question}\n\n{reminder}"
+                        preamble.append(reminder)
+                if preamble:
+                    question = "\n".join(preamble) + f"\n\nAnswer this directly: {query}"
                 brain = ToolBrainService(interceptor=ToolCallInterceptor())
                 prompt = build_synthesis_prompt(system, True, research=True)
                 sampling = get_persona_sampling_overrides(card)
@@ -526,6 +531,18 @@ def _run_research(
                         system_prompt=prompt, question=question, evidence=evidence,
                         sampling_overrides=sampling,
                     )
+                if policy and policy.check_answered and not refused \
+                        and dodged(answer, evidence, query):
+                    trace["dodged"] = 1
+                    with research_trace.timed("retry"):
+                        answer, refused = brain.synthesize(
+                            system_prompt=prompt, evidence=evidence, sampling_overrides=sampling,
+                            question=(f"{question}\n\nYou did not answer. Your first sentence "
+                                      "must state the answer from the evidence."),
+                        )
+                    if dodged(answer, evidence, query):
+                        trace["dodged"] = 2
+
                 # A rule retry must keep the evidence. The general retry regenerates
                 # from the chat alone, which would answer unsourced under a research
                 # label, so this turn enforces here and tells the caller it did.
@@ -586,7 +603,8 @@ def _run_research(
         metadata.source_type = SourceType.TOOL_BRAIN
         answer = CitationService.strip_hallucinated_citations(answer)
         answer = re.sub(r"\[/?REF[^\]]*\]", "", answer).strip()
-        used = sources_used(answer, package.sources)
+        # Sources on a reply that did not answer would make it look researched.
+        used = set() if trace.get("dodged") == 2 else sources_used(answer, package.sources)
         cited = [r for r in package.results if getattr(r, "url", "") in used]
         # Substituted here, not in the builder, so a URL in the citations stays intact.
         answer = apply_word_substitutions(answer, card.get("word_substitutions"))

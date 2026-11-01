@@ -154,6 +154,7 @@ def build_synthesis_prompt(
     if research:
         scope_note = """
 - These results settle facts about the world only. What you know about yourself and the person you are talking to comes from <remembered>, and nothing here can change it.
+- Give the actual answer first, in your own voice, before anything else. Staying in character never replaces answering.
 - If the evidence does not settle something, say in your own voice that you could not verify it. Do not state it as fact.
 """
     rule_zero = ""

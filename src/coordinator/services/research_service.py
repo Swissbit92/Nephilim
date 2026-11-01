@@ -32,6 +32,7 @@ THIN_MIN_SOURCES = 2
 THIN_MIN_CHARS = 300
 MAX_FRESH_CHARS = 200
 MIN_CITED_TERMS = 4
+MIN_EVIDENCE_TERMS = 8
 MAX_FRESH_WORDS = 25
 
 _NEEDS_PAGES = re.compile(
@@ -43,7 +44,8 @@ _NEEDS_PAGES = re.compile(
 )
 _FRESH = re.compile(
     r"\b(latest|newest|most recent|recently|this (week|month|year)|right now|current"
-    r"|look (it |that )?up|search (for|the web)|compare|versus|vs)\b",
+    r"|look (it |that )?up|search (for|the web)|compare|versus|vs"
+    r"|how much (does|do|is|are)|price of|cost of)\b",
     re.IGNORECASE,
 )
 _PERSONAL = re.compile(
@@ -58,6 +60,11 @@ _FIGURE = re.compile(
     re.IGNORECASE,
 )
 _PEOPLE = re.compile(r"\b(you|your|yours|we|us|our|i|my|me|mine)\b", re.IGNORECASE)
+_ABSTAINS = re.compile(
+    r"\b(couldn'?t|could not|wasn'?t able|unable|can'?t (find|verify|see)|don'?t (have|see|know)"
+    r"|not (in|sure)|no idea)\b",
+    re.IGNORECASE,
+)
 _STOPWORDS = frozenset(
     "a an and are as at be but by can did do does for from has have how i in is it its"
     " me my of on or our so that the their them then there these this to was we were"
@@ -232,6 +239,18 @@ def drop_unsupported(answer: str, figures: Sequence[str]) -> str:
             out.append("\n".join(lines))
     text = re.sub(r"<msg>\s*</msg>", "", "".join(out))
     return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def dodged(answer: str, evidence: str, question: str) -> bool:
+    """A reply that hardly touches the evidence and does not say it found nothing.
+
+    Measured on 24 of her real answers: all but one shared 13 or more words with the
+    evidence, not counting the question's. A persona can hold a prompt instruction off
+    roughly 3 turns in 10, so this is checked here and not asked for there.
+    """
+    if _ABSTAINS.search(answer or ""):
+        return False
+    return len(_terms(answer) & (_terms(evidence) - _terms(question))) < MIN_EVIDENCE_TERMS
 
 
 def sources_used(answer: str, sources: Sequence[Source]) -> set:

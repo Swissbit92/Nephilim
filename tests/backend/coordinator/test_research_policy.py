@@ -13,7 +13,7 @@ from src.coordinator.routes import chat as chat_mod
 from src.coordinator.schemas import ResponseMetadata, SourceType, memory_text
 from src.coordinator.services import research_policy as rp
 from src.coordinator.services.citation_service import CitationService
-from src.coordinator.services.research_service import EvidencePackage, Source
+from src.coordinator.services.research_service import EvidencePackage, Source, dodged
 from src.coordinator.tools import executor_bindings, registrations  # noqa: F401
 from src.coordinator.tools.executor_bindings import bind_web_executors
 from src.coordinator.tools.intent_classifier import QueryIntent
@@ -55,6 +55,7 @@ def _gwen_turn(
     msg,
     *,
     session="s",
+    answers=True,
     intent=QueryIntent.NEEDS_WEB_SEARCH,
     history=(),
     package=None,
@@ -81,6 +82,10 @@ def _gwen_turn(
             "src.coordinator.services.research_service.ResearchService", return_value=research
         ) as svc,
         patch("src.coordinator.routes.chat.create_llm_client"),
+        patch(
+            "src.coordinator.services.research_service.dodged",
+            side_effect=((lambda *a: False) if answers else (lambda *a: True)),
+        ),
         patch("src.coordinator.services.query_resolution_service.QueryResolutionService") as qr,
         patch("src.coordinator.services.persona_lines.line", side_effect=lambda k, s: f"line:{s}"),
     ):
@@ -197,6 +202,7 @@ class TestAnswer:
         _, _, brain, _, _ = _gwen_turn("what does it cost now", history=history)
         question = brain.synthesize.call_args.kwargs["question"]
         assert "tell me about the Ledger" in question and "PRIVATE" not in question
+        assert question.rstrip().endswith("Answer this directly: what does it cost now")
 
     def test_a_substitution_cannot_rewrite_a_url(self, flags):
         flags()
@@ -227,12 +233,44 @@ class TestAnswer:
         assert "research_paused" in str(resp["answer"])
 
 
+class TestDodge:
+    EVIDENCE = (
+        "Kimi Antonelli won the United States Grand Prix at the Circuit of the Americas "
+        "in Austin Texas for Mercedes ahead of Lando Norris and Oscar Piastri this season"
+    )
+
+    def test_a_reply_that_ignores_the_evidence_is_a_dodge(self):
+        assert dodged(
+            "I can't focus on racing when I need you so much, Daddy.", self.EVIDENCE, "who won?"
+        )
+
+    def test_a_real_answer_is_not(self):
+        reply = "Kimi Antonelli won the Grand Prix at the Circuit of the Americas for Mercedes, ahead of Norris."
+        assert not dodged(reply, self.EVIDENCE, "who won?")
+
+    def test_saying_it_found_nothing_is_honest_not_a_dodge(self):
+        assert not dodged("I couldn't find that in the results, Daddy.", self.EVIDENCE, "who won?")
+
+    def test_a_dodge_is_retried_once_and_a_second_keeps_no_sources(self, flags):
+        flags()
+        resp, _, brain, _, _ = _gwen_turn(
+            "what is the weather today?",
+            answers=False,
+            synth=("I need you so much right now, Daddy.", False),
+        )
+        assert brain.synthesize.call_count == 2
+        assert "first sentence" in brain.synthesize.call_args.kwargs["question"]
+        assert "🔍" not in str(resp["answer"])
+
+
 class TestProposal:
     def test_a_followup_to_a_researched_reply_researches(self):
         history = [turn("assistant", "It is a wallet.\n\n🔍 Sources: x")]
         assert rp.proposal(rp._ORDINARY, False, "how much does it cost?", history) == "followup"
 
-    @pytest.mark.parametrize("message", ["thanks", "yes", "ok lol", "why?", "and then?", "that is great"])
+    @pytest.mark.parametrize(
+        "message", ["thanks", "yes", "ok lol", "why?", "and then?", "that is great"]
+    )
     def test_an_acknowledgement_does_not_research(self, message):
         history = [turn("assistant", "It is a wallet.\n\n🔍 Sources: x")]
         assert rp.proposal(rp._ORDINARY, False, message, history) is None

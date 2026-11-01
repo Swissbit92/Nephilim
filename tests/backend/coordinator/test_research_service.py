@@ -236,6 +236,8 @@ def test_only_used_sources_are_cited():
         ("what did Solana do this month?", True),
         ("current EUR to CHF exchange rate", True),
         ("how are you feeling today?", False),
+    ("how much does a Ledger Nano X cost?", True),
+    ("how much do you love me?", False),
         ("what's your latest thought about us?", False),
         ("tell me a story about the old gods", False),
         ("I love you", False),
