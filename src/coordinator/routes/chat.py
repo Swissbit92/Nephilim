@@ -409,10 +409,16 @@ def _start_research(*, policy, trigger, card, system, body, history, metadata, p
     from ..services import persona_lines
     from ..services.query_resolution_service import QueryResolutionService
     from ..services.research_policy import (
-        private_terms, query_is_clean, recent_user_turns, research_cap,
+        carries_private_term, private_terms, query_is_clean, recent_user_turns, research_cap,
     )
 
     key = card.get("key", "")
+    private = private_terms(card, getattr(body, "extra_system_context", None))
+
+    # A freshness turn sends the message itself, so one that names something private
+    # is left to the conversation: "how much does Daddy love this" is not a lookup.
+    if trigger == "freshness" and policy.query_turns and carries_private_term(body.message, private):
+        return None
 
     def spoken(situation, status):
         research_trace.note_declined(key, status)
@@ -441,17 +447,14 @@ def _start_research(*, policy, trigger, card, system, body, history, metadata, p
         resolve_ms = int((time.monotonic() - started) * 1000)
         if resolver.needs_clarifying(resolved):
             return spoken("research_unclear", "clarify")
-        clean = not policy.query_turns or query_is_clean(
-            resolved, body.message, turns + [body.message],
-            private_terms(card, getattr(body, "extra_system_context", None)),
-        )
-        if clean and resolved != body.message:
+        if policy.query_turns and not query_is_clean(resolved, body.message, private):
+            return spoken("research_unclear", "clarify")
+        if resolved != body.message:
             query, origin = resolved, "rewrite"
 
     return _research_turn(
         card=card, system=system, body=body, query=query, trigger=trigger, metadata=metadata,
-        persona_name=persona_name, resolve_ms=resolve_ms, policy=policy, history=history,
-        origin=origin,
+        persona_name=persona_name, resolve_ms=resolve_ms, policy=policy, origin=origin,
     )
 
 
@@ -476,7 +479,7 @@ def _research_turn(*, card, body, metadata, persona_name, **kwargs):
 
 
 def _run_research(
-    *, card, system, body, query, trigger, metadata, persona_name, policy=None, history=(),
+    *, card, system, body, query, trigger, metadata, persona_name, policy=None,
     resolve_ms=0, origin="model",
 ):
     from ..services import persona_lines
@@ -485,7 +488,7 @@ def _run_research(
         ResearchService, dodged, drop_unsupported, sources_used, unsupported_figures,
     )
     from ..services.message_processing_service import apply_word_substitutions
-    from ..services.research_policy import is_consequential, recent_user_turns
+    from ..services.research_policy import is_consequential
     from ..services.tool_brain_service import ToolBrainService
     from ..services.tool_interceptor import ToolCallInterceptor
     from ..services.web_fetch_service import fetch_url
@@ -510,13 +513,10 @@ def _run_research(
             if package.usable and not weak:
                 evidence = package.render()
                 question = query
-                # The question comes last. Followed by scene context or a reminder she
-                # answered those and left the lookup out, with sources still attached.
+                # The question comes last, or she answers what came before it. Earlier
+                # turns stay out: a resolved query stands alone, and given them she
+                # answered the previous question instead, which only sessions showed.
                 preamble = []
-                if policy and policy.context_turns:
-                    earlier = recent_user_turns(history, policy.context_turns)
-                    if earlier:
-                        preamble.append("They said earlier: " + " / ".join(earlier))
                 if policy and policy.constraint_reminder:
                     reminder = build_constraint_reminder(card.get("key"))
                     if reminder:
@@ -583,6 +583,8 @@ def _run_research(
         except Exception as e:  # noqa: BLE001 - legacy here would mean a second search
             logger.warning(f"[Research] failed ({e}); answering without evidence")
             trace["status"] = "error"
+            # A draft that has not passed the checks below must not go out.
+            answer = ""
 
         metadata.tools_used = ["web_search"]
         metadata.tool_decided_by = trigger
@@ -794,10 +796,12 @@ def _try_tool_brain(
             trigger = proposal(
                 policy, intent == QueryIntent.NEEDS_WEB_SEARCH, body.message, history)
             if trigger:
-                return _start_research(
+                started = _start_research(
                     policy=policy, trigger=trigger, card=card, system=system, body=body,
                     history=history, metadata=metadata, persona_name=persona_name,
                 )
+                if started is not None:
+                    return started
 
         # Narrowed to personas that HOLD a web surface but had part of it withheld.
         # A persona granted no web toolset at all is a different, pre-existing case
@@ -882,7 +886,7 @@ def _try_tool_brain(
             return _research_turn(
                 card=card, system=system, body=body, query=result.research_query,
                 trigger="model", metadata=metadata, persona_name=persona_name,
-                policy=policy, history=history,
+                policy=policy,
             )
 
         if result.status in (ST_HITL, ST_DELEGATE_WALLET):

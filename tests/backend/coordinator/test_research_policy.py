@@ -160,21 +160,29 @@ class TestNeverBrave:
 class TestQueryRules:
     TURNS = ["tell me about the Ledger Nano X", "how much does it cost"]
 
-    def test_a_rewrite_from_her_recent_turns_passes(self):
-        assert rp.query_is_clean("Ledger Nano X cost", self.TURNS[1], self.TURNS, set())
-
-    def test_a_word_from_nowhere_fails(self):
-        assert not rp.query_is_clean("Ledger Oslo cost", self.TURNS[1], self.TURNS, set())
+    def test_a_general_word_the_rewriter_adds_is_kept(self):
+        assert rp.query_is_clean("second place finisher Formula 1", "and who came second?", set())
 
     def test_a_remembered_name_from_an_earlier_turn_fails(self):
-        turns = ["I live in Brugg with Anna", "how much does a flat cost"]
-        private = rp.private_terms(GWEN, "He lives in Brugg with Anna.")
-        assert not rp.query_is_clean("flat cost Brugg", turns[1], turns, private)
+        private = rp.private_terms(GWEN, "<remembered>He lives in Brugg with Anna.</remembered>")
+        assert not rp.query_is_clean("flat cost Brugg", "how much is a flat", private)
 
     def test_a_word_typed_now_is_the_operators_to_send(self):
-        private = rp.private_terms(GWEN, "He lives in Brugg.")
-        message = "flat prices in Brugg"
-        assert rp.query_is_clean("flat prices Brugg", message, [message], private)
+        private = rp.private_terms(GWEN, "<remembered>He lives in Brugg.</remembered>")
+        assert rp.query_is_clean("flat prices Brugg", "flat prices in Brugg", private)
+
+    def test_a_freshness_message_naming_something_private_stays_in_the_scene(self, flags):
+        flags()
+        _, _, _, research, _ = _gwen_turn(
+            "how much does Daddy want it", intent=QueryIntent.NEEDS_NEITHER
+        )
+        research.run.assert_not_called()
+
+    def test_ordinary_context_words_are_not_private(self):
+        private = rp.private_terms(
+            GWEN, "Formula rules apply. <remembered>Germany. He likes tea.</remembered>"
+        )
+        assert "formula" not in private and "germany" not in private
 
     def test_only_the_recent_turns_are_used(self):
         history = [
@@ -185,24 +193,34 @@ class TestQueryRules:
         ]
         assert rp.recent_user_turns(history, 2) == ["two", "three"]
 
-    def test_a_rejected_rewrite_sends_the_message(self, flags):
+    def test_a_rejected_rewrite_asks_instead_of_sending_a_fragment(self, flags):
         flags()
-        _, _, _, research, _ = _gwen_turn(
+        resp, _, _, research, _ = _gwen_turn(
             "what does it cost",
             history=[turn("user", "tell me about the Ledger")],
+            recalled="<remembered>He lives in Oslo.</remembered>",
             rewrite="Ledger cost Oslo",
         )
-        research.run.assert_called_once_with("what does it cost")
+        research.run.assert_not_called()
+        assert "research_unclear" in str(resp["answer"])
 
 
 class TestAnswer:
     def test_her_earlier_words_stay_out_of_synthesis(self, flags):
         flags()
         history = [turn("user", "tell me about the Ledger"), turn("assistant", "PRIVATE reply")]
-        _, _, brain, _, _ = _gwen_turn("what does it cost now", history=history)
+        _, _, brain, _, _ = _gwen_turn(
+            "what does it cost now", history=history, rewrite="Ledger cost now"
+        )
         question = brain.synthesize.call_args.kwargs["question"]
-        assert "tell me about the Ledger" in question and "PRIVATE" not in question
-        assert question.rstrip().endswith("Answer this directly: what does it cost now")
+        assert "tell me about the Ledger" not in question and "PRIVATE" not in question
+        assert "Ledger cost now" in question
+
+    def test_a_standalone_question_gets_no_earlier_context(self, flags):
+        flags()
+        history = [turn("user", "who won the race?")]
+        _, _, brain, _, _ = _gwen_turn("what is the weather in Zurich?", history=history)
+        assert "who won the race" not in brain.synthesize.call_args.kwargs["question"]
 
     def test_a_substitution_cannot_rewrite_a_url(self, flags):
         flags()
@@ -231,6 +249,38 @@ class TestAnswer:
         resp, _, _, research, _ = _gwen_turn("what is the weather today?")
         research.run.assert_not_called()
         assert "research_paused" in str(resp["answer"])
+
+
+def test_a_failure_in_a_retry_cannot_send_the_unchecked_draft(flags):
+    flags()
+    meta = ResponseMetadata(source_type=SourceType.LLM, tools_used=[])
+    brain = MagicMock()
+    brain.synthesize.side_effect = [("short draft", False), RuntimeError("boom")]
+    research = MagicMock()
+    research.run.return_value = EvidencePackage(
+        "q",
+        [
+            Source("T", RESULT.url, passages=["text"], fetched=True),
+            Source("U", "https://b.example", passages=["text"], fetched=True),
+        ],
+        [RESULT],
+    )
+    with (
+        patch("src.coordinator.services.tool_brain_service.ToolBrainService", return_value=brain),
+        patch("src.coordinator.services.research_service.ResearchService", return_value=research),
+        patch("src.coordinator.services.persona_lines.line", return_value="honest line"),
+    ):
+        resp = chat_mod._research_turn(
+            card=GWEN,
+            system="s",
+            body=SimpleNamespace(message="m"),
+            query="q",
+            trigger="router",
+            metadata=meta,
+            persona_name="P",
+            policy=rp._NSFW,
+        )
+    assert "short draft" not in str(resp["answer"]) and "honest line" in str(resp["answer"])
 
 
 class TestDodge:
@@ -274,6 +324,28 @@ class TestProposal:
     def test_an_acknowledgement_does_not_research(self, message):
         history = [turn("assistant", "It is a wallet.\n\n🔍 Sources: x")]
         assert rp.proposal(rp._ORDINARY, False, message, history) is None
+
+    def test_a_history_ending_on_the_current_turn_still_finds_her_reply(self):
+        history = [
+            turn("assistant", "It is a wallet.\n\n🔍 Sources: x"),
+            turn("user", "and who made it?"),
+        ]
+        assert rp.proposal(rp._ORDINARY, False, "and who made it?", history) == "followup"
+
+    def test_a_citation_in_an_earlier_bubble_of_her_reply_counts(self):
+        history = [
+            turn("assistant", "Part one. 🔍 [a.example](https://a.example)"),
+            turn("assistant", "Do you like it?"),
+        ]
+        assert rp.proposal(rp._ORDINARY, False, "and who made it?", history) == "followup"
+
+    def test_a_citation_before_your_last_turn_does_not_count(self):
+        history = [
+            turn("assistant", "Done. 🔍 Sources: x"),
+            turn("user", "cool"),
+            turn("assistant", "Yes."),
+        ]
+        assert rp.proposal(rp._ORDINARY, False, "and who made it?", history) is None
 
     def test_a_mark_inside_prose_is_not_a_researched_reply(self):
         history = [turn("assistant", "I searched my heart 🔍 for you")]

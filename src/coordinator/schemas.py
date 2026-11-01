@@ -14,8 +14,9 @@ from pydantic import BaseModel, Field
 #: Stored replies built from retrieved web text.
 RESEARCH_SOURCE_TYPES = frozenset({"tool_brain", "brave_mcp"})
 WEB_RESEARCH_LABEL = "[from web research]"
-#: Citations start a line, so a 🔍 inside her prose or the operator's is not a match.
-SOURCES_LINE = re.compile(r"^🔍", re.MULTILINE)
+#: The citation itself, in either format. A reply is split into stored bubbles and its
+#: whitespace reflowed, so it is not always at the start of a line. A 🔍 in prose is not this.
+SOURCES_LINE = re.compile(r"🔍\s*(?:Sources|\[)")
 
 
 def memory_text(message: dict) -> str:
