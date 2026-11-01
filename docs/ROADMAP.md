@@ -2,7 +2,7 @@
 title: Roadmap
 status: active
 created: 2026-04-19
-last_reviewed_on: 2026-10-23
+last_reviewed_on: 2026-11-01
 review_in: 3 months
 applies_to: nephilim
 ---
@@ -10,6 +10,20 @@ applies_to: nephilim
 # Roadmap
 
 Near-term dated items only. Strategic direction lives in the ecosystem [VISION.md](../../VISION.md).
+
+## Web research (status 2026-11-01)
+
+Shipped in v0.12.0: the research service for Eeva on Brave and Gwen on SearXNG. Full plan and
+results in [RESEARCH_PLAN.md](architecture/RESEARCH_PLAN.md).
+
+- [ ] Gather real research turns through Telegram, including follow-ups. Most logged turns so far came
+  from tests, so real use is the main evidence gap.
+- [ ] Price follow-ups for Gwen are weak: she can flirt around a partial answer with sources attached.
+- [ ] Unsupported claims other than figures are caught only in evals.
+- [ ] `metadata.rule_violations` reports `prompt_leak` from raw bubble tags. Confirm this is only noise.
+- [ ] Decide whether page fetches should keep exposing this IP to sites.
+- [ ] Optional: Brave's LLM Context endpoint and a direct API client for Eeva, judged on latency only.
+- [ ] Deep research stays deferred. Build it only if real traces show gaps.
 
 ## Direction — persona programme (set 2026-09-24)
 
