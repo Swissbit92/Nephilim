@@ -160,6 +160,8 @@ def test_unsupported_figures_flags_only_new_numbers():
     ("what's your latest thought about us?", False),
     ("tell me a story about the old gods", False),
     ("I love you", False),
+    ("what is her latest message about?", False),
+    ("what did they say this week?", False),
 ])
 def test_freshness_proposer(message, expected):
     assert rs.asks_for_fresh_facts(message) is expected

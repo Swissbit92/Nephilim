@@ -669,10 +669,14 @@ def _try_tool_brain(
                 else "freshness" if asks_for_fresh_facts(body.message) else None
             )
             if trigger:
-                compiled = "\n\n".join(f"{t.role}: {t.content}" for t in history)
-                query = QueryResolutionService(
-                    create_llm_client(card)._llm_service
-                ).resolve(f"{compiled}\n\nUser: {body.message}")
+                # Freshness sends the checked message itself. Resolution folds in
+                # history, which would carry private turns past that check.
+                query = body.message
+                if trigger == "router":
+                    compiled = "\n\n".join(f"{t.role}: {t.content}" for t in history)
+                    query = QueryResolutionService(
+                        create_llm_client(card)._llm_service
+                    ).resolve(f"{compiled}\n\nUser: {body.message}")
                 return _research_turn(
                     card=card, system=system, body=body, query=query, trigger=trigger,
                     metadata=metadata, persona_name=persona_name,

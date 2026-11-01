@@ -147,3 +147,4 @@ def test_freshness_word_triggers_research_when_router_and_model_both_miss():
     brain.run.assert_not_called()
     research.run.assert_called_once()
     assert meta.tool_decided_by == "freshness"
+    research.run.assert_called_once_with("what is the latest macOS release?")

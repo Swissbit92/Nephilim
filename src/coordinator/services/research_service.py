@@ -40,7 +40,7 @@ _FRESH = re.compile(
     r"|look (it |that )?up|search (for|the web))\b",
     re.IGNORECASE,
 )
-_PERSONAL = re.compile(r"\b(you|your|yours|we|us|our|i|my|me)\b", re.IGNORECASE)
+_PERSONAL = re.compile(r"\b(you|your|yours|we|us|our|i|my|me|mine|he|she|him|her|his|hers|they|them|their)\b", re.IGNORECASE)
 _STOPWORDS = frozenset(
     "a an and are as at be but by can did do does for from has have how i in is it its"
     " me my of on or our so that the their them then there these this to was we were"
@@ -102,7 +102,9 @@ def asks_for_fresh_facts(message: str) -> bool:
     A third proposer, for what both others miss: on 2026-11-01 "what is the latest
     macOS release?" and "what did Solana do this month?" were never searched, because
     the router scored them low and the model answered from its weights. A word about
-    the persona or the operator is left to the conversation.
+    the persona or the operator is left to the conversation, and a pronoun may point
+    back into it. The caller sends this exact message, never a rewrite from history,
+    so what passes this check is what leaves the machine.
     """
     return bool(_FRESH.search(message or "")) and not _PERSONAL.search(message or "")
 
