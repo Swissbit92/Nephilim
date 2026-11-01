@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind it. On this IP SearXNG's general search was Bing alone across six test
   queries, and "ledger nano x review" returned LinkedIn profiles.
 
+  Blind A/B on 40 frozen questions, 2026-11-01, same model, judged in both
+  orderings by a different model family: `routed` won 29, SearXNG-first won 6, 5
+  tied (sign test p=0.0001). SearXNG returned nothing on 11 of 40, Brave on none,
+  and `routed` still won 22 to 4 on the 29 where SearXNG did answer. Harness:
+  `scripts/research/search_ab/`.
+
 ### Added
 
 - `docker/searxng/docker-compose.yml` with a pinned image, loopback-only port and
