@@ -162,6 +162,8 @@ def test_unsupported_figures_flags_only_new_numbers():
     ("I love you", False),
     ("what is her latest message about?", False),
     ("what did they say this week?", False),
+    ("latest news\nand here is a private note about money", False),
+    ("latest " + "word " * 40, False),
 ])
 def test_freshness_proposer(message, expected):
     assert rs.asks_for_fresh_facts(message) is expected

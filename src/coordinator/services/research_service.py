@@ -27,6 +27,8 @@ MIN_PASSAGE_CHARS = 60
 MAX_PASSAGES_PER_SOURCE = 8
 THIN_MIN_SOURCES = 2
 THIN_MIN_CHARS = 300
+MAX_FRESH_CHARS = 200
+MAX_FRESH_WORDS = 25
 
 _NEEDS_PAGES = re.compile(
     r"\b(today|tonight|tomorrow|yesterday|now|current|currently|latest|recent|recently"
@@ -106,7 +108,10 @@ def asks_for_fresh_facts(message: str) -> bool:
     back into it. The caller sends this exact message, never a rewrite from history,
     so what passes this check is what leaves the machine.
     """
-    return bool(_FRESH.search(message or "")) and not _PERSONAL.search(message or "")
+    text = (message or "").strip()
+    if "\n" in text or len(text) > MAX_FRESH_CHARS or len(text.split()) > MAX_FRESH_WORDS:
+        return False  # a pasted block would leave whole; only a short question may
+    return bool(_FRESH.search(text)) and not _PERSONAL.search(text)
 
 
 def needs_pages(query: str) -> bool:
