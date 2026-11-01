@@ -135,6 +135,15 @@ that shows it.
 
 On 50 questions these catch large regressions and cannot prove small gains.
 
+## Hardening, v0.11.2
+
+| Change | Tested by | Remaining limit |
+|---|---|---|
+| Connection-time address block | Real local server counts requests, tests fail with the guard removed | Only `fetch_url`; relies on httpx's private `_pool` |
+| Rewriter sees user turns only | Input asserted, 24 real follow-ups replayed: 21 rewritten, 3 unchanged | A private detail the operator typed still leaves |
+| Model query word rule | Route test | Public list is hand-kept |
+| Per-stage latency | Unit tests, live trace | Few live turns so far |
+
 ## Open
 
 - Questions all three proposers miss, such as comparisons with no freshness word.
