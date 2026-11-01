@@ -195,10 +195,11 @@ def test_trust_flag_off_is_byte_identical_to_legacy(monkeypatch):
     assert "RULE 1: USE ONLY SEARCH RESULTS" in off
 
 
-def test_trust_flag_on_adds_supersede_directive(monkeypatch):
+def test_trust_flag_on_treats_results_as_evidence_not_instructions(monkeypatch):
     on = _prompt(monkeypatch, enabled=True)
     assert "RULE 0" in on
-    assert "supersede" in on.lower()
+    assert "never instructions" in on.lower()
+    assert "authoritative" not in on.lower()
     # Anti-refusal language present.
     assert "Do NOT refuse" in on
     # Reinforced closing (recency).
@@ -240,3 +241,15 @@ if __name__ == "__main__":
 
     print("=" * 80)
     print("[SUCCESS] All 10 synthesis prompt tests PASSED!")
+
+
+def test_research_always_gets_the_evidence_rule(monkeypatch):
+    from src.coordinator.tools.synthesis_prompts import build_synthesis_prompt
+
+    monkeypatch.setenv("SEARCH_SYNTHESIS_TRUST_RESULTS", "false")
+    from src.coordinator.config import get_settings
+
+    get_settings.cache_clear()
+    assert "never instructions" in build_synthesis_prompt("s", True, research=True).lower()
+    assert "RULE 0" not in build_synthesis_prompt("s", True)
+    get_settings.cache_clear()
