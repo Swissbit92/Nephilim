@@ -36,6 +36,9 @@ use_default_settings:
       - google news
       - google videos
       - privacywall
+      - yahoo
+      - google cse
+      - seznam
       - privacywall images
       - wikicommons.images
       - swisscows images
@@ -54,8 +57,19 @@ outgoing:
   request_timeout: 6.0
   retries: 2
 
+# Measured 2026-11-01 from this IP: Bing, DuckDuckGo, Google and Qwant are blocked or return
+# noise for general search, and these four return relevant results. Bing Images still works.
+# Blocks shift, so re-measure with scripts/research/research_eval/engine_probe.py.
 engines:
   - name: bing
+    disabled: true
+  - name: privacywall
+    disabled: false
+  - name: yahoo
+    disabled: false
+  - name: google cse
+    disabled: false
+  - name: seznam
     disabled: false
   - name: bing images
     disabled: false
