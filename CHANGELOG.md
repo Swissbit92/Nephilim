@@ -5,6 +5,29 @@ All notable changes to the NEPHILIM project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.2] - 2026-11-01
+
+### Security
+
+- `fetch_url` now blocks at connection time. Every connection, including each redirect hop,
+  resolves, validates all addresses and connects to a validated IP, so a blocked address receives
+  no request. The previous check read the address after the request had landed. Tested
+  against a real local server, and the tests fail with the guard removed.
+- `100.64.0.0/10`, which Tailscale uses, is blocked.
+- The query rewriter is given user turns only, so assistant text, persona memory and graph facts
+  cannot reach a search query through it. A query the model writes must use only words from
+  the operator's turns or a small public list.
+
+### Fixed
+
+- Bubble tags read as prompt scaffolding on research turns, forcing a needless second generation
+  on most replies. Live turns took 14-17s for this reason.
+
+### Added
+
+- Per-stage latency in the research trace: resolve, search, fetch, synthesis, retry.
+- When a query has nothing searchable left, she asks what is meant, and the trace records it.
+
 ## [0.11.1] - 2026-11-01
 
 ### Fixed

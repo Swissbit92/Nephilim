@@ -399,6 +399,7 @@ _SIDE_EFFECT_TOOLS = frozenset({"generate_image"})
 _RESEARCH_TOOLS = frozenset({"web_search", "news_search", "brave_web_search"})
 #: Set on a research response, which already enforced rules with its evidence.
 _RULES_ENFORCED = "_rules_enforced"
+_MSG_TAG = re.compile(r"</?msg>", re.IGNORECASE)
 
 
 def _research_turn(*, card, body, metadata, persona_name, **kwargs):
@@ -421,7 +422,7 @@ def _research_turn(*, card, body, metadata, persona_name, **kwargs):
         return response
 
 
-def _run_research(*, card, system, body, query, trigger, metadata, persona_name):
+def _run_research(*, card, system, body, query, trigger, metadata, persona_name, resolve_ms=0):
     from ..services import persona_lines
     from ..services.citation_service import CitationService
     from ..services.research_service import (
@@ -437,6 +438,7 @@ def _run_research(*, card, system, body, query, trigger, metadata, persona_name)
     search_tool = registry.get("web_search").executor
     with research_trace.turn(key, "research") as trace:
         trace["trigger"] = trigger
+        trace["stages"] = {"resolve": resolve_ms}
         answer, refused, package = "", False, None
         try:
             package = ResearchService(
@@ -448,21 +450,25 @@ def _run_research(*, card, system, body, query, trigger, metadata, persona_name)
                 brain = ToolBrainService(interceptor=ToolCallInterceptor())
                 prompt = build_synthesis_prompt(system, True, research=True)
                 sampling = get_persona_sampling_overrides(card)
-                answer, refused = brain.synthesize(
-                    system_prompt=prompt, question=query, evidence=evidence,
-                    sampling_overrides=sampling,
-                )
+                with research_trace.timed("synthesis"):
+                    answer, refused = brain.synthesize(
+                        system_prompt=prompt, question=query, evidence=evidence,
+                        sampling_overrides=sampling,
+                    )
                 # A rule retry must keep the evidence. The general retry regenerates
                 # from the chat alone, which would answer unsourced under a research
                 # label, so this turn enforces here and tells the caller it did.
-                violations = check_reply(answer, body.message)
+                # Bubble tags are her normal format, parsed later. Unstripped they read
+                # as prompt scaffolding and force a needless second generation.
+                violations = check_reply(_MSG_TAG.sub(" ", answer), body.message)
                 if violations and get_settings().graph.enforce_rules and not refused:
                     trace["rule_retry"] = violations[0].rule
-                    answer, refused = brain.synthesize(
-                        system_prompt=prompt, evidence=evidence,
-                        question=f"{query}\n\n{reinforcement_for(violations[0])}",
-                        sampling_overrides=sampling,
-                    )
+                    with research_trace.timed("retry"):
+                        answer, refused = brain.synthesize(
+                            system_prompt=prompt, evidence=evidence,
+                            question=f"{query}\n\n{reinforcement_for(violations[0])}",
+                            sampling_overrides=sampling,
+                        )
 
                 # Enforced, not just logged: one regeneration naming the figures,
                 # then those sentences go. A reply that loses everything falls to
@@ -470,18 +476,20 @@ def _run_research(*, card, system, body, query, trigger, metadata, persona_name)
                 figures = unsupported_figures(answer, evidence, query)
                 trace["unsupported_figures"] = len(figures)
                 if figures and not refused:
-                    answer, refused = brain.synthesize(
-                        system_prompt=prompt, evidence=evidence,
-                        question=(f"{query}\n\nDo not state these figures, because the "
-                                  f"evidence does not contain them: {', '.join(figures)}"),
-                        sampling_overrides=sampling,
-                    )
+                    with research_trace.timed("retry"):
+                        answer, refused = brain.synthesize(
+                            system_prompt=prompt, evidence=evidence,
+                            question=(f"{query}\n\nDo not state these figures, because the "
+                                      f"evidence does not contain them: {', '.join(figures)}"),
+                            sampling_overrides=sampling,
+                        )
                     figures = unsupported_figures(answer, evidence, query)
                     answer = drop_unsupported(answer, figures)
                     trace["unsupported_dropped"] = len(figures)
                     # This text is new since the rule check, and the caller will not
                     # check it, so a wall it breaks has to be caught here.
-                    if get_settings().graph.enforce_rules and check_reply(answer, body.message):
+                    if get_settings().graph.enforce_rules \
+                            and check_reply(_MSG_TAG.sub(" ", answer), body.message):
                         trace["status"] = "rule_after_figures"
                         answer = ""
         except Exception as e:  # noqa: BLE001 - legacy here would mean a second search
@@ -542,7 +550,8 @@ def _try_tool_brain(
         ToolBrainService, ST_ANSWERED, ST_SILENT, ST_DELEGATE_WALLET, ST_HITL,
         ST_RESEARCH,
     )
-    from ..services.query_resolution_service import QueryResolutionService
+    from ..services.query_resolution_service import QueryResolutionService, query_origin_ok
+    from ..services import persona_lines
     from ..services.tool_interceptor import ToolCallInterceptor
     from ..services.citation_service import CitationService
     from ..tools.registry import registry
@@ -727,15 +736,28 @@ def _try_tool_brain(
             if trigger:
                 # Freshness sends the checked message itself. Resolution folds in
                 # history, which would carry private turns past that check.
-                query = body.message
+                query, resolve_ms = body.message, 0
                 if trigger == "router":
                     compiled = "\n\n".join(f"{t.role}: {t.content}" for t in history)
-                    query = QueryResolutionService(
-                        create_llm_client(card)._llm_service
-                    ).resolve(f"{compiled}\n\nUser: {body.message}")
+                    started = time.monotonic()
+                    resolver = QueryResolutionService(create_llm_client(card)._llm_service)
+                    query = resolver.resolve(f"{compiled}\n\nUser: {body.message}")
+                    resolve_ms = int((time.monotonic() - started) * 1000)
+                    if resolver.needs_clarifying(query):
+                        logger.info("[Research] nothing searchable, asking what they mean")
+                        research_trace.note_clarification(card.get("key", ""))
+                        metadata.source_type = SourceType.LLM
+                        metadata.tools_used = []
+                        response = _build_llm_response(
+                            persona_lines.line(card.get("key", ""), "research_unclear"),
+                            body.message, persona_name, metadata,
+                            word_substitutions=card.get("word_substitutions"),
+                        )
+                        response[_RULES_ENFORCED] = True
+                        return response
                 return _research_turn(
                     card=card, system=system, body=body, query=query, trigger=trigger,
-                    metadata=metadata, persona_name=persona_name,
+                    metadata=metadata, persona_name=persona_name, resolve_ms=resolve_ms,
                 )
 
         svc = ToolBrainService(interceptor=ToolCallInterceptor())
@@ -786,8 +808,15 @@ def _try_tool_brain(
             current_session_id.reset(_session_token)
 
         if result.status == ST_RESEARCH:
+            # A query the model wrote gets the same rule. It falls back to the
+            # message itself, which is authorized by definition.
+            user_turns = [t.content for t in history if t.role == "user"] + [body.message]
+            query = result.research_query
+            if not query_origin_ok(query, user_turns):
+                logger.warning("[Research] model query added unauthorized words; rejected")
+                query = body.message
             return _research_turn(
-                card=card, system=system, body=body, query=result.research_query,
+                card=card, system=system, body=body, query=query,
                 trigger="model", metadata=metadata, persona_name=persona_name,
             )
 

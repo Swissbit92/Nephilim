@@ -107,3 +107,17 @@ def test_a_settings_error_does_not_break_the_turn():
 def test_outside_a_turn_notes_are_ignored():
     research_trace.note_search("brave", "general", 1)
     research_trace.note_fetch(True)
+
+
+def test_stages_add_up_per_name(trace_file):
+    with research_trace.turn("eeva", "research"):
+        with research_trace.timed("retry"):
+            pass
+        with research_trace.timed("retry"):
+            pass
+    assert list(_lines(trace_file)[0]["stages"]) == ["retry"]
+
+
+def test_clarification_is_recorded(trace_file):
+    research_trace.note_clarification("eeva")
+    assert _lines(trace_file)[0]["status"] == "clarify"

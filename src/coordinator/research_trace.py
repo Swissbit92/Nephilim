@@ -71,6 +71,20 @@ def turn(persona: str, path: str) -> Iterator[Dict[str, Any]]:
         _write(record)
 
 
+@contextmanager
+def timed(stage: str) -> Iterator[None]:
+    """Add this block's wall time to the current turn's `stages`."""
+    started = time.monotonic()
+    try:
+        yield
+    finally:
+        record = _current.get()
+        if record is not None:
+            ms = int((time.monotonic() - started) * 1000)
+            stages = record.setdefault("stages", {})
+            stages[stage] = stages.get(stage, 0) + ms
+
+
 def note_search(backend: str, category: str, results: Optional[int]) -> None:
     """`results` is None when the backend failed, as opposed to finding nothing."""
     record = _current.get()
@@ -82,6 +96,14 @@ def note_fetch(ok: bool) -> None:
     record = _current.get()
     if record is not None:
         record["pages_fetched" if ok else "pages_failed"] += 1
+
+
+def note_clarification(persona: str) -> None:
+    """Research was wanted but nothing searchable could be built, so she asked."""
+    record = _new(persona, "research")
+    record["status"] = "clarify"
+    record["latency_ms"] = 0
+    _write(record)
 
 
 def note_deflection(persona: str) -> None:
