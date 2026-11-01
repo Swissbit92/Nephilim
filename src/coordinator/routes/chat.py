@@ -400,6 +400,62 @@ _RESEARCH_TOOLS = frozenset({"web_search", "news_search", "brave_web_search"})
 #: Set on a research response, which already enforced rules with its evidence.
 _RULES_ENFORCED = "_rules_enforced"
 _MSG_TAG = re.compile(r"</?msg>", re.IGNORECASE)
+#: Below this, a consequential answer rests on snippets, so she declines to give one.
+MIN_PAGES_CONSEQUENTIAL = 2
+
+
+def _start_research(*, policy, trigger, card, system, body, history, metadata, persona_name):
+    """Build the outbound query for a proposed research turn, then run it."""
+    from ..services import persona_lines
+    from ..services.query_resolution_service import QueryResolutionService
+    from ..services.research_policy import (
+        carries_private_term, private_terms, query_is_clean, recent_user_turns, research_cap,
+    )
+
+    key = card.get("key", "")
+    private = private_terms(card, getattr(body, "extra_system_context", None))
+
+    # A freshness turn sends the message itself, so one that names something private
+    # is left to the conversation: "how much does Daddy love this" is not a lookup.
+    if trigger == "freshness" and policy.query_turns and carries_private_term(body.message, private):
+        return None
+
+    def spoken(situation, status):
+        research_trace.note_declined(key, status)
+        metadata.source_type = SourceType.LLM
+        metadata.tools_used = []
+        response = _build_llm_response(
+            persona_lines.line(key, situation), body.message, persona_name, metadata,
+            word_substitutions=card.get("word_substitutions"),
+        )
+        response[_RULES_ENFORCED] = True
+        return response
+
+    session = getattr(body, "session_id", "") or ""
+    if session and not research_cap.allow(session, get_settings().search.research_hourly_cap):
+        return spoken("research_paused", "capped")
+
+    # Freshness sends the checked message itself. Resolution folds in history, which
+    # would carry private turns past that check.
+    query, resolve_ms, origin = body.message, 0, "message"
+    if trigger != "freshness":
+        turns = recent_user_turns(history, policy.query_turns)
+        compiled = "\n\n".join(f"User: {t}" for t in turns)
+        started = time.monotonic()
+        resolver = QueryResolutionService(create_llm_client(card)._llm_service)
+        resolved = resolver.resolve(f"{compiled}\n\nUser: {body.message}")
+        resolve_ms = int((time.monotonic() - started) * 1000)
+        if resolver.needs_clarifying(resolved):
+            return spoken("research_unclear", "clarify")
+        if policy.query_turns and not query_is_clean(resolved, body.message, private):
+            return spoken("research_unclear", "clarify")
+        if resolved != body.message:
+            query, origin = resolved, "rewrite"
+
+    return _research_turn(
+        card=card, system=system, body=body, query=query, trigger=trigger, metadata=metadata,
+        persona_name=persona_name, resolve_ms=resolve_ms, policy=policy, origin=origin,
+    )
 
 
 def _research_turn(*, card, body, metadata, persona_name, **kwargs):
@@ -422,12 +478,17 @@ def _research_turn(*, card, body, metadata, persona_name, **kwargs):
         return response
 
 
-def _run_research(*, card, system, body, query, trigger, metadata, persona_name, resolve_ms=0):
+def _run_research(
+    *, card, system, body, query, trigger, metadata, persona_name, policy=None,
+    resolve_ms=0, origin="model",
+):
     from ..services import persona_lines
     from ..services.citation_service import CitationService
     from ..services.research_service import (
-        ResearchService, drop_unsupported, sources_used, unsupported_figures,
+        ResearchService, dodged, drop_unsupported, sources_used, unsupported_figures,
     )
+    from ..services.message_processing_service import apply_word_substitutions
+    from ..services.research_policy import is_consequential
     from ..services.tool_brain_service import ToolBrainService
     from ..services.tool_interceptor import ToolCallInterceptor
     from ..services.web_fetch_service import fetch_url
@@ -439,22 +500,49 @@ def _run_research(*, card, system, body, query, trigger, metadata, persona_name,
     with research_trace.turn(key, "research") as trace:
         trace["trigger"] = trigger
         trace["stages"] = {"resolve": resolve_ms}
+        # Never the text: origin and length are enough to audit what left.
+        trace["query"] = {"origin": origin, "words": len(query.split())}
         answer, refused, package = "", False, None
         try:
             package = ResearchService(
                 lambda arguments: search_tool(arguments, card), fetch_url,
                 budget_chars=get_settings().search.research_budget_chars,
             ).run(query)
-            if package.usable:
+            weak = is_consequential(query) and package.pages_read < MIN_PAGES_CONSEQUENTIAL
+            trace["consequential_weak"] = weak
+            if package.usable and not weak:
                 evidence = package.render()
+                question = query
+                # The question comes last, or she answers what came before it. Earlier
+                # turns stay out: a resolved query stands alone, and given them she
+                # answered the previous question instead, which only sessions showed.
+                preamble = []
+                if policy and policy.constraint_reminder:
+                    reminder = build_constraint_reminder(card.get("key"))
+                    if reminder:
+                        preamble.append(reminder)
+                if preamble:
+                    question = "\n".join(preamble) + f"\n\nAnswer this directly: {query}"
                 brain = ToolBrainService(interceptor=ToolCallInterceptor())
                 prompt = build_synthesis_prompt(system, True, research=True)
                 sampling = get_persona_sampling_overrides(card)
                 with research_trace.timed("synthesis"):
                     answer, refused = brain.synthesize(
-                        system_prompt=prompt, question=query, evidence=evidence,
+                        system_prompt=prompt, question=question, evidence=evidence,
                         sampling_overrides=sampling,
                     )
+                if policy and policy.check_answered and not refused \
+                        and dodged(answer, evidence, query):
+                    trace["dodged"] = 1
+                    with research_trace.timed("retry"):
+                        answer, refused = brain.synthesize(
+                            system_prompt=prompt, evidence=evidence, sampling_overrides=sampling,
+                            question=(f"{question}\n\nYou did not answer. Your first sentence "
+                                      "must state the answer from the evidence."),
+                        )
+                    if dodged(answer, evidence, query):
+                        trace["dodged"] = 2
+
                 # A rule retry must keep the evidence. The general retry regenerates
                 # from the chat alone, which would answer unsourced under a research
                 # label, so this turn enforces here and tells the caller it did.
@@ -466,7 +554,7 @@ def _run_research(*, card, system, body, query, trigger, metadata, persona_name,
                     with research_trace.timed("retry"):
                         answer, refused = brain.synthesize(
                             system_prompt=prompt, evidence=evidence,
-                            question=f"{query}\n\n{reinforcement_for(violations[0])}",
+                            question=f"{question}\n\n{reinforcement_for(violations[0])}",
                             sampling_overrides=sampling,
                         )
 
@@ -479,7 +567,7 @@ def _run_research(*, card, system, body, query, trigger, metadata, persona_name,
                     with research_trace.timed("retry"):
                         answer, refused = brain.synthesize(
                             system_prompt=prompt, evidence=evidence,
-                            question=(f"{query}\n\nDo not state these figures, because the "
+                            question=(f"{question}\n\nDo not state these figures, because the "
                                       f"evidence does not contain them: {', '.join(figures)}"),
                             sampling_overrides=sampling,
                         )
@@ -495,16 +583,21 @@ def _run_research(*, card, system, body, query, trigger, metadata, persona_name,
         except Exception as e:  # noqa: BLE001 - legacy here would mean a second search
             logger.warning(f"[Research] failed ({e}); answering without evidence")
             trace["status"] = "error"
+            # A draft that has not passed the checks below must not go out.
+            answer = ""
 
         metadata.tools_used = ["web_search"]
         metadata.tool_decided_by = trigger
         if not answer or refused:
-            trace["status"] = trace["status"] or ("refused" if refused else "empty")
+            weak = trace.get("consequential_weak")
+            trace["status"] = trace["status"] or (
+                "refused" if refused else "unverified" if weak else "empty")
             metadata.source_type = SourceType.LLM
             metadata.tools_used = []
             response = _build_llm_response(
-                persona_lines.line(key, "research_empty"), body.message, persona_name,
-                metadata, word_substitutions=card.get("word_substitutions"),
+                persona_lines.line(key, "research_unverified" if weak else "research_empty"),
+                body.message, persona_name, metadata,
+                word_substitutions=card.get("word_substitutions"),
             )
             response[_RULES_ENFORCED] = True
             return response
@@ -512,11 +605,15 @@ def _run_research(*, card, system, body, query, trigger, metadata, persona_name,
         metadata.source_type = SourceType.TOOL_BRAIN
         answer = CitationService.strip_hallucinated_citations(answer)
         answer = re.sub(r"\[/?REF[^\]]*\]", "", answer).strip()
-        used = sources_used(answer, package.sources)
+        # Sources on a reply that did not answer would make it look researched.
+        used = set() if trace.get("dodged") == 2 else sources_used(answer, package.sources)
         cited = [r for r in package.results if getattr(r, "url", "") in used]
-        answer += CitationService.auto_generate_citations(cited)
-        resp = _build_llm_response(answer, body.message, persona_name, metadata,
-                                   word_substitutions=card.get("word_substitutions"))
+        # Substituted here, not in the builder, so a URL in the citations stays intact.
+        answer = apply_word_substitutions(answer, card.get("word_substitutions"))
+        cite = (CitationService.compact_citations if policy and policy.compact_sources
+                else CitationService.auto_generate_citations)
+        answer += cite(cited)
+        resp = _build_llm_response(answer, body.message, persona_name, metadata)
         resp["used_search"] = True
         resp[_RULES_ENFORCED] = True
         return resp
@@ -550,8 +647,7 @@ def _try_tool_brain(
         ToolBrainService, ST_ANSWERED, ST_SILENT, ST_DELEGATE_WALLET, ST_HITL,
         ST_RESEARCH,
     )
-    from ..services.query_resolution_service import QueryResolutionService
-    from ..services import persona_lines
+    from ..services.research_policy import policy_for, proposal
     from ..services.tool_interceptor import ToolCallInterceptor
     from ..services.citation_service import CitationService
     from ..tools.registry import registry
@@ -687,6 +783,26 @@ def _try_tool_brain(
         if not tools:
             return None  # persona has no web tools at all -> legacy handles it
 
+        # ONE RESEARCH DECISION PER TURN, ahead of the scope guard because a persona's
+        # research policy is what makes a web question in scope for it. Relying on the
+        # router alone brings back the silent misses TOOL_BRAIN_UNGATED_WEB exists for;
+        # relying on the model is what left all three live Eeva traces on legacy.
+        research_tools = frozenset()
+        policy = None if forced or wants_generation else policy_for(
+            card, [s.name for s in web_specs])
+        if policy:
+            if "model" in policy.proposers:
+                research_tools = _RESEARCH_TOOLS
+            trigger = proposal(
+                policy, intent == QueryIntent.NEEDS_WEB_SEARCH, body.message, history)
+            if trigger:
+                started = _start_research(
+                    policy=policy, trigger=trigger, card=card, system=system, body=body,
+                    history=history, metadata=metadata, persona_name=persona_name,
+                )
+                if started is not None:
+                    return started
+
         # Narrowed to personas that HOLD a web surface but had part of it withheld.
         # A persona granted no web toolset at all is a different, pre-existing case
         # that legacy owns; claiming it here would change behaviour for personas
@@ -718,47 +834,6 @@ def _try_tool_brain(
             tb_system = system + _SEARCH_TRIGGER_GUIDANCE
 
         hist = [{"role": t.role, "content": t.content} for t in history]
-
-        # ONE RESEARCH DECISION PER TURN. The router and the model can each propose
-        # research, and either way it runs once, from here. Relying on the router
-        # alone brings back the silent misses TOOL_BRAIN_UNGATED_WEB exists for;
-        # relying on the model is what left all three live Eeva traces on legacy.
-        research_tools = frozenset()
-        if get_settings().search.research_service_enabled and not forced \
-                and not wants_generation and "web_search" in {s.name for s in web_specs}:
-            research_tools = _RESEARCH_TOOLS
-            from ..services.research_service import asks_for_fresh_facts
-
-            trigger = (
-                "router" if intent == QueryIntent.NEEDS_WEB_SEARCH
-                else "freshness" if asks_for_fresh_facts(body.message) else None
-            )
-            if trigger:
-                # Freshness sends the checked message itself. Resolution folds in
-                # history, which would carry private turns past that check.
-                query, resolve_ms = body.message, 0
-                if trigger == "router":
-                    compiled = "\n\n".join(f"{t.role}: {t.content}" for t in history)
-                    started = time.monotonic()
-                    resolver = QueryResolutionService(create_llm_client(card)._llm_service)
-                    query = resolver.resolve(f"{compiled}\n\nUser: {body.message}")
-                    resolve_ms = int((time.monotonic() - started) * 1000)
-                    if resolver.needs_clarifying(query):
-                        logger.info("[Research] nothing searchable, asking what they mean")
-                        research_trace.note_clarification(card.get("key", ""))
-                        metadata.source_type = SourceType.LLM
-                        metadata.tools_used = []
-                        response = _build_llm_response(
-                            persona_lines.line(card.get("key", ""), "research_unclear"),
-                            body.message, persona_name, metadata,
-                            word_substitutions=card.get("word_substitutions"),
-                        )
-                        response[_RULES_ENFORCED] = True
-                        return response
-                return _research_turn(
-                    card=card, system=system, body=body, query=query, trigger=trigger,
-                    metadata=metadata, persona_name=persona_name, resolve_ms=resolve_ms,
-                )
 
         svc = ToolBrainService(interceptor=ToolCallInterceptor())
         # The persona's declared samplers are resolved HERE, not inside the
@@ -811,6 +886,7 @@ def _try_tool_brain(
             return _research_turn(
                 card=card, system=system, body=body, query=result.research_query,
                 trigger="model", metadata=metadata, persona_name=persona_name,
+                policy=policy,
             )
 
         if result.status in (ST_HITL, ST_DELEGATE_WALLET):
@@ -884,7 +960,7 @@ def _try_tool_brain(
             )
         if result.status == ST_ANSWERED and result.answer and side_effect_tools \
                 and not result.used_search:
-            metadata.source_type = SourceType.TOOL_BRAIN
+            metadata.source_type = SourceType.TOOL_ACTION
             metadata.tools_used = side_effect_tools
             # The regex narrowed the surface to one tool; the model still
             # chose to call it. Record both so "a tool ran" is never read as
@@ -918,8 +994,10 @@ def _try_tool_brain(
             # is the real citation) — TB5.3 live-test cleanup.
             import re as _re
             answer = _re.sub(r"\[/?REF[^\]]*\]", "", answer).strip()
+            # Substituted here, not in the builder, so a URL in the citations stays intact.
+            answer = apply_word_substitutions(answer, card.get("word_substitutions"))
             answer = answer + CitationService.auto_generate_citations(result.search_results)
-            resp = _build_llm_response(answer, body.message, persona_name, metadata, word_substitutions=card.get("word_substitutions"))
+            resp = _build_llm_response(answer, body.message, persona_name, metadata)
             resp["used_search"] = True  # telemetry: the tool brain did search
             return resp
 

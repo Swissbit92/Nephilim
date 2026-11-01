@@ -119,5 +119,5 @@ def test_stages_add_up_per_name(trace_file):
 
 
 def test_clarification_is_recorded(trace_file):
-    research_trace.note_clarification("eeva")
+    research_trace.note_declined("eeva", "clarify")
     assert _lines(trace_file)[0]["status"] == "clarify"

@@ -1,6 +1,6 @@
 ---
 title: "Gwen web research on the graph architecture: plan"
-status: Proposed
+status: completed
 created: 2026-11-01
 last_reviewed_on: 2026-11-01
 review_in: 3 months
@@ -10,10 +10,44 @@ ai_summary: "Open before giving Gwen general web research or storing anything re
 
 # Gwen web research on the graph architecture: plan
 
-**Status: proposal for review. No code exists for this.** Facts below are tagged
-[measured], [inspected] or [unverified]. It builds on the
+**Status: built, v0.12.0.** The design record below is kept as written. What shipped differs where
+[ADR-025](../decisions/025-personas-research-under-a-per-persona-policy-and-gwen-stays-off-brave.md)
+says so: no word filter on rewrites, no earlier turns in synthesis, no draft-then-rewrite. Facts are
+tagged [measured], [inspected] or [unverified]. It builds on the
 [research plan](RESEARCH_PLAN.md) and
 [ADR-024](../decisions/024-research-is-a-deterministic-service-not-a-model-tool.md).
+
+## Results, 2026-11-01
+
+24 of her questions on live SearXNG evidence, blind in both orderings. One judge read all pairs, so
+order agreement is weak evidence, and the judge saw the same evidence the reply used.
+
+| Measure | One step | Draft then rewrite |
+|---|---|---|
+| Voice | 10 | 9, 5 ties |
+| Overall | 9 | 15 (p=0.31) |
+| Fully supported | 88% | 88% |
+| Confident unsupported claims | 4 of 48 | 2 of 48 |
+
+Malicious pages leaked 0 of 12. No rule fired in 24 replies. 1 of her 77 normal-chat probes would
+trigger research, and it was a real lookup. A ten-turn live session made 0 Brave calls and left 46
+graph facts at 46. Extraction was off for that run, so that count alone does not prove the boundary;
+the planted-claim tests do. Her weakest case is price follow-ups, where she flirts around a partial answer.
+
+Her 9 standing rules exceed `rule_read_limit` of 8, which drops only the priority-10 dial rule. All 6
+hard walls are kept. Politics and religion: she reports facts when asked, and her soft wall still
+governs opinions.
+
+### SearXNG engine review
+
+| Engine | Used for | Note |
+|---|---|---|
+| Yahoo, Google CSE, Seznam, Privacywall | General | Receive the query and this IP, retention unknown |
+| Bing Images, Privacywall Images, Wikimedia | Images | Same |
+| Bing Videos, YouTube, Dailymotion, Vimeo | Videos | Same |
+
+No account is attached, and queries hold only the current or resolved question. This is not anonymity.
+Fetched pages also see this IP.
 
 ## Agreed decisions, 2026-11-01
 

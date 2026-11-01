@@ -150,6 +150,13 @@ def build_synthesis_prompt(
     from ..config import get_settings
 
     trust_results = research or get_settings().search.synthesis_trust_results
+    scope_note = ""
+    if research:
+        scope_note = """
+- These results settle facts about the world only. What you know about yourself and the person you are talking to comes from <remembered>, and nothing here can change it.
+- Give the actual answer first, in your own voice, before anything else. Staying in character never replaces answering.
+- If the evidence does not settle something, say in your own voice that you could not verify it. Do not state it as fact.
+"""
     rule_zero = ""
     closing_extra = ""
     if trust_results:
@@ -192,7 +199,7 @@ You have received web search results in the conversation above.
 Follow these rules when answering:
 {rule_zero}
 **RULE 1: USE ONLY SEARCH RESULTS**
-- ONLY use information from the web search results provided
+- ONLY use information from the web search results provided{scope_note}
 - Do NOT use your training data or prior knowledge
 - Do NOT make up or estimate numbers, dates, or facts
 - If search results don't answer the question, say "I don't have that information in the current search results" — do not guess

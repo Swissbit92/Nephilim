@@ -54,6 +54,8 @@ EXCLUDED_FIELDS: Dict[str, str] = {
                "on what she may DO, which is a different and more dangerous claim.",
     "tools": "capability grant — see toolsets",
     "mcp_access": "capability grant — see toolsets",
+    "research": "capability switch, read by the research policy at turn time",
+    "cannot_lookup_research": "capability boundary wording, same as cannot_lookup",
     "cannot_lookup": "capability boundary, enforced at tool-call time not prompt time",
     "model_preferences": "sampler settings; belongs to inference, not identity",
     "image": "asset path for the frontend, not a fact about her",

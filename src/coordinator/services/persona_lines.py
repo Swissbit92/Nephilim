@@ -96,6 +96,13 @@ _MAX_RECYCLE_BACKOFF = 16
 #: What to ask for. Describes the SITUATION only — never the wording — so the
 #: persona supplies the voice and this file supplies none of it.
 SITUATIONS: dict[str, str] = {
+    "research_unverified": (
+        "You looked something up that matters, and what you found is not solid enough "
+        "to rely on. Say so, and that they should check a proper source."
+    ),
+    "research_paused": (
+        "You have been looking a lot of things up. Say you will leave it for now, briefly."
+    ),
     "research_unclear": (
         "You were asked to look something up, but you cannot tell what it refers to. "
         "Ask what they mean, briefly."
@@ -158,6 +165,8 @@ _GUARD = (
 
 #: Said ONLY when the model cannot be reached. Not the product.
 _FALLBACK: dict[str, str] = {
+    "research_unverified": "I looked, but it isn't solid enough to rely on. Check a proper source.",
+    "research_paused": "I've looked up enough for now. Let's leave that one.",
     "research_unclear": "What should I look up, exactly?",
     "research_empty": "I looked, and I couldn't find anything I can rely on for that.",
     "image_ready": "Here — I made this for you.",

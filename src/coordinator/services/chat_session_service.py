@@ -872,6 +872,10 @@ def _generate_turn_response(state: ChatTurnState, chat_function) -> None:
     state.response = chat_function(chat_body)
 
 
+def _response_source_type(response: dict) -> str:
+    return (response.get("metadata") or {}).get("source_type", SourceType.LLM)
+
+
 def _persist_turn_messages(state: ChatTurnState, add_message_function, persist_user: bool = True) -> None:
     """Phase 5 — persist the user turn and assistant turn(s) (multi-message aware).
 
@@ -964,7 +968,8 @@ def _apply_post_turn_updates(state: ChatTurnState, deps: ChatDeps) -> None:
                 session_id=state.session_id,
                 new_messages=[
                     {"role": "user", "content": indexed_user_content},
-                    {"role": "assistant", "content": response["answer"]},
+                    {"role": "assistant", "content": response["answer"],
+                     "source_type": _response_source_type(response)},
                 ],
                 full_history=all_messages_updated,
             )

@@ -26,8 +26,14 @@ def _response(payload):
 
 class TestProbe:
     def test_results_are_healthy(self):
-        with patch("urllib.request.urlopen", return_value=_response({"results": [{}]})):
+        payload = {"results": [{"title": "Matterhorn"}]}
+        with patch("urllib.request.urlopen", return_value=_response(payload)):
             assert watch.probe() is None
+
+    def test_irrelevant_general_results_are_a_problem(self):
+        payload = {"results": [{"title": "LinkedIn profile"}]}
+        with patch("urllib.request.urlopen", return_value=_response(payload)):
+            assert "irrelevant" in watch.probe()
 
     def test_up_but_empty_is_a_problem_and_names_the_blocked_engines(self):
         payload = {"results": [], "unresponsive_engines": [["bing images", "CAPTCHA"]]}
