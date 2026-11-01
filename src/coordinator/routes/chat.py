@@ -404,6 +404,18 @@ _MSG_TAG = re.compile(r"</?msg>", re.IGNORECASE)
 MIN_PAGES_CONSEQUENTIAL = 2
 
 
+def _with_citations(answer: str, citations: str) -> str:
+    """Put citations where the reply parser keeps them.
+
+    Text after the last </msg> is dropped when a reply is split into bubbles, so
+    citations appended to the end vanished from every reply in that format.
+    """
+    head, tag, tail = answer.rpartition("</msg>")
+    if not citations or not tag:
+        return answer + citations
+    return f"{head}{citations}{tag}{tail}"
+
+
 def _start_research(*, policy, trigger, card, system, body, history, metadata, persona_name):
     """Build the outbound query for a proposed research turn, then run it."""
     from ..services import persona_lines
@@ -612,7 +624,7 @@ def _run_research(
         answer = apply_word_substitutions(answer, card.get("word_substitutions"))
         cite = (CitationService.compact_citations if policy and policy.compact_sources
                 else CitationService.auto_generate_citations)
-        answer += cite(cited)
+        answer = _with_citations(answer, cite(cited))
         resp = _build_llm_response(answer, body.message, persona_name, metadata)
         resp["used_search"] = True
         resp[_RULES_ENFORCED] = True
@@ -996,7 +1008,8 @@ def _try_tool_brain(
             answer = _re.sub(r"\[/?REF[^\]]*\]", "", answer).strip()
             # Substituted here, not in the builder, so a URL in the citations stays intact.
             answer = apply_word_substitutions(answer, card.get("word_substitutions"))
-            answer = answer + CitationService.auto_generate_citations(result.search_results)
+            answer = _with_citations(
+                answer, CitationService.auto_generate_citations(result.search_results))
             resp = _build_llm_response(answer, body.message, persona_name, metadata)
             resp["used_search"] = True  # telemetry: the tool brain did search
             return resp

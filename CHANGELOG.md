@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Word substitutions ran over citations and could rewrite a URL.
 - `dont[13]` no longer fires on "Sir Keir" or "Master Chief" in a factual reply.
 
+- Replies in bubble format lost their citations, because the parser drops text after the last
+  `</msg>`. Citations now go inside the last bubble.
+
 ### Removed
 
 - Evals that used Brave results, and their stored data. Brave's terms bar both.
