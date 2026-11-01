@@ -340,3 +340,17 @@ def test_fetch_url_allows_a_url_the_operator_gave():
     _, executor = _loop("fetch_url", {"url": "https://a.example/page"},
                         message="read https://a.example/page please")
     executor.assert_called_once()
+
+
+def test_citations_survive_a_reply_split_into_bubbles():
+    resp, _, _, _ = _invoke(intent=QueryIntent.NEEDS_WEB_SEARCH,
+                            synth=("<msg>The answer is 42.</msg><msg>Fine then.</msg>", False))
+    assert "🔍" in str(resp["answer"])
+
+
+def test_citations_on_a_plain_reply_still_go_at_the_end():
+    assert chat_mod._with_citations("Plain.", "\n\n🔍 x") == "Plain.\n\n🔍 x"
+
+
+def test_no_citations_leaves_the_reply_alone():
+    assert chat_mod._with_citations("<msg>a</msg>", "") == "<msg>a</msg>"
