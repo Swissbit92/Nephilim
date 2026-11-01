@@ -5,6 +5,40 @@ All notable changes to the NEPHILIM project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-10-31
+
+### Changed — where a search may go
+
+- **An nsfw persona never reaches Brave, on any path or backend value.** It gets
+  no Brave client at all, so no branch can reach one. On the legacy path that also
+  means no search, which is deliberate: gwen searches through the tool brain.
+- **Image and video searches never reach Brave.** `search_web` has no category
+  parameter, so a SearXNG outage turned them into plain web results. They now
+  return nothing instead.
+- **`WEB_SEARCH_BACKEND=routed`.** Text search goes to Brave first with SearXNG
+  behind it. On this IP SearXNG's general search was Bing alone across six test
+  queries, and "ledger nano x review" returned LinkedIn profiles.
+
+  Blind A/B on 40 frozen questions, 2026-11-01, same model, judged in both
+  orderings by a different model family: `routed` won 29, SearXNG-first won 6, 5
+  tied (sign test p=0.0001). SearXNG returned nothing on 11 of 40, Brave on none,
+  and `routed` still won 22 to 4 on the 29 where SearXNG did answer. Harness:
+  `scripts/research/search_ab/`.
+
+### Added
+
+- `docker/searxng/docker-compose.yml` with a pinned image, loopback-only port and
+  restart policy, plus an explicit engine list that excludes the `brave.*` scrapers.
+- `RESEARCH_TRACE_PATH`: per-turn telemetry (backend, tools, pages, latency), no
+  query text, off by default.
+- `scripts/searxng_watch.py` and `com.nephilim.searxng-watch`: Telegram alert when a
+  real image search stops returning results, not merely when `/healthz` fails.
+
+### Fixed
+
+- The `searxng_client` docstring claimed queries never leave the machine. SearXNG
+  forwards them from this IP with no account attached.
+
 ## [0.10.0] - 2026-10-25
 
 ### Fixed — the intent classifier was wrong in BOTH directions

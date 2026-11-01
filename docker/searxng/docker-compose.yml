@@ -1,0 +1,24 @@
+# SearXNG for the nephilim web toolset (ADR-009). Started on its own, not from the
+# root docker-compose.yml: the live stack runs under launchd and that file would
+# bring up a second backend.
+#
+#   cp settings.yml.example settings.yml   # then set secret_key
+#   docker compose -f docker/searxng/docker-compose.yml up -d
+#
+# Live .env already points at :8888, so the moment this binds that port the running
+# backend starts using it. Set SEARXNG_PORT to anything else to test without that.
+services:
+  searxng:
+    image: searxng/searxng@sha256:f4aa660c54d062dedb268be84e821ea24e39f48c7a496af8dd02cc9eedb93847
+    container_name: nephilim-searxng${SEARXNG_NAME_SUFFIX:-}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${SEARXNG_PORT:-8888}:8080"
+    volumes:
+      - ./settings.yml:/etc/searxng/settings.yml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

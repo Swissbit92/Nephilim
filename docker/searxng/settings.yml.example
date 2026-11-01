@@ -1,8 +1,6 @@
 # SearXNG settings for the nephilim web toolset (ADR-009 W1).
 # Minimal single-user config: JSON API enabled (required by searxng_client),
-# limiter kept on with relaxed thresholds handled by defaults.
-use_default_settings: true
-
+# Inbound limiter off: single local user, published on loopback only.
 server:
   secret_key: "GENERATE_YOUR_OWN — python3 -c \"import secrets;print(secrets.token_hex(32))\""
   limiter: false            # single local user; inbound throttling unnecessary
@@ -13,3 +11,41 @@ search:
     - html
     - json                  # REQUIRED: searxng_client speaks ?format=json
   safe_search: 0            # engine-level default; per-request param overrides
+
+# Explicit engine list, so "which engines answer" is a reviewed decision and not
+# whatever the image's defaults happen to be. The brave.* scraper engines are
+# left out on purpose: nsfw personas must never reach Brave, and this keeps that
+# true at this layer too. Every query here still goes to these engines from this
+# machine's IP. SearXNG hides the account, it does not keep the query local.
+use_default_settings:
+  engines:
+    keep_only:
+      - wikipedia
+      - bing
+      - bing images
+      - bing news
+      - bing videos
+      - duckduckgo
+      - duckduckgo images
+      - duckduckgo news
+      - duckduckgo videos
+      - google
+      - google images
+      - google news
+      - google videos
+      - mojeek
+      - mojeek images
+      - mojeek news
+      - startpage
+      - startpage images
+      - startpage news
+
+engines:
+  - name: bing
+    disabled: false
+  - name: duckduckgo
+    disabled: false
+  - name: mojeek
+    disabled: false
+  - name: startpage
+    disabled: false
