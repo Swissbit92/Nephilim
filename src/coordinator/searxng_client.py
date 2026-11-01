@@ -1,10 +1,10 @@
 # src/coordinator/searxng_client.py
 """SearXNG metasearch client — ADR-009 Phase W.
 
-Queries a self-hosted SearXNG instance's JSON API. SearXNG fans one query out
-across many engines locally, so the query never leaves the machine (privacy)
-and its safesearch pass-through is the most permissive option available for an
-uncensored companion. Returns the same ``SearchResult`` dataclass the Brave
+Queries a self-hosted SearXNG instance's JSON API. SearXNG fans one query out to
+upstream engines from this machine's IP, so the query does leave the machine,
+but with no account or API key attached. Its safesearch pass-through is the most
+permissive option available for an uncensored companion. Returns the same ``SearchResult`` dataclass the Brave
 client produces, so downstream synthesis/citation is backend-agnostic.
 
 Requires the SearXNG instance to have JSON output enabled in settings.yml:
