@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- SearXNG's image search died on first deploy: only `bing images` and
+  `duckduckgo images` were enabled, DuckDuckGo denied access and Bing dropped
+  connections. `searxng_watch` caught it. Added `yandex images`, `youtube`,
+  `dailymotion`, `vimeo` and outgoing retries, then measured 10 of 10 on images
+  and on videos. Yandex receives image queries from this IP with no account.
 - The `searxng_client` docstring claimed queries never leave the machine. SearXNG
   forwards them from this IP with no account attached.
 
