@@ -149,7 +149,7 @@ def query_origin_ok(query: str, user_turns: Sequence[str]) -> bool:
 _MEDIA_REQUEST = re.compile(
     r"^\W*(please\s+)?(can you\s+|could you\s+)?(show|send|find|get|give)\s+(me\s+)?"
     r"(an?\s+|some\s+)?(picture|pictures|image|images|photo|photos|video|videos|pic|pics)"
-    r"\s+(of\s+)?",
+    r"\s+of\s+",
     re.IGNORECASE,
 )
 
@@ -361,7 +361,7 @@ class QueryResolutionService:
     @staticmethod
     def needs_clarifying(query: str) -> bool:
         """True when nothing searchable is left: a bare command or only pronouns."""
-        words = {w for w in _WORD_RE.findall((query or "").lower())}
+        words = set(re.findall(r"\w+", (query or "").lower()))
         content = words - _DEICTIC_TOKENS - _FILLER_WORDS
         return not content or QueryResolutionService._is_bare_search_command(query)
 

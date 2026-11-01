@@ -18,18 +18,19 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_current: ContextVar[Optional[Dict[str, Any]]] = ContextVar("research_turn", default=None)
+_current: ContextVar[dict[str, Any] | None] = ContextVar("research_turn", default=None)
 
 
-def _write(record: Dict[str, Any]) -> None:
+def _write(record: dict[str, Any]) -> None:
     from .config import get_settings
 
     try:
@@ -44,9 +45,9 @@ def _write(record: Dict[str, Any]) -> None:
         logger.warning(f"[ResearchTrace] write failed ({e})")
 
 
-def _new(persona: str, path: str) -> Dict[str, Any]:
+def _new(persona: str, path: str) -> dict[str, Any]:
     return {
-        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "ts": datetime.now(UTC).isoformat(timespec="seconds"),
         "persona": persona,
         "path": path,
         "status": "",
@@ -58,7 +59,7 @@ def _new(persona: str, path: str) -> Dict[str, Any]:
 
 
 @contextmanager
-def turn(persona: str, path: str) -> Iterator[Dict[str, Any]]:
+def turn(persona: str, path: str) -> Iterator[dict[str, Any]]:
     """Trace one turn. Written on exit even when the body raises."""
     record = _new(persona, path)
     token = _current.set(record)
@@ -85,7 +86,7 @@ def timed(stage: str) -> Iterator[None]:
             stages[stage] = stages.get(stage, 0) + ms
 
 
-def note_search(backend: str, category: str, results: Optional[int]) -> None:
+def note_search(backend: str, category: str, results: int | None) -> None:
     """`results` is None when the backend failed, as opposed to finding nothing."""
     record = _current.get()
     if record is not None:

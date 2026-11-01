@@ -7,6 +7,7 @@ from src.coordinator import startup  # noqa: F401
 from src.coordinator.config import get_settings
 from src.coordinator.services.query_resolution_service import (
     QueryResolutionService,
+    authorized_query,
     query_origin_ok,
 )
 
@@ -82,7 +83,17 @@ def test_assistant_text_is_not_given_to_the_rewriter(resolution_on):
     ("latest news", False),
     ("btc price today", False),
     ("who is he?", True),
+    ("当前比特币价格", False),
     ("what about the 32B version?", False),
 ])
 def test_needs_clarifying(query, expected):
     assert QueryResolutionService.needs_clarifying(query) is expected
+
+
+@pytest.mark.parametrize("message,expected", [
+    ("show me a picture of a red panda", "a red panda"),
+    ("get video game news", "get video game news"),
+    ("find image processing libraries", "find image processing libraries"),
+])
+def test_a_fallback_only_strips_a_real_media_request(message, expected):
+    assert authorized_query("private Oslo word", [message], message) == expected

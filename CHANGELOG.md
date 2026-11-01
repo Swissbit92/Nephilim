@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The query rewriter is given user turns only, so assistant text, persona memory and graph facts
   cannot reach a search query through it. Any query the model writes in the tool loop, including
   image and video searches, must use only words from the operator's turns or a small public list.
+  This applies to every persona. A model query that drew on something only she said now falls
+  back to the operator's message, which trades some follow-up quality for the guarantee.
 - `fetch_url` in the tool loop refuses a URL unless the operator gave it or a search this turn
   returned it, because a composed URL can carry data out in its path.
 
