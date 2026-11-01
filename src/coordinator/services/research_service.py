@@ -30,6 +30,7 @@ MAX_PASSAGES_PER_SOURCE = 8
 THIN_MIN_SOURCES = 2
 THIN_MIN_CHARS = 300
 MAX_FRESH_CHARS = 200
+MIN_CITED_TERMS = 4
 MAX_FRESH_WORDS = 25
 
 _NEEDS_PAGES = re.compile(
@@ -160,19 +161,40 @@ def select_passages(query: str, text: str, limit: int) -> list[str]:
     return [para for _, _, para in sorted(best, key=lambda s: s[1])]
 
 
-def unsupported_figures(answer: str, evidence: str) -> list[str]:
-    """Numbers in the answer that appear nowhere in the evidence.
+def _numbers(text: str) -> set:
+    return {
+        re.sub(r"[,'’]", "", n).rstrip(".")
+        for n in re.findall(r"\d[\d,.'’]*\d|\d", text or "")
+    }
 
-    Measures one narrow, checkable kind of unsupported claim. It is telemetry, not
-    proof of support: entailment is scored by the blind judge in the eval.
+
+def unsupported_figures(answer: str, evidence: str, question: str = "") -> list[str]:
+    """Numbers in the answer that appear nowhere in the evidence or question.
+
+    Matched as whole numbers, so "12" is not excused by "2012". A temperature is
+    exempt: the synthesis prompt tells her to convert units. This is one narrow,
+    checkable kind of unsupported claim; entailment is scored in the eval.
     """
-    normal = lambda t: re.sub(r"[,'’\s]", "", t)  # noqa: E731
-    pool = normal(evidence or "")
-    return [
-        n
-        for n in re.findall(r"\d[\d,.'’]*\d|\d", answer or "")
-        if normal(n).rstrip(".") not in pool
-    ]
+    allowed = _numbers(evidence) | _numbers(question)
+    converted = _numbers(" ".join(re.findall(r"-?\d[\d.]*\s*°", answer or "")))
+    return sorted(_numbers(answer) - allowed - converted)
+
+
+def drop_unsupported(answer: str, figures: Sequence[str]) -> str:
+    """Remove the sentences stating those figures, leaving the rest of the reply."""
+    bad = set(figures)
+    sentences = re.split(r"(?<=[.!?])\s+(?=\S)", answer)
+    return " ".join(s for s in sentences if not (_numbers(s) & bad)).strip()
+
+
+def sources_used(answer: str, sources: Sequence[Source]) -> set:
+    """URLs of sources the answer shares real content with. A source that was
+    searched but not used earns no citation."""
+    wanted = _terms(answer)
+    return {
+        s.url for s in sources
+        if len(wanted & _terms(" ".join(s.passages))) >= MIN_CITED_TERMS
+    }
 
 
 def _second_query(query: str) -> str:

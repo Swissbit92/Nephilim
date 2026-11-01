@@ -20,7 +20,7 @@ search:
 use_default_settings:
   engines:
     # An engine that inherits from another fails at startup unless its parent is
-    # listed too, which is why yandex, swisscows and dogpile appear here.
+    # listed too, which is why privacywall appears here.
     keep_only:
       - wikipedia
       - bing
@@ -35,10 +35,9 @@ use_default_settings:
       - google images
       - google news
       - google videos
-      - yandex
-      - yandex images
-      - swisscows
-      - dogpile
+      - privacywall
+      - privacywall images
+      - wikicommons.images
       - swisscows images
       - dogpile images
       - dailymotion
@@ -64,11 +63,9 @@ engines:
     disabled: false
   - name: startpage images
     disabled: false
-  - name: yandex images
+  - name: privacywall images
     disabled: false
-  - name: swisscows images
-    disabled: false
-  - name: dogpile images
+  - name: wikicommons.images
     disabled: false
   - name: youtube
     disabled: false

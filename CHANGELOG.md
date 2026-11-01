@@ -5,6 +5,22 @@ All notable changes to the NEPHILIM project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-11-01
+
+### Fixed
+
+- A rule retry on a research turn regenerated from the chat alone, so it answered unsourced
+  under a research label. It now keeps the evidence, and the figure check runs after it.
+- An exception after retrieval could still reach the legacy path and search twice.
+
+### Changed
+
+- Citation support is enforced live. A figure the evidence does not contain triggers one
+  regeneration, then the sentence is removed. Sources the answer did not use earn no citation.
+- Yandex is out of SearXNG. Image search uses Bing, Privacywall and Wikimedia, 10 of 10 on a
+  live probe.
+- The release gate for fully supported answers is no drop below 74%. The 95% candidate is gone.
+
 ## [0.11.0] - 2026-11-01
 
 ### Added — one deterministic research path

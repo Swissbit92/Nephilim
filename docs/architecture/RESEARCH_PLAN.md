@@ -53,7 +53,7 @@ Evidence package: sources, passages, dates
                  ▼
 Gemma, no tools, in persona voice (short by default)
                  ▼
-Citations ──► reply + trace
+Figure check (regenerate once, then drop) ──► citations for used sources ──► reply + trace
 ```
 
 `_research_turn` in `routes/chat.py` is the only place this runs. It never falls through to
@@ -117,8 +117,10 @@ before scoring it, was no worse than parity and no drop in support.
 
 ## Release gates
 
-Calibrated from the baseline. The earlier candidate of 95% fully supported is out of reach for
-this model today, so the gate is no drop from baseline until the baseline moves.
+Calibrated from the baseline. The 95% candidate for fully supported answers is dropped: this
+model measured 74% at v0.10.1 and 79% at v0.11.0, so the release gate is no drop below the 74%
+baseline. A later release that holds a higher figure may raise it, in this table, with the run
+that shows it.
 
 | Metric | Gate |
 |---|---|

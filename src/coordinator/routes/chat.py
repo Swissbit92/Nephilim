@@ -397,14 +397,36 @@ _SIDE_EFFECT_TOOLS = frozenset({"generate_image"})
 #: propose research, which catches what the router misses, but neither trigger
 #: runs a search itself.
 _RESEARCH_TOOLS = frozenset({"web_search", "news_search", "brave_web_search"})
+#: Set on a research response, which already enforced rules with its evidence.
+_RULES_ENFORCED = "_rules_enforced"
 
 
-def _research_turn(*, card, system, body, query, trigger, metadata, persona_name):
+def _research_turn(*, card, body, metadata, persona_name, **kwargs):
     """The one place a research turn runs. Never falls through to legacy, which
     would search a second time for the same turn."""
     from ..services import persona_lines
+
+    try:
+        return _run_research(card=card, body=body, metadata=metadata,
+                             persona_name=persona_name, **kwargs)
+    except Exception as e:  # noqa: BLE001 - legacy here would mean a second search
+        logger.warning(f"[Research] failed after retrieval ({e})")
+        metadata.source_type = SourceType.LLM
+        metadata.tools_used = []
+        response = _build_llm_response(
+            persona_lines.line(card.get("key", ""), "research_empty"), body.message,
+            persona_name, metadata, word_substitutions=card.get("word_substitutions"),
+        )
+        response[_RULES_ENFORCED] = True
+        return response
+
+
+def _run_research(*, card, system, body, query, trigger, metadata, persona_name):
+    from ..services import persona_lines
     from ..services.citation_service import CitationService
-    from ..services.research_service import ResearchService, unsupported_figures
+    from ..services.research_service import (
+        ResearchService, drop_unsupported, sources_used, unsupported_figures,
+    )
     from ..services.tool_brain_service import ToolBrainService
     from ..services.tool_interceptor import ToolCallInterceptor
     from ..services.web_fetch_service import fetch_url
@@ -423,14 +445,40 @@ def _research_turn(*, card, system, body, query, trigger, metadata, persona_name
             ).run(query)
             if package.usable:
                 evidence = package.render()
-                answer, refused = ToolBrainService(
-                    interceptor=ToolCallInterceptor()
-                ).synthesize(
-                    system_prompt=build_synthesis_prompt(system, True, research=True),
-                    question=query, evidence=evidence,
-                    sampling_overrides=get_persona_sampling_overrides(card),
+                brain = ToolBrainService(interceptor=ToolCallInterceptor())
+                prompt = build_synthesis_prompt(system, True, research=True)
+                sampling = get_persona_sampling_overrides(card)
+                answer, refused = brain.synthesize(
+                    system_prompt=prompt, question=query, evidence=evidence,
+                    sampling_overrides=sampling,
                 )
-                trace["unsupported_figures"] = len(unsupported_figures(answer, evidence))
+                # A rule retry must keep the evidence. The general retry regenerates
+                # from the chat alone, which would answer unsourced under a research
+                # label, so this turn enforces here and tells the caller it did.
+                violations = check_reply(answer, body.message)
+                if violations and get_settings().graph.enforce_rules and not refused:
+                    trace["rule_retry"] = violations[0].rule
+                    answer, refused = brain.synthesize(
+                        system_prompt=prompt, evidence=evidence,
+                        question=f"{query}\n\n{reinforcement_for(violations[0])}",
+                        sampling_overrides=sampling,
+                    )
+
+                # Enforced, not just logged: one regeneration naming the figures,
+                # then those sentences go. A reply that loses everything falls to
+                # the honest line below.
+                figures = unsupported_figures(answer, evidence, query)
+                trace["unsupported_figures"] = len(figures)
+                if figures and not refused:
+                    answer, refused = brain.synthesize(
+                        system_prompt=prompt, evidence=evidence,
+                        question=(f"{query}\n\nDo not state these figures, because the "
+                                  f"evidence does not contain them: {', '.join(figures)}"),
+                        sampling_overrides=sampling,
+                    )
+                    figures = unsupported_figures(answer, evidence, query)
+                    answer = drop_unsupported(answer, figures)
+                    trace["unsupported_dropped"] = len(figures)
         except Exception as e:  # noqa: BLE001 - legacy here would mean a second search
             logger.warning(f"[Research] failed ({e}); answering without evidence")
             trace["status"] = "error"
@@ -441,20 +489,23 @@ def _research_turn(*, card, system, body, query, trigger, metadata, persona_name
             trace["status"] = trace["status"] or ("refused" if refused else "empty")
             metadata.source_type = SourceType.LLM
             metadata.tools_used = []
-            return _build_llm_response(
+            response = _build_llm_response(
                 persona_lines.line(key, "research_empty"), body.message, persona_name,
                 metadata, word_substitutions=card.get("word_substitutions"),
             )
+            response[_RULES_ENFORCED] = True
+            return response
         trace["status"] = "answered"
         metadata.source_type = SourceType.TOOL_BRAIN
         answer = CitationService.strip_hallucinated_citations(answer)
         answer = re.sub(r"\[/?REF[^\]]*\]", "", answer).strip()
-        cited = [r for r in package.results
-                 if any(s.url == getattr(r, "url", "") and s.passages for s in package.sources)]
+        used = sources_used(answer, package.sources)
+        cited = [r for r in package.results if getattr(r, "url", "") in used]
         answer += CitationService.auto_generate_citations(cited)
         resp = _build_llm_response(answer, body.message, persona_name, metadata,
                                    word_substitutions=card.get("word_substitutions"))
         resp["used_search"] = True
+        resp[_RULES_ENFORCED] = True
         return resp
 
 
@@ -1114,6 +1165,8 @@ def _chat_inner(body: ChatBody):
             # Wrapped at the CALL SITE rather than inside _try_tool_brain because
             # `user_compiled` and `system` are in scope here and the tool brain builds its
             # own prompt; reaching into it would duplicate the assembly.
+            if tb_response.pop(_RULES_ENFORCED, False):
+                return tb_response
             return _enforce_on_response(
                 tb_response, card=card, system=system, user_compiled=user_compiled,
                 user_message=body.message, persona_name=persona_name,
