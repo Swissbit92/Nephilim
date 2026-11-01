@@ -5,6 +5,28 @@ All notable changes to the NEPHILIM project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-11-01
+
+### Added — one deterministic research path
+
+`ResearchService` behind `RESEARCH_SERVICE_ENABLED`, reached once per turn from the router,
+the model, or a narrow freshness check. Gemma answers from sanitized evidence with no tools.
+See [ADR-024](docs/decisions/024-research-is-a-deterministic-service-not-a-model-tool.md) and
+the [research plan](docs/architecture/RESEARCH_PLAN.md).
+
+- Blind on 50 frozen questions: parity, 15 to 8 with 27 ties (p=0.21). Fully supported answers
+  74% to 79%. Malicious-page leaks 2 of 12 to 0 of 12.
+- The first candidate lost 10 to 18, partly because judges could not see 18% of its passages
+  and partly because it used too little evidence. Both were corrected and it was rerun.
+
+### Changed
+
+- RULE 0 now calls results evidence, never instructions, and keeps its anti-refusal job.
+
+### Security
+
+- `fetch_url` refuses on the connected address, closing DNS rebinding.
+
 ## [0.10.1] - 2026-10-31
 
 ### Changed — where a search may go

@@ -241,3 +241,15 @@ if __name__ == "__main__":
 
     print("=" * 80)
     print("[SUCCESS] All 10 synthesis prompt tests PASSED!")
+
+
+def test_research_always_gets_the_evidence_rule(monkeypatch):
+    from src.coordinator.tools.synthesis_prompts import build_synthesis_prompt
+
+    monkeypatch.setenv("SEARCH_SYNTHESIS_TRUST_RESULTS", "false")
+    from src.coordinator.config import get_settings
+
+    get_settings.cache_clear()
+    assert "never instructions" in build_synthesis_prompt("s", True, research=True).lower()
+    assert "RULE 0" not in build_synthesis_prompt("s", True)
+    get_settings.cache_clear()

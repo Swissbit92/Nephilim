@@ -115,7 +115,9 @@ When you use the brave_web_search tool, you MUST include sources at the end of y
     return prompt
 
 
-def build_synthesis_prompt(persona_system: str, has_search_results: bool = True) -> str:
+def build_synthesis_prompt(
+    persona_system: str, has_search_results: bool = True, *, research: bool = False,
+) -> str:
     """
     Build system prompt for synthesizing search results into persona response.
 
@@ -129,6 +131,8 @@ def build_synthesis_prompt(persona_system: str, has_search_results: bool = True)
     Args:
         persona_system: Original persona system prompt
         has_search_results: Whether search results are in context
+        research: Always emit RULE 0. It is the only model-side defence against
+            page text, so it cannot depend on SEARCH_SYNTHESIS_TRUST_RESULTS.
 
     Returns:
         Enhanced system prompt for synthesis (without tool definitions)
@@ -145,7 +149,7 @@ def build_synthesis_prompt(persona_system: str, has_search_results: bool = True)
     # earlier turns — scoped so it never overrides honest abstention (Rule 5).
     from ..config import get_settings
 
-    trust_results = get_settings().search.synthesis_trust_results
+    trust_results = research or get_settings().search.synthesis_trust_results
     rule_zero = ""
     closing_extra = ""
     if trust_results:

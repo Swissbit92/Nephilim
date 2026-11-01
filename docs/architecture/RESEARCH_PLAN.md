@@ -36,8 +36,9 @@ operator. The cost requirement is no new spending, with Brave usage measured.
 ```
 Message
   ▼
-Router proposes ─┐
-Model proposes ──┤
+Router proposes ────┐
+Model proposes ─────┤
+Freshness proposes ─┤
                  ▼
 Coordinator decides once ──no──► normal chat
                  ▼
@@ -85,7 +86,55 @@ later feature.
 | 0 | SearXNG, fail-closed routing, telemetry, alert, A/B | Done, v0.10.1 |
 | 1a | Frozen fixtures and v0.10.1 baseline | Done |
 | 0.5 | Fallback diagnosis, trust rule, single decision, memory audit | Done |
-| 1b | Adversarial and persona checks, gate calibration | See results below |
-| 2 | Research service and blind A/B | See results below |
+| 1b | Adversarial and persona checks, gate calibration | Done |
+| 2 | Research service and blind A/B | Done, v0.11.0, flag on |
 | 3 | Gwen uses the shared service | Conditional, undecided |
 | Deferred | Deep research, including Codex | No work committed |
+
+## Results, 2026-11-01
+
+Frozen set: 50 questions, 200 pages, captured at v0.10.1 before any change. Full page text
+stays in `~/nephilim-eval/` because this repo is public; `scripts/research/research_eval/manifest.json`
+holds a hash per question. Judges were blind, a different model family from Gemma, and saw
+each pair in both orderings. A pair that flipped with order counts as a tie.
+
+| Run | Old pipeline | New pipeline | Ties | p |
+|---|---|---|---|---|
+| First candidate, judges missed 18% of its passages | 18 | 10 | 22 | 0.18 |
+| Corrected candidate and evidence | 8 | 15 | 27 | 0.21 |
+
+Read this as parity, not a win. The second run came after seeing the first result, and changed
+both the candidate (8 passages per source, not 4) and the judges' evidence. The gate, set
+before scoring it, was no worse than parity and no drop in support.
+
+| Measure | Old | New |
+|---|---|---|
+| Answers fully supported by evidence | 74% | 79% |
+| Malicious-page leaks, 12 attacks on the first candidate | 2 | 0 |
+| Eeva voice, blind on 12 live questions | 6 | 5, 1 tie |
+| Median live reply | 9.6s | 10.7s |
+| Adaptive vs always fetching | 6 | 5, 39 ties |
+
+## Release gates
+
+Calibrated from the baseline. The earlier candidate of 95% fully supported is out of reach for
+this model today, so the gate is no drop from baseline until the baseline moves.
+
+| Metric | Gate |
+|---|---|
+| Research routing | All deterministic route tests pass |
+| Research runs per turn | Never more than 1 |
+| Fully supported answers | No drop from 74% |
+| Malicious pages | 0 critical violations |
+| Provider policy | 0 unauthorized backend calls |
+| Memory | 0 web claims reach an extractor |
+| Answer quality, persona voice | Parity or better, blind |
+| Cost | No new spending, Brave queries reported |
+
+On 50 questions these catch large regressions and cannot prove small gains.
+
+## Open
+
+- Questions all three proposers miss, such as comparisons with no freshness word.
+- Brave billing is unconfirmed. About 150 Brave queries went to evals on 2026-10-31 and 11-01.
+- Gwen's web research and the deferred deep-research tier are undecided.

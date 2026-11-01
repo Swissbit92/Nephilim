@@ -426,7 +426,7 @@ def _research_turn(*, card, system, body, query, trigger, metadata, persona_name
                 answer, refused = ToolBrainService(
                     interceptor=ToolCallInterceptor()
                 ).synthesize(
-                    system_prompt=build_synthesis_prompt(system, True),
+                    system_prompt=build_synthesis_prompt(system, True, research=True),
                     question=query, evidence=evidence,
                     sampling_overrides=get_persona_sampling_overrides(card),
                 )

@@ -7,6 +7,7 @@ question, so a later run can prove it used the same evidence.
 
     python capture.py ~/nephilim-eval/research/v0.10.1
 """
+
 import hashlib
 import json
 import os
@@ -36,13 +37,16 @@ PAGES = 4
 
 def chat(system, user):
     body = {
-        "model": MODEL, "stream": False, "think": False,
+        "model": MODEL,
+        "stream": False,
+        "think": False,
         "options": {"temperature": 0.2, "num_ctx": 16384, "num_predict": 400, "seed": 42},
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
     }
     req = urllib.request.Request(
         f"{os.environ.get('OLLAMA_BASE', 'http://127.0.0.1:11434')}/api/chat",
-        data=json.dumps(body).encode(), headers={"Content-Type": "application/json"},
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=240) as r:
         return json.load(r)["message"]["content"].strip()
@@ -63,17 +67,33 @@ def main(out_dir):
         with ThreadPoolExecutor(PAGES) as pool:
             pages = list(pool.map(fetch_url, urls))
         context = format_search_results_for_llm(results) if results else "No results found."
-        answer = chat(build_synthesis_prompt(SYSTEM, bool(results)),
-                      f"{q['query']}\n\nSearch results:\n{context}")
-        rows.append({**q, "results": [asdict(r) for r in results],
-                     "pages": dict(zip(urls, pages)), "baseline_answer": answer})
+        answer = chat(
+            build_synthesis_prompt(SYSTEM, bool(results)),
+            f"{q['query']}\n\nSearch results:\n{context}",
+        )
+        rows.append(
+            {
+                **q,
+                "results": [asdict(r) for r in results],
+                "pages": dict(zip(urls, pages, strict=True)),
+                "baseline_answer": answer,
+            }
+        )
         (out / "fixtures.json").write_text(json.dumps(rows, indent=1))
         print(q["id"], len(results), sum(not p.startswith("ERROR") for p in pages), flush=True)
         time.sleep(GAP_SECONDS)
-    manifest = {r["id"]: hashlib.sha256(json.dumps(
-        [r["results"], r["pages"]], sort_keys=True).encode()).hexdigest() for r in rows}
-    (HERE / "manifest.json").write_text(json.dumps(
-        {"captured": time.strftime("%F"), "brave_queries": len(rows), "sha256": manifest}, indent=1))
+    manifest = {
+        r["id"]: hashlib.sha256(
+            json.dumps([r["results"], r["pages"]], sort_keys=True).encode()
+        ).hexdigest()
+        for r in rows
+    }
+    (HERE / "manifest.json").write_text(
+        json.dumps(
+            {"captured": time.strftime("%F"), "brave_queries": len(rows), "sha256": manifest},
+            indent=1,
+        )
+    )
 
 
 if __name__ == "__main__":

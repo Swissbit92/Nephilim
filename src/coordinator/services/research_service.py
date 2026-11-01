@@ -8,14 +8,16 @@ the model either made no tool call or called a tool with no executor.
 Permissions stay outside this module. `search_fn` is the persona's own executor,
 which already carries its safesearch floor and provider routing.
 """
+
 from __future__ import annotations
 
 import logging
 import re
 import unicodedata
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any
 
 from .. import research_trace
 
@@ -42,7 +44,10 @@ _FRESH = re.compile(
     r"|look (it |that )?up|search (for|the web))\b",
     re.IGNORECASE,
 )
-_PERSONAL = re.compile(r"\b(you|your|yours|we|us|our|i|my|me|mine|he|she|him|her|his|hers|they|them|their)\b", re.IGNORECASE)
+_PERSONAL = re.compile(
+    r"\b(you|your|yours|we|us|our|i|my|me|mine|it|that|he|she|him|her|his|hers|they|them|their)\b",
+    re.IGNORECASE,
+)
 _STOPWORDS = frozenset(
     "a an and are as at be but by can did do does for from has have how i in is it its"
     " me my of on or our so that the their them then there these this to was we were"
@@ -50,7 +55,7 @@ _STOPWORDS = frozenset(
 )
 _WORD = re.compile(r"[^\W_]{2,}", re.UNICODE)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
-_EVIDENCE_TAG = re.compile(r"</?\s*evidence[^>]*>", re.IGNORECASE)
+_EVIDENCE_TAG = re.compile(r"<\s*/?\s*evidence\b[^>\n]*>?", re.IGNORECASE)
 # Whole lines only: a page that merely discusses prompt injection keeps its prose,
 # and one that addresses the model loses the line.
 _INSTRUCTION_LINE = re.compile(
@@ -68,16 +73,16 @@ _INSTRUCTION_LINE = re.compile(
 class Source:
     title: str
     url: str
-    age: Optional[str] = None
-    passages: List[str] = field(default_factory=list)
+    age: str | None = None
+    passages: list[str] = field(default_factory=list)
     fetched: bool = False
 
 
 @dataclass
 class EvidencePackage:
     query: str
-    sources: List[Source]
-    results: List[Any]
+    sources: list[Source]
+    results: list[Any]
     searches: int = 1
 
     @property
@@ -123,8 +128,7 @@ def sanitize(text: str) -> str:
     """Remove what a page could use to address the model rather than the reader."""
     text = _HTML_COMMENT.sub(" ", text or "")
     text = "".join(
-        c for c in text
-        if c in "\n\t" or unicodedata.category(c) not in ("Cf", "Cc", "Co")
+        c for c in text if c in "\n\t" or unicodedata.category(c) not in ("Cf", "Cc", "Co")
     )
     text = _EVIDENCE_TAG.sub(" ", text)
     return "\n".join(
@@ -132,11 +136,16 @@ def sanitize(text: str) -> str:
     )
 
 
+def _inline(text: str | None) -> str:
+    """One line with no angle brackets: titles, URLs and dates also sit in the fence."""
+    return re.sub(r"[<>\s]+", " ", sanitize(text or "")).strip()
+
+
 def _terms(text: str) -> set:
     return {w.lower() for w in _WORD.findall(text or "")} - _STOPWORDS
 
 
-def select_passages(query: str, text: str, limit: int) -> List[str]:
+def select_passages(query: str, text: str, limit: int) -> list[str]:
     """Paragraphs that share the most terms with the question, in page order."""
     wanted = _terms(query)
     scored = []
@@ -151,7 +160,7 @@ def select_passages(query: str, text: str, limit: int) -> List[str]:
     return [para for _, _, para in sorted(best, key=lambda s: s[1])]
 
 
-def unsupported_figures(answer: str, evidence: str) -> List[str]:
+def unsupported_figures(answer: str, evidence: str) -> list[str]:
     """Numbers in the answer that appear nowhere in the evidence.
 
     Measures one narrow, checkable kind of unsupported claim. It is telemetry, not
@@ -160,7 +169,8 @@ def unsupported_figures(answer: str, evidence: str) -> List[str]:
     normal = lambda t: re.sub(r"[,'’\s]", "", t)  # noqa: E731
     pool = normal(evidence or "")
     return [
-        n for n in re.findall(r"\d[\d,.'’]*\d|\d", answer or "")
+        n
+        for n in re.findall(r"\d[\d,.'’]*\d|\d", answer or "")
         if normal(n).rstrip(".") not in pool
     ]
 
@@ -173,7 +183,7 @@ def _second_query(query: str) -> str:
 class ResearchService:
     def __init__(
         self,
-        search_fn: Callable[[Dict[str, Any]], Optional[List[Any]]],
+        search_fn: Callable[[dict[str, Any]], list[Any] | None],
         fetch_fn: Callable[[str], str],
         *,
         budget_chars: int = 14000,
@@ -184,7 +194,7 @@ class ResearchService:
         self._budget = budget_chars
         self._always_fetch = always_fetch
 
-    def _pages(self, urls: Sequence[str]) -> Dict[str, str]:
+    def _pages(self, urls: Sequence[str]) -> dict[str, str]:
         """Fetch in parallel. A page past the deadline is left out, not waited for."""
         if not urls:
             return {}
@@ -192,7 +202,7 @@ class ResearchService:
         futures = {pool.submit(self._fetch, u): u for u in urls}
         done, pending = wait(futures, timeout=FETCH_DEADLINE_S)
         pool.shutdown(wait=False, cancel_futures=True)
-        pages: Dict[str, str] = {}
+        pages: dict[str, str] = {}
         for future in done:
             content = future.exception() is None and future.result()
             ok = bool(content) and not content.startswith("ERROR")
@@ -203,7 +213,7 @@ class ResearchService:
             research_trace.note_fetch(False)
         return pages
 
-    def _sources(self, query: str, results: List[Any], pages: Dict[str, str]) -> List[Source]:
+    def _sources(self, query: str, results: list[Any], pages: dict[str, str]) -> list[Source]:
         sources = []
         per_source = max(1, self._budget // max(1, len(results)))
         for r in results:
@@ -219,10 +229,15 @@ class ResearchService:
                     picked.append(para)
                     used += len(para)
                 passages += picked
-            sources.append(Source(
-                title=sanitize(getattr(r, "title", "") or "").strip() or url,
-                url=url, age=getattr(r, "age", None), passages=passages, fetched=bool(page),
-            ))
+            sources.append(
+                Source(
+                    title=_inline(getattr(r, "title", "")) or _inline(url),
+                    url=_inline(url),
+                    age=_inline(getattr(r, "age", None)) or None,
+                    passages=passages,
+                    fetched=bool(page),
+                )
+            )
         return sources
 
     def _gather(self, query: str) -> tuple:
