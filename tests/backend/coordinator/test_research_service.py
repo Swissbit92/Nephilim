@@ -153,10 +153,80 @@ def test_render_has_one_fence_and_dates():
     assert "2 days ago" in text
 
 
+EVIDENCE = "The rate is 1.25% and the peak is 4,478 metres, up 12 percent in 2026."
+
+
 def test_unsupported_figures_flags_only_new_numbers():
-    evidence = "The rate is 1.25% and the peak is 4,478 metres, up 12 percent."
-    assert rs.unsupported_figures("It is 1.25% at 4478 m, up 12.", evidence) == []
-    assert rs.unsupported_figures("It is 9.75%.", evidence) == ["9.75"]
+    assert rs.unsupported_figures("It is 1.25% at 4478 m, up 12.", EVIDENCE) == []
+    assert rs.unsupported_figures("It is 9.75%.", EVIDENCE) == ["9.75"]
+
+
+def test_a_number_is_not_excused_by_a_longer_one():
+    assert rs.unsupported_figures("About 202 of them.", EVIDENCE) == ["202"]
+
+
+def test_numbers_in_the_question_are_allowed():
+    assert rs.unsupported_figures("In 2027 it holds.", EVIDENCE, "what about 2027") == []
+
+
+def test_a_small_bare_number_is_not_a_claim():
+    assert rs.unsupported_figures("About 21 degrees tomorrow.", EVIDENCE) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "It opens at 13:30 today.",
+        "She came 3rd overall.",
+        "1. First point\n2. Second point",
+        "There are 5 options.",
+    ],
+)
+def test_times_ordinals_lists_and_counts_are_left_alone(text):
+    assert rs.unsupported_figures(text, EVIDENCE) == []
+
+
+@pytest.mark.parametrize(
+    "text,figure",
+    [
+        ("It costs 899 francs.", "899"),
+        ("It rose 7%.", "7"),
+        ("About 6 million people.", "6"),
+    ],
+)
+def test_real_claims_are_checked(text, figure):
+    assert rs.unsupported_figures(text, EVIDENCE) == [figure]
+
+
+def test_drop_removes_only_the_offending_sentence():
+    text = "*a soft hum* The rate is 1.25%. It reached 9.75% once. Does that help?"
+    assert rs.drop_unsupported(text, ["9.75"]) == "*a soft hum* The rate is 1.25%. Does that help?"
+
+
+def test_drop_keeps_lines_lists_and_bubbles():
+    text = "Line one.\n\n- item 899 here\n- item ok\n\n<msg>Price is 100. Fine.</msg>"
+    out = rs.drop_unsupported(text, ["899"])
+    assert out == "Line one.\n\n- item ok\n\n<msg>Price is 100. Fine.</msg>"
+
+
+def test_an_emptied_bubble_is_removed_whole():
+    assert (
+        rs.drop_unsupported("<msg>It is 899.</msg><msg>Fine.</msg>", ["899"]) == "<msg>Fine.</msg>"
+    )
+
+
+def test_a_short_answer_keeps_its_citation():
+    source = rs.Source("a", "https://a", passages=["the matterhorn stands 4478 metres tall"])
+    assert rs.sources_used("Matterhorn: 4478 metres.", [source]) == {"https://a"}
+
+
+def test_only_used_sources_are_cited():
+    used = rs.Source(
+        "a", "https://a", passages=["swiss national bank policy rate decision december"]
+    )
+    idle = rs.Source("b", "https://b", passages=["gardening tools for the spring season"])
+    answer = "The Swiss National Bank held its policy rate at the December decision."
+    assert rs.sources_used(answer, [used, idle]) == {"https://a"}
 
 
 @pytest.mark.parametrize(

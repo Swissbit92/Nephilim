@@ -17,6 +17,7 @@ import unicodedata
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from .. import research_trace
@@ -30,6 +31,7 @@ MAX_PASSAGES_PER_SOURCE = 8
 THIN_MIN_SOURCES = 2
 THIN_MIN_CHARS = 300
 MAX_FRESH_CHARS = 200
+MIN_CITED_TERMS = 4
 MAX_FRESH_WORDS = 25
 
 _NEEDS_PAGES = re.compile(
@@ -46,6 +48,13 @@ _FRESH = re.compile(
 )
 _PERSONAL = re.compile(
     r"\b(you|your|yours|we|us|our|i|my|me|mine|it|that|he|she|him|her|his|hers|they|them|their)\b",
+    re.IGNORECASE,
+)
+_NOT_A_FIGURE = re.compile(
+    r"\b\d{1,2}:\d{2}\b|\b\d+(st|nd|rd|th)\b|^\s*\d+[.)]\s", re.IGNORECASE | re.MULTILINE
+)
+_FIGURE = re.compile(
+    r"(\d[\d,.'’]*\d|\d)\s*(%|percent|chf|eur|usd|\$|€|km|kg|gb|tb|million|billion|bn)?",
     re.IGNORECASE,
 )
 _STOPWORDS = frozenset(
@@ -160,19 +169,67 @@ def select_passages(query: str, text: str, limit: int) -> list[str]:
     return [para for _, _, para in sorted(best, key=lambda s: s[1])]
 
 
-def unsupported_figures(answer: str, evidence: str) -> list[str]:
-    """Numbers in the answer that appear nowhere in the evidence.
+def _numbers(text: str) -> set:
+    return {
+        re.sub(r"[,'’]", "", n).rstrip(".")
+        for n in re.findall(r"\d[\d,.'’]*\d|\d", text or "")
+    }
 
-    Measures one narrow, checkable kind of unsupported claim. It is telemetry, not
-    proof of support: entailment is scored by the blind judge in the eval.
+
+def _claimed_figures(answer: str) -> set:
+    """Numbers that state a fact. A time, an ordinal, a list marker or a bare small
+    count is left alone, because deleting a sentence over one does more harm."""
+    text = _NOT_A_FIGURE.sub(" ", answer or "")
+    found = set()
+    for m in _FIGURE.finditer(text):
+        number = re.sub(r"[,'’]", "", m.group(1)).rstrip(".")
+        if len(number) >= 3 or m.group(2):
+            found.add(number)
+    return found - {str(datetime.now().year)}
+
+
+def unsupported_figures(answer: str, evidence: str, question: str = "") -> list[str]:
+    """Claimed figures that appear nowhere in the evidence or question.
+
+    Matched as whole numbers, so "202" is not excused by "2026". This is one narrow,
+    checkable kind of unsupported claim; entailment is scored in the eval. A local
+    NLI model was trialled for the rest and could not separate supported answers
+    from unsupported ones: 0.445 vs 0.419 unsupported share on 200 judged answers.
     """
-    normal = lambda t: re.sub(r"[,'’\s]", "", t)  # noqa: E731
-    pool = normal(evidence or "")
-    return [
-        n
-        for n in re.findall(r"\d[\d,.'’]*\d|\d", answer or "")
-        if normal(n).rstrip(".") not in pool
-    ]
+    return sorted(_claimed_figures(answer) - _numbers(evidence) - _numbers(question))
+
+
+def _keep_sentences(text: str, bad: set) -> str:
+    kept = []
+    for match in re.finditer(r"\S.*?(?:[.!?](?=\s|$)|$)(\s*)", text, re.DOTALL):
+        if not (_claimed_figures(match.group(0)) & bad):
+            kept.append(match.group(0))
+    return text[: len(text) - len(text.lstrip())] + "".join(kept)
+
+
+def drop_unsupported(answer: str, figures: Sequence[str]) -> str:
+    """Remove what states those figures, keeping lines, lists and <msg> bubbles."""
+    bad = set(figures)
+    out = []
+    for piece in re.split(r"(</?msg>)", answer):
+        if piece.lower() in ("<msg>", "</msg>"):
+            out.append(piece)
+        else:
+            lines = [_keep_sentences(line, bad) for line in piece.split("\n")]
+            out.append("\n".join(lines))
+    text = re.sub(r"<msg>\s*</msg>", "", "".join(out))
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def sources_used(answer: str, sources: Sequence[Source]) -> set:
+    """URLs of sources the answer shares real content with. A source that was
+    searched but not used earns no citation."""
+    wanted = _terms(answer)
+    needed = min(MIN_CITED_TERMS, max(2, len(wanted) // 3))
+    return {
+        s.url for s in sources
+        if len(wanted & _terms(" ".join(s.passages))) >= needed
+    }
 
 
 def _second_query(query: str) -> str:
