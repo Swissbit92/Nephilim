@@ -150,3 +150,16 @@ def test_unsupported_figures_flags_only_new_numbers():
     evidence = "The rate is 1.25% and the peak is 4,478 metres, up 12 percent."
     assert rs.unsupported_figures("It is 1.25% at 4478 m, up 12.", evidence) == []
     assert rs.unsupported_figures("It is 9.75%.", evidence) == ["9.75"]
+
+
+@pytest.mark.parametrize("message,expected", [
+    ("what is the latest macOS release?", True),
+    ("what did Solana do this month?", True),
+    ("current EUR to CHF exchange rate", True),
+    ("how are you feeling today?", False),
+    ("what's your latest thought about us?", False),
+    ("tell me a story about the old gods", False),
+    ("I love you", False),
+])
+def test_freshness_proposer(message, expected):
+    assert rs.asks_for_fresh_facts(message) is expected

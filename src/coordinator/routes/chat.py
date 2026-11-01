@@ -662,13 +662,19 @@ def _try_tool_brain(
         if get_settings().search.research_service_enabled and not forced \
                 and not wants_generation and "web_search" in {s.name for s in web_specs}:
             research_tools = _RESEARCH_TOOLS
-            if intent == QueryIntent.NEEDS_WEB_SEARCH:
+            from ..services.research_service import asks_for_fresh_facts
+
+            trigger = (
+                "router" if intent == QueryIntent.NEEDS_WEB_SEARCH
+                else "freshness" if asks_for_fresh_facts(body.message) else None
+            )
+            if trigger:
                 compiled = "\n\n".join(f"{t.role}: {t.content}" for t in history)
                 query = QueryResolutionService(
                     create_llm_client(card)._llm_service
                 ).resolve(f"{compiled}\n\nUser: {body.message}")
                 return _research_turn(
-                    card=card, system=system, body=body, query=query, trigger="router",
+                    card=card, system=system, body=body, query=query, trigger=trigger,
                     metadata=metadata, persona_name=persona_name,
                 )
 

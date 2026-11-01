@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 MAX_PAGES = 3
 FETCH_DEADLINE_S = 9.0
 MIN_PASSAGE_CHARS = 60
-MAX_PASSAGES_PER_SOURCE = 4
+MAX_PASSAGES_PER_SOURCE = 8
 THIN_MIN_SOURCES = 2
 THIN_MIN_CHARS = 300
 
@@ -35,6 +35,12 @@ _NEEDS_PAGES = re.compile(
     r"|changed?|tradeoffs?|should)\b",
     re.IGNORECASE,
 )
+_FRESH = re.compile(
+    r"\b(latest|newest|most recent|recently|this (week|month|year)|right now|current"
+    r"|look (it |that )?up|search (for|the web))\b",
+    re.IGNORECASE,
+)
+_PERSONAL = re.compile(r"\b(you|your|yours|we|us|our|i|my|me)\b", re.IGNORECASE)
 _STOPWORDS = frozenset(
     "a an and are as at be but by can did do does for from has have how i in is it its"
     " me my of on or our so that the their them then there these this to was we were"
@@ -88,6 +94,17 @@ class EvidencePackage:
             body = "\n".join(s.passages)
             blocks.append(f"[{i}] {s.title}{dated}\n{s.url}\n{body}")
         return "<evidence>\n" + "\n\n".join(blocks) + "\n</evidence>"
+
+
+def asks_for_fresh_facts(message: str) -> bool:
+    """An explicit freshness word in a factual question, about the world.
+
+    A third proposer, for what both others miss: on 2026-11-01 "what is the latest
+    macOS release?" and "what did Solana do this month?" were never searched, because
+    the router scored them low and the model answered from its weights. A word about
+    the persona or the operator is left to the conversation.
+    """
+    return bool(_FRESH.search(message or "")) and not _PERSONAL.search(message or "")
 
 
 def needs_pages(query: str) -> bool:

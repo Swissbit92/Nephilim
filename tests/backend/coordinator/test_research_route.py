@@ -139,3 +139,11 @@ def test_tool_brain_hands_a_web_call_to_the_coordinator():
         out = svc.run(persona_card=EEVA, system_prompt="s", user_message="u", tools=[{}],
                       research_tools=frozenset({"brave_web_search"}))
     assert out.status == ST_RESEARCH and out.research_query == "planted"
+
+
+def test_freshness_word_triggers_research_when_router_and_model_both_miss():
+    _, meta, brain, research = _invoke(intent=QueryIntent.NEEDS_NEITHER,
+                                       msg="what is the latest macOS release?")
+    brain.run.assert_not_called()
+    research.run.assert_called_once()
+    assert meta.tool_decided_by == "freshness"

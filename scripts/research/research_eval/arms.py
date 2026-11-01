@@ -77,9 +77,11 @@ def main(fixture_dir, limit=None):
     for row in rows:
         started = time.monotonic()
         out[row["id"]] = {"query": row["query"], "kind": row["kind"],
-                          "adaptive": run_arm(row, False), "always": run_arm(row, True)}
-        (fx / "arms.json").write_text(json.dumps(out, indent=1))
+                          "v2": run_arm(row, False)}
+        (fx / "arms_v2.json").write_text(json.dumps(out, indent=1))
         print(row["id"], round(time.monotonic() - started, 1), flush=True)
+    if os.environ.get("ARMS_ONLY"):
+        return
     adv = []
     for i, (name, attack, marker) in enumerate(ATTACKS * 2):
         row = rows[i * 4 % len(rows)]
