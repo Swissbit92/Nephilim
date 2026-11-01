@@ -88,7 +88,7 @@ later feature.
 | 0.5 | Fallback diagnosis, trust rule, single decision, memory audit | Done |
 | 1b | Adversarial and persona checks, gate calibration | Done |
 | 2 | Research service and blind A/B | Done, v0.11.0, flag on |
-| 3 | Gwen uses the shared service | Conditional, undecided |
+| 3 | Gwen uses the shared service | Approved in principle, see [Gwen plan](GWEN_RESEARCH_PLAN.md) |
 | Deferred | Deep research, including Codex | No work committed |
 
 ## Results, 2026-11-01
@@ -139,4 +139,5 @@ On 50 questions these catch large regressions and cannot prove small gains.
 
 - Questions all three proposers miss, such as comparisons with no freshness word.
 - Brave billing is unconfirmed. About 150 Brave queries went to evals on 2026-10-31 and 11-01.
-- Gwen's web research and the deferred deep-research tier are undecided.
+- Deep research stays deferred. Gwen's design is in the [Gwen plan](GWEN_RESEARCH_PLAN.md), blocked on SearXNG general quality.
+- A local NLI check was trialled for live support and rejected: 0.445 vs 0.419 unsupported share on 200 judged answers.

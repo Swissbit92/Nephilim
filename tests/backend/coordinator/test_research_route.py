@@ -112,11 +112,12 @@ def test_a_refused_synthesis_gets_no_citations():
 
 
 def test_an_unsupported_figure_is_regenerated_once_then_removed():
-    resp, _, brain, _ = _invoke(intent=QueryIntent.NEEDS_WEB_SEARCH,
-                                synth=("It is 42. It reached 99 once.", False))
+    resp, _, brain, _ = _invoke(
+        intent=QueryIntent.NEEDS_WEB_SEARCH, synth=("It is 42%. It reached 990 once.", False)
+    )
     assert brain.synthesize.call_count == 2
-    assert "99" in brain.synthesize.call_args.kwargs["question"]
-    assert "99" not in str(resp["answer"]) and "42" in str(resp["answer"])
+    assert "990" in brain.synthesize.call_args.kwargs["question"]
+    assert "990" not in str(resp["answer"]) and "42" in str(resp["answer"])
 
 
 def test_a_supported_answer_is_not_regenerated():
@@ -125,7 +126,7 @@ def test_a_supported_answer_is_not_regenerated():
 
 
 def test_a_reply_with_nothing_supported_left_gets_the_honest_line():
-    resp, meta, _, _ = _invoke(intent=QueryIntent.NEEDS_WEB_SEARCH, synth=("It is 99.", False))
+    resp, meta, _, _ = _invoke(intent=QueryIntent.NEEDS_WEB_SEARCH, synth=("It is 990.", False))
     assert meta.source_type == SourceType.LLM and "Sources" not in str(resp["answer"])
 
 
@@ -133,12 +134,25 @@ def test_a_rule_retry_keeps_the_evidence(monkeypatch):
     monkeypatch.setenv("GRAPH_ENFORCE_RULES", "true")
     get_settings.cache_clear()
     violation = SimpleNamespace(rule="dont[13]")
-    with patch.object(chat_mod, "check_reply", side_effect=[[violation], []]), \
-         patch.object(chat_mod, "reinforcement_for", return_value="Stay in role."):
+    with (
+        patch.object(chat_mod, "check_reply", side_effect=[[violation], []]),
+        patch.object(chat_mod, "reinforcement_for", return_value="Stay in role."),
+    ):
         _, _, brain, _ = _invoke(intent=QueryIntent.NEEDS_WEB_SEARCH)
     assert brain.synthesize.call_count == 2
     retry = brain.synthesize.call_args.kwargs
     assert retry["evidence"] and "Stay in role." in retry["question"]
+
+
+def test_a_rule_broken_by_the_figure_retry_ends_in_the_honest_line(monkeypatch):
+    monkeypatch.setenv("GRAPH_ENFORCE_RULES", "true")
+    get_settings.cache_clear()
+    violation = SimpleNamespace(rule="dont[13]")
+    with patch.object(chat_mod, "check_reply", side_effect=[[], [violation]]):
+        _, meta, brain, _ = _invoke(
+            intent=QueryIntent.NEEDS_WEB_SEARCH, synth=("It is 42%. It reached 990 once.", False)
+        )
+    assert brain.synthesize.call_count == 2 and meta.source_type == SourceType.LLM
 
 
 def test_a_research_response_is_not_enforced_again_without_evidence():
@@ -148,11 +162,19 @@ def test_a_research_response_is_not_enforced_again_without_evidence():
 
 def test_a_failure_after_retrieval_gives_the_honest_line_not_legacy():
     meta = ResponseMetadata(source_type=SourceType.LLM, tools_used=[])
-    with patch.object(chat_mod, "_run_research", side_effect=RuntimeError("late")), \
-         patch("src.coordinator.services.persona_lines.line", return_value="nothing found"):
+    with (
+        patch.object(chat_mod, "_run_research", side_effect=RuntimeError("late")),
+        patch("src.coordinator.services.persona_lines.line", return_value="nothing found"),
+    ):
         resp = chat_mod._research_turn(
-            card=EEVA, system="s", body=SimpleNamespace(message="m"), query="q",
-            trigger="router", metadata=meta, persona_name="P")
+            card=EEVA,
+            system="s",
+            body=SimpleNamespace(message="m"),
+            query="q",
+            trigger="router",
+            metadata=meta,
+            persona_name="P",
+        )
     assert resp[chat_mod._RULES_ENFORCED] is True and meta.tools_used == []
 
 

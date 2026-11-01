@@ -479,6 +479,11 @@ def _run_research(*, card, system, body, query, trigger, metadata, persona_name)
                     figures = unsupported_figures(answer, evidence, query)
                     answer = drop_unsupported(answer, figures)
                     trace["unsupported_dropped"] = len(figures)
+                    # This text is new since the rule check, and the caller will not
+                    # check it, so a wall it breaks has to be caught here.
+                    if get_settings().graph.enforce_rules and check_reply(answer, body.message):
+                        trace["status"] = "rule_after_figures"
+                        answer = ""
         except Exception as e:  # noqa: BLE001 - legacy here would mean a second search
             logger.warning(f"[Research] failed ({e}); answering without evidence")
             trace["status"] = "error"
