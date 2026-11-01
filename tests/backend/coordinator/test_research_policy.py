@@ -258,13 +258,14 @@ class TestMemory:
 
     def test_the_summary_keeps_looked_up_apart_from_user_info(self):
         llm = MagicMock()
+        llm._invoke.return_value = "**Summary:** x"
         summarizer = ConversationSummarizer(llm)
         summarizer.summarize_segment(
             messages=[self.MSG, {"role": "user", "content": "ok"}, self.MSG, self.MSG, self.MSG],
             max_summary_tokens=200,
             persona_name="Gwen",
         )
-        prompt = str(llm.mock_calls[0])
+        prompt = llm._invoke.call_args.kwargs["prompt"]
         assert "**Looked Up:**" in prompt and "Never anything from a line" in prompt
         assert "[from web research]" in prompt
 
