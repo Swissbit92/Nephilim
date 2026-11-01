@@ -65,6 +65,14 @@ propose→confirm→execute flow. The tool brain is offered **web tools only** �
 live test showed the full 14-tool surface caused wallet fixation and
 fabrication.
 
+**Research is a deterministic service, not a model tool.** The router, a freshness
+check, a follow-up check or, for some personas, the model can propose research. The
+coordinator decides once per turn, `research_policy.py` says what the persona may
+do, and `_research_turn` runs `ResearchService` and has Gemma answer from sanitized
+evidence with no tools. Once research has started a turn never falls through to
+legacy, which would search twice. See the
+[research plan](architecture/RESEARCH_PLAN.md).
+
 **The guard gates; it does not execute.** `ToolCallInterceptor` exposes
 `validate()` and nothing else. Execution happens in `executor_bindings` *after*
 the check passes, which is why the two are separate nodes above rather than one.
@@ -177,6 +185,10 @@ Layered: **routes → services → repositories → models**, mirrored on the fr
 | **Memory injection budgets in TOKENS, never a count** | A count cap of 32 against a curated set of exactly 32 kept the OLDEST entries, so the store was permanently full and she could never learn. No eviction policy in this space has published support. | `MEMORY_CONTEXT_MAX_TOKENS` |
 | **Facts are invalidated, never deleted** | History stays reconstructable; a correction does not erase what was believed before | `valid_to` on `memory_facts` |
 | **Search results pass one choke point** | Junk filtering and the relevance floor apply to synthesis and citations alike, so the two can never disagree | `tools/executor_bindings.py` |
+| **An NSFW persona never reaches Brave** | Its executor gets no Brave client, so no policy value or code branch can route it there. Brave's terms bar use with obscene content, and a suspension would also end Eeva's search | `tools/executor_bindings.py`, `llm_client.py`, `test_search_routing.py` |
+| **Web text never writes identity, rules or `:Fact`** | Extractors read user turns only, and research is labelled in summaries and RAG | `schemas.memory_text`, `test_research_memory_boundary.py` |
+| **No eval uses Brave results** | Its terms bar storing results and using them to evaluate or benchmark AI services | [ADR-025](decisions/025-personas-research-under-a-per-persona-policy-and-gwen-stays-off-brave.md) |
+| **A forbidden address receives no request** | The check runs at connection time on every hop and connects to the validated IP | `web_fetch_service.py`, `test_fetch_public_only.py` |
 | **Citations are never stapled to a refusal** | A refused answer stays a refusal instead of looking sourced | `routes/chat.py`, on `ToolBrainResult.refused` |
 | **A lifetime cache is only for a line said while the model is gone** | A status line cannot silently become the same line forever. Measured: 9 of 9 flagged repetition turns were byte-identical replays of one cached generation; genuine model cross-turn repetition was 0/127 | `scripts/checks/lifetime_cache_only_when_model_is_gone.py` ([INV](INVARIANTS.md)) |
 
@@ -209,6 +221,8 @@ and this page previously never named it.
 | [010](decisions/010-image-search-result-quality-and-spurious-refusal-handling.md) | Image-search quality and spurious refusals | Accepted |
 | [011](decisions/011-conversation-control-commands-as-shared-session-api-endpoints.md) | Conversation control as shared session API — consumed by both the React UI and the Telegram gateway | Proposed |
 | [012](decisions/012-persona-configurable-deterministic-word-substitutions.md) | Persona-configurable deterministic word substitutions | Accepted |
+| [024](decisions/024-research-is-a-deterministic-service-not-a-model-tool.md) | Research is a deterministic service, not a model tool | Accepted |
+| [025](decisions/025-personas-research-under-a-per-persona-policy-and-gwen-stays-off-brave.md) | Per-persona research policy, Gwen stays off Brave | Accepted |
 
 "Proposed" here does not mean unbuilt. Several of these are implemented behind
 flags that are off, or on in production while the ADR is still open — the ADR

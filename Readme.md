@@ -52,7 +52,7 @@
   a turn interval **and when a conversation ends**, which matters more than it
   sounds: measured on real usage, 98.3% of sessions are shorter than the interval,
   so without the end-of-session trigger almost nothing was ever saved.
-- **Web Search with Citations** — personas autonomously search Brave API with mandatory sources
+- **Web Research with Citations** — companions look things up through a deterministic research service, in their own voice, with sources
 - **Jupiter Wallet Integration** — Solana DEX trading, autonomous strategies, trade proposals (Phase 8)
 - **Google OAuth Authentication** — secure login with JWT access/refresh tokens
 - **Summoning Ritual System** — five-phase animated card pulls with audio feedback
@@ -106,7 +106,7 @@
 
 | Feature | Description |
 |---------|-------------|
-| **Web / Image / Video Search** | SearXNG-primary (Brave fallback) web, image, video & news search with mandatory citation validation, per-persona NSFW safesearch clamp, and deterministic junk-result filtering for image search |
+| **Web / Image / Video Search** | One provider per persona: Brave first for ordinary personas, SearXNG only for NSFW personas and all image and video search. Citation validation, per-persona safesearch clamp, and deterministic junk-result filtering for image search |
 | **Jupiter / Solana Wallet** | DEX swap proposals, autonomous DCA/RSI strategies, AES-encrypted key storage |
 | **Email Notifications** | Optional SMTP alerts for executed trades |
 
@@ -170,7 +170,7 @@
 - **LangChain** for LLM orchestration
 
 ### Integrations
-- **Brave Search API** for web search (per-persona `mcp_access`, ephemeral Docker)
+- **Brave Search API** for web search (per-persona `mcp_access`, ephemeral Docker), and **SearXNG** (`docker/searxng/`) for NSFW personas and media search
 - **Jupiter DEX** for Solana token swaps (via Docker MCP)
 - **Docker + Docker Compose** with Nginx reverse proxy
 
@@ -450,7 +450,7 @@ ssh -L 3001:localhost:3001 -L 8000:localhost:8000 <user>@<mac-mini>
 
 - **React Frontend**: TypeScript, Framer Motion animations, Google OAuth, mobile-optimized
 - **FastAPI Backend**: Auth middleware, persona routing, MCP orchestration, wallet routes
-- **Brave Search**: Web search with citation validation (per-persona `mcp_access`, ephemeral Docker)
+- **Brave Search**: Web search with citation validation (per-persona `mcp_access`, ephemeral Docker). NSFW personas never reach it; they use self-hosted SearXNG
 - **Jupiter MCP**: Solana DEX swaps via Docker container, autonomous strategies (DCA, RSI)
 - **SQLite**: Chat sessions, messages, summaries, user accounts, wallets, trade proposals
 - **FAISS**: Vector database for semantic memory search

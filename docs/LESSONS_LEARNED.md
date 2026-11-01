@@ -2,7 +2,7 @@
 title: Lessons Learned
 status: active
 created: 2026-04-19
-last_reviewed_on: 2026-10-23
+last_reviewed_on: 2026-11-01
 review_in: 12 months
 applies_to: nephilim
 ---
@@ -10,6 +10,23 @@ applies_to: nephilim
 # Lessons Learned
 
 Append-only, dated entries. Newest first. Each entry: what happened, what we learned, how to apply going forward.
+
+## 2026-11-01 — the stateless endpoint passed what the session path failed
+
+**What:** Gwen's research looked finished on `/persona/chat`. On `/sessions/{id}/chat` she answered
+the previous question, a follow-up missed its trigger because replies are stored as split bubbles,
+and on the deployed path bubble-format replies had been losing their citations, because the parser
+drops text after the last `</msg>`.
+
+**Learned:** the endpoint a test uses is part of what the test measures. A word filter on query
+rewrites was also wrong twice, rejecting 13 of 24 real follow-ups for Eeva and then "place" and
+"german" for Gwen: limiting what the rewriter can see is a stronger boundary than checking what it
+wrote. And a persona can override a direct prompt instruction, here about 3 turns in 10, so an
+instruction was not a control and the check had to be code.
+
+**Apply:** test research through a session, replay real follow-ups before trusting a filter, and read
+a provider's terms in full before building evals on its results. Mine were built first, and the
+stored results had to be deleted.
 
 ## 2026-10-25 — an example set is a classifier, and a lopsided one fails in both directions at once
 

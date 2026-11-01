@@ -75,9 +75,11 @@ it is not local.
 Research answers are stored as assistant turns, and both fact extractors redact assistant
 content, so a page cannot become an operator fact by this route. Audited 2026-11-01 and held
 by `test_research_memory_boundary.py`, which plants a claim and inspects extractor input.
-Summaries and RAG do persist assistant text inside a session's context. Text the operator
+Summaries and RAG persist assistant text inside a session's context, labelled as web research. Text the operator
 pastes counts as their own statement. "Remember this researched fact, with its source" is a
 later feature.
+
+Citations go inside the last `<msg>` bubble, because the parser drops text after it.
 
 ## Phases
 
