@@ -298,10 +298,13 @@ class ResearchService:
         return sources
 
     def _gather(self, query: str) -> tuple:
-        results = self._search({"query": query}) or []
+        with research_trace.timed("search"):
+            results = self._search({"query": query}) or []
         fetch = self._always_fetch or needs_pages(query)
         urls = [getattr(r, "url", "") for r in results[:MAX_PAGES]] if fetch else []
-        return results, self._sources(query, results, self._pages([u for u in urls if u]))
+        with research_trace.timed("fetch"):
+            pages = self._pages([u for u in urls if u])
+        return results, self._sources(query, results, pages)
 
     def run(self, query: str) -> EvidencePackage:
         results, sources = self._gather(query)

@@ -27,7 +27,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Optional
+import unicodedata
+from typing import Optional, Sequence
 
 from .llm_completion_service import LLMCompletionService
 from .query_extraction_service import QueryExtractionService
@@ -109,6 +110,56 @@ _CORRECTION_PREFIX_RE = re.compile(
     r"^\s*(no,?\s+)?(i\s+meant|sorry,?\s+i\s+meant|actually,?\s+i\s+meant|wait,?\s+i\s+meant)\s*[,:]?\s*",
     re.IGNORECASE,
 )
+
+
+#: Words a query may gain without the operator having typed them: search vocabulary
+#: and public aliases. Keep this generic. A word here can leave the machine on any turn.
+_PUBLIC_QUERY_WORDS = frozenset(
+    "a an and at by for from in is of on or the to vs versus with about "
+    "latest current recent new newest today now update updates news release releases "
+    "version versions price prices cost rate rates review reviews comparison compare "
+    "difference differences forecast weather schedule result results score scores "
+    "benchmark benchmarks specs performance status standings information overview guide "
+    "january february march april may june july august september october november december "
+    "btc bitcoin eth ethereum sol solana usd eur chf".split()
+)
+_FILLER_WORDS = frozenset("a an the is are was what how why who about of do does".split())
+_YEAR_RE = re.compile(r"^(19|20)\d{2}$")
+
+
+def _query_words(text: str) -> set:
+    normal = unicodedata.normalize("NFKD", (text or "").casefold())
+    # \w, not _WORD_RE: a word in a script that pattern cannot see would go unchecked.
+    return set(re.findall(r"\w+", "".join(c for c in normal if not unicodedata.combining(c))))
+
+
+def query_origin_ok(query: str, user_turns: Sequence[str]) -> bool:
+    """Every word comes from the operator's own turns or the public list.
+
+    For a query written with private context in view, which is the tool loop's. The
+    rewriter does not use this: it is only ever given user turns, so it holds nothing
+    private to leak, and on 24 real follow-ups this check rejected 13 good rewrites
+    over general words such as "security". It limits where words come from, not what
+    the operator typed: a private detail in their own message leaves with that message.
+    """
+    allowed = _query_words(" ".join(user_turns)) | _PUBLIC_QUERY_WORDS
+    return all(w in allowed or _YEAR_RE.match(w) for w in _query_words(query))
+
+
+_MEDIA_REQUEST = re.compile(
+    r"^\W*(please\s+)?(can you\s+|could you\s+)?(show|send|find|get|give)\s+(me\s+)?"
+    r"(an?\s+|some\s+)?(picture|pictures|image|images|photo|photos|video|videos|pic|pics)"
+    r"\s+of\s+",
+    re.IGNORECASE,
+)
+
+
+def authorized_query(query: str, user_turns: Sequence[str], message: str) -> str:
+    """The model's query if its words are authorized, else the message itself."""
+    if query and query_origin_ok(query, user_turns):
+        return query
+    logger.warning("[QueryOrigin] model query added unauthorized words; using the message")
+    return _MEDIA_REQUEST.sub("", message).strip() or message
 
 
 class QueryResolutionService:
@@ -282,7 +333,6 @@ class QueryResolutionService:
             "Example:\n"
             "Conversation:\n"
             "User: tell me about the James Webb telescope's new exoplanet finding\n"
-            "Assistant: I do not follow current events.\n"
             "Latest: search the web for it\n"
             "Rewritten: James Webb telescope new exoplanet finding"
         )
@@ -299,12 +349,21 @@ class QueryResolutionService:
         turn_lines = [
             line.strip()
             for line in user_prompt.split("\n")
-            if line.strip().startswith(("User: ", "Assistant: "))
+            # The privacy boundary for rewrites. This model call sees no persona,
+            # memory, graph fact or assistant text, so it cannot put one in a query.
+            if line.strip().startswith("User: ")
         ]
         # Drop the final "User: <latest>" line so it isn't duplicated below.
         if turn_lines and turn_lines[-1] == f"User: {latest}":
             turn_lines = turn_lines[:-1]
         return "\n".join(turn_lines[-max_turns:])
+
+    @staticmethod
+    def needs_clarifying(query: str) -> bool:
+        """True when nothing searchable is left: a bare command or only pronouns."""
+        words = set(re.findall(r"\w+", (query or "").lower()))
+        content = words - _DEICTIC_TOKENS - _FILLER_WORDS
+        return not content or QueryResolutionService._is_bare_search_command(query)
 
     @staticmethod
     def _sanitize(raw: str, *, fallback: str) -> str:

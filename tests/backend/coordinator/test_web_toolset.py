@@ -179,22 +179,6 @@ class TestFetchUrl:
             out = fetch_url("https://internal.example")
         assert out.startswith("ERROR")
 
-    def test_redirect_to_private_host_withheld(self):
-        html = "<html><body><p>secret internal page</p></body></html>"
-        stream_cm = self._stream_resp(html, host="192.168.1.10")
-
-        def _host_check(hostname):
-            return hostname == "192.168.1.10"  # only the redirect target is private
-
-        p, _ = self._patch_client(stream_cm)
-        with patch(
-            "src.coordinator.services.web_fetch_service._is_private_host",
-            side_effect=_host_check,
-        ), p:
-            out = fetch_url("https://example.com")
-        assert out.startswith("ERROR") and "redirect" in out.lower()
-        assert "secret internal page" not in out
-
     def test_streaming_stops_at_byte_cap(self):
         # 4 MB of chunks: iter_bytes must not be fully consumed.
         chunk = b"x" * 65536

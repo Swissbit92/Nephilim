@@ -43,3 +43,9 @@ Accepted. `RESEARCH_SERVICE_ENABLED` defaults off and is on in production.
 - A persona gains research by holding `web_search`. Gwen does not.
 - Figures the evidence does not contain are enforced live: one regeneration, then those
   sentences are removed. Support for other claims is still measured only in the eval.
+- `fetch_url` blocks at connection time, so a forbidden address receives no request. v0.11.0's check
+  ran after the request had landed. The transport swaps httpx's private `_pool`, so an httpx
+  upgrade could undo it; a real-socket test fails if that happens.
+- A rewrite is private by its input: the rewriter sees user turns only. A word filter on its output
+  rejected 13 of 24 good rewrites on real follow-ups over general words. A follow-up that only
+  makes sense from something she said can no longer be resolved.

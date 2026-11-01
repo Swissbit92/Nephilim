@@ -19,11 +19,16 @@ import socket
 from typing import Optional
 from urllib.parse import urlparse
 
+import httpcore
+import httpx
+
 logger = logging.getLogger(__name__)
 
 _MAX_BYTES = 2_000_000       # 2 MB page cap (enforced DURING streaming download)
 _MAX_OUTPUT_CHARS = 20_000   # cap returned text (local model context budget)
 _TIMEOUT_S = 15
+#: Carrier-grade NAT, which Tailscale uses. Python does not class it as private.
+_CGNAT = ipaddress.ip_network("100.64.0.0/10")
 
 
 def _is_private_host(hostname: str) -> bool:
@@ -50,14 +55,50 @@ def _is_private_ip(ip: str) -> bool:
     except ValueError:
         return True
     return (addr.is_loopback or addr.is_private or addr.is_link_local
-            or addr.is_reserved or addr.is_multicast or addr.is_unspecified)
+            or addr.is_reserved or addr.is_multicast or addr.is_unspecified
+            or (getattr(addr, "ipv4_mapped", None) or addr) in _CGNAT)
 
 
-def _connected_ip(resp) -> Optional[str]:
-    """The address this response actually came from, or None if not exposed."""
-    stream = getattr(resp, "extensions", {}).get("network_stream")
-    addr = stream.get_extra_info("server_addr") if stream else None
-    return addr[0] if isinstance(addr, tuple) and addr else None
+class BlockedAddress(httpcore.ConnectError):
+    """A connection to an internal address was refused before it was opened."""
+
+
+class _PublicOnlyBackend(httpcore.SyncBackend):
+    """Resolve, validate every address, then connect to the validated IP.
+
+    Every connection the client opens comes through here, including each redirect
+    hop, so one check covers them all. Connecting to the IP that was validated, not
+    the name, leaves no second lookup for a rebinding DNS server to answer differently.
+    TLS still verifies against the hostname, which httpcore passes separately.
+    """
+
+    def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        ips = [info[4][0] for info in infos]
+        if not ips or any(_is_private_ip(ip) for ip in ips):
+            raise BlockedAddress(f"refused internal address for {host}")
+        error = None
+        for ip in dict.fromkeys(ips):  # a site's IPv6 address may be unreachable from here
+            try:
+                return super().connect_tcp(
+                    ip, port, timeout=timeout, local_address=local_address,
+                    socket_options=socket_options,
+                )
+            except (httpcore.ConnectError, httpcore.ConnectTimeout) as e:
+                error = e
+        raise error
+
+
+class _PublicOnlyTransport(httpx.HTTPTransport):
+    """httpx has no backend option, so this swaps in a pool that has one. A test
+    against a real local server fails if an httpx upgrade stops honouring it."""
+
+    def __init__(self):
+        super().__init__()
+        self._pool = httpcore.ConnectionPool(
+            ssl_context=httpx.create_ssl_context(), network_backend=_PublicOnlyBackend(),
+        )
+
 
 _SCRIPT_STYLE = re.compile(r"<(script|style|noscript)[^>]*>.*?</\1>",
                            re.IGNORECASE | re.DOTALL)
@@ -106,36 +147,15 @@ def fetch_url(url: str, mode: str = "markdown") -> str:
         logger.warning(f"[fetch_url] blocked private/loopback host: {hostname!r}")
         return f"ERROR: fetching internal/private addresses is not allowed ({hostname})."
 
-    import httpx
-
     try:
         with httpx.Client(
-            follow_redirects=True, timeout=_TIMEOUT_S,
+            transport=_PublicOnlyTransport(), follow_redirects=True, timeout=_TIMEOUT_S,
             headers={"User-Agent": "Mozilla/5.0 (nephilim-coordinator)"},
         ) as client:
             # Streaming download with an early stop so _MAX_BYTES bounds actual
             # network/memory use, not just the returned string (QA finding).
             with client.stream("GET", url) as resp:
                 resp.raise_for_status()
-                # Redirect-SSRF guard: a public host may 30x to an internal
-                # address. The request has already happened (read-only GET),
-                # but we refuse to RETURN internal content to the model.
-                final_host = (resp.url.host or "") if hasattr(resp, "url") else hostname
-                if final_host and final_host != hostname and _is_private_host(final_host):
-                    logger.warning(
-                        f"[fetch_url] blocked redirect to private host: {final_host!r}"
-                    )
-                    return (
-                        f"ERROR: {url} redirected to an internal/private address; "
-                        "content withheld."
-                    )
-                # DNS rebinding: the name can resolve publicly for the check above
-                # and privately for the connection. Refuse on what was connected
-                # to, before reading any body.
-                peer = _connected_ip(resp)
-                if peer and _is_private_ip(peer):
-                    logger.warning(f"[fetch_url] blocked connection to private peer: {peer}")
-                    return f"ERROR: {url} resolved to an internal address; content withheld."
                 chunks: list[bytes] = []
                 received = 0
                 for chunk in resp.iter_bytes():

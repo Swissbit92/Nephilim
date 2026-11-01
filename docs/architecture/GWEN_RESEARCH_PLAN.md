@@ -15,6 +15,17 @@ ai_summary: "Open before giving Gwen general web research or storing anything re
 [research plan](RESEARCH_PLAN.md) and
 [ADR-024](../decisions/024-research-is-a-deterministic-service-not-a-model-tool.md).
 
+## Agreed decisions, 2026-11-01
+
+- Gwen researches normal and NSFW questions, all through SearXNG, and never uses Brave for now.
+  This is revisited only if SearXNG stays poor after G0, as "NSFW searches never use Brave".
+- Queries: Gwen starts with the current message only. A rewrite is private by its input, because
+  a word filter on the output rejected 13 of 24 good rewrites.
+- She researches only on a clear lookup or freshness question. Scene state, G5 and G6 are deferred.
+- Research stays in summaries, labelled, keeping what the operator said apart from what she found.
+- 74% is the regression floor, 80% her launch target, on a set large enough to tell them apart.
+- G0 first needs SearXNG language and region set: neither is configured today.
+
 ## The short answer
 
 Gwen should use the same research service as Eeva, and **the graph should not change at
