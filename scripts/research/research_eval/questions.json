@@ -1,0 +1,302 @@
+[
+ {
+  "id": "q00",
+  "query": "who is the current chancellor of Germany?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q01",
+  "query": "who is the president of the Swiss Confederation this year?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q02",
+  "query": "what is the current Swiss National Bank policy rate?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q03",
+  "query": "what did the European Central Bank decide at its latest meeting?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q04",
+  "query": "what is the weather forecast for Zurich tomorrow?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q05",
+  "query": "will it rain in Brugg this weekend?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q06",
+  "query": "what are the top world news headlines today?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q07",
+  "query": "latest news about artificial intelligence regulation in the EU",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q08",
+  "query": "what happened in the Swiss parliament this week?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q09",
+  "query": "how much does a Ledger Nano X cost?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q10",
+  "query": "Ledger Nano X vs Trezor Safe 5 which has better security?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q11",
+  "query": "is Trezor open source?",
+  "kind": "stable",
+  "reference": "Trezor firmware is open source"
+ },
+ {
+  "id": "q12",
+  "query": "how are capital gains on crypto taxed for private investors in Switzerland?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q13",
+  "query": "what does the Swiss KS36 circular say about professional securities dealers?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q14",
+  "query": "what is the current bitcoin price?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q15",
+  "query": "why is bitcoin moving this week?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q16",
+  "query": "what is the current ethereum staking yield?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q17",
+  "query": "what is the difference between USDC and EURC?",
+  "kind": "stable",
+  "reference": "USDC is pegged to the US dollar and EURC to the euro, both issued by Circle"
+ },
+ {
+  "id": "q18",
+  "query": "latest Solana network news",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q19",
+  "query": "what is the latest stable version of Python?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q20",
+  "query": "what is new in the latest macOS release?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q21",
+  "query": "what is the latest Ollama release and what changed?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q22",
+  "query": "what are the specs of the Mac Mini M4 Pro?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q23",
+  "query": "how much RAM does running a 26 billion parameter local LLM need?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q24",
+  "query": "who won the most recent Formula 1 race?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q25",
+  "query": "who won the last Champions League final?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q26",
+  "query": "best hiking trails near Lucerne in autumn",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q27",
+  "query": "train from Zurich to Geneva how long does it take?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q28",
+  "query": "what time is sunset in Zurich today?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q29",
+  "query": "what is the population of Switzerland?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q30",
+  "query": "what is the height of the Matterhorn?",
+  "kind": "stable",
+  "reference": "4,478 metres"
+ },
+ {
+  "id": "q31",
+  "query": "how does a Rust borrow checker work in simple terms?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q32",
+  "query": "what is the difference between a Roth IRA and Swiss pillar 3a?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q33",
+  "query": "what is the Swiss pillar 3a maximum contribution this year?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q34",
+  "query": "current EUR to CHF exchange rate",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q35",
+  "query": "compare KuCoin and Binance fees for futures trading",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q36",
+  "query": "what are the health benefits and risks of intermittent fasting?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q37",
+  "query": "recommended daily vitamin D dose in winter in Switzerland",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q38",
+  "query": "what are the best anime released this season?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "q39",
+  "query": "who directed the highest grossing film of this year so far?",
+  "kind": "fresh",
+  "reference": null
+ },
+ {
+  "id": "m00",
+  "query": "which is cheaper per year for a Swiss resident, keeping 10000 CHF in a pillar 3a or in a savings account, and why?",
+  "kind": "multi",
+  "reference": null
+ },
+ {
+  "id": "m01",
+  "query": "compare the Swiss National Bank and European Central Bank policy rates and explain what the gap means for EUR/CHF",
+  "kind": "multi",
+  "reference": null
+ },
+ {
+  "id": "m02",
+  "query": "what changed between the last two major macOS releases for developers?",
+  "kind": "multi",
+  "reference": null
+ },
+ {
+  "id": "m03",
+  "query": "which Mac Mini configuration is the best value for running local LLMs, and what are the tradeoffs?",
+  "kind": "multi",
+  "reference": null
+ },
+ {
+  "id": "m04",
+  "query": "compare Hardware wallet options Ledger, Trezor and Coldcard for a beginner holding only bitcoin",
+  "kind": "multi",
+  "reference": null
+ },
+ {
+  "id": "m05",
+  "query": "what are the main differences between Ollama and llama.cpp, and when should I use each?",
+  "kind": "multi",
+  "reference": null
+ },
+ {
+  "id": "m06",
+  "query": "how do Swiss tax authorities treat crypto staking income compared with capital gains?",
+  "kind": "multi",
+  "reference": null
+ },
+ {
+  "id": "m07",
+  "query": "which Swiss cities have the highest and lowest rents, and how large is the gap?",
+  "kind": "multi",
+  "reference": null
+ },
+ {
+  "id": "m08",
+  "query": "what caused the most recent large bitcoin price move, and did analysts agree on the cause?",
+  "kind": "multi",
+  "reference": null
+ },
+ {
+  "id": "m09",
+  "query": "compare SearXNG and Brave Search for privacy and result quality",
+  "kind": "multi",
+  "reference": null
+ }
+]
