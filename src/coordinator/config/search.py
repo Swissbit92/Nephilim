@@ -246,6 +246,19 @@ class SearchSettings(BaseSettings):
         ),
         alias="RESEARCH_SERVICE_ENABLED",
     )
+    research_nsfw_enabled: bool = Field(
+        default=False,
+        description=(
+            "Let an nsfw persona whose card sets `research` use the ResearchService. "
+            "Off = they deflect web questions. Their searches stay on SearXNG either way."
+        ),
+        alias="RESEARCH_NSFW_ENABLED",
+    )
+    research_hourly_cap: int = Field(
+        default=30, ge=1, le=1000,
+        description="Soft limit on research turns per session per hour.",
+        alias="RESEARCH_HOURLY_CAP",
+    )
     research_budget_chars: int = Field(
         default=14000, ge=1000, le=40000,
         description="Evidence text passed to synthesis, about 3.5k tokens by default.",

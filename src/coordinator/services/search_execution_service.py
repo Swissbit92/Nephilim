@@ -141,6 +141,12 @@ class SearchExecutionService:
             logger.error(f"[SearchExecution] Brave search failed: {e}", exc_info=True)
             return None
 
+    @staticmethod
+    def _tag(results, provider):
+        for result in results:
+            if not isinstance(result, dict):
+                result.provider = provider
+
     def _search_brave(self, query, category, safesearch, settings):
         brave = settings.brave
         country = brave.country or None
@@ -161,6 +167,7 @@ class SearchExecutionService:
         )
         logger.info(f"[SearchExecution] Brave search returned {len(results)} results")
         research_trace.note_search("brave", category, len(results))
+        self._tag(results, "brave")
         return results
 
     def _search_brave_or_none(self, query, category, safesearch, settings):
@@ -199,6 +206,7 @@ class SearchExecutionService:
         try:
             results = client.search(query, category=category, safesearch=safesearch)
             research_trace.note_search("searxng", category, len(results))
+            self._tag(results, "searxng")
             return results
         except MCPError as e:
             logger.warning(f"[SearchExecution] SearXNG failed ({e})")

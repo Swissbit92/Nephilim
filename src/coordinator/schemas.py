@@ -10,6 +10,24 @@ from pydantic import BaseModel, Field
 
 # ----------------- Controlled vocabularies -----------------
 
+#: Stored replies built from retrieved web text.
+RESEARCH_SOURCE_TYPES = frozenset({"tool_brain", "brave_mcp"})
+WEB_RESEARCH_LABEL = "[from web research]"
+
+
+def memory_text(message: dict) -> str:
+    """A stored message as memory should read it, with web research marked.
+
+    Summaries and RAG carry a reply into later turns, where it would otherwise read
+    as something simply known. The mark keeps what was looked up apart from what the
+    operator said, for as long as the text survives.
+    """
+    content = message.get("content", "")
+    if message.get("source_type") in RESEARCH_SOURCE_TYPES and message.get("role") == "assistant":
+        return f"{WEB_RESEARCH_LABEL} {content}"
+    return content
+
+
 class SourceType(StrEnum):
     """Where a response came from — the `source_type` on ResponseMetadata / messages.
 

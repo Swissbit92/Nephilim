@@ -99,10 +99,10 @@ def note_fetch(ok: bool) -> None:
         record["pages_fetched" if ok else "pages_failed"] += 1
 
 
-def note_clarification(persona: str) -> None:
-    """Research was wanted but nothing searchable could be built, so she asked."""
+def note_declined(persona: str, status: str) -> None:
+    """Research was wanted and did not run: `clarify`, or `capped`."""
     record = _new(persona, "research")
-    record["status"] = "clarify"
+    record["status"] = status
     record["latency_ms"] = 0
     _write(record)
 

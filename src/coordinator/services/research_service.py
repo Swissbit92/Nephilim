@@ -17,7 +17,7 @@ import unicodedata
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from .. import research_trace
@@ -43,7 +43,7 @@ _NEEDS_PAGES = re.compile(
 )
 _FRESH = re.compile(
     r"\b(latest|newest|most recent|recently|this (week|month|year)|right now|current"
-    r"|look (it |that )?up|search (for|the web))\b",
+    r"|look (it |that )?up|search (for|the web)|compare|versus|vs)\b",
     re.IGNORECASE,
 )
 _PERSONAL = re.compile(
@@ -57,6 +57,7 @@ _FIGURE = re.compile(
     r"(\d[\d,.'’]*\d|\d)\s*(%|percent|chf|eur|usd|\$|€|km|kg|gb|tb|million|billion|bn)?",
     re.IGNORECASE,
 )
+_PEOPLE = re.compile(r"\b(you|your|yours|we|us|our|i|my|me|mine)\b", re.IGNORECASE)
 _STOPWORDS = frozenset(
     "a an and are as at be but by can did do does for from has have how i in is it its"
     " me my of on or our so that the their them then there these this to was we were"
@@ -85,6 +86,8 @@ class Source:
     age: str | None = None
     passages: list[str] = field(default_factory=list)
     fetched: bool = False
+    provider: str = ""
+    retrieved_at: str = ""
 
 
 @dataclass
@@ -102,13 +105,18 @@ class EvidencePackage:
     def usable(self) -> bool:
         return any(s.passages for s in self.sources)
 
+    @property
+    def pages_read(self) -> int:
+        return sum(1 for s in self.sources if s.fetched)
+
     def render(self) -> str:
         """Evidence as data, inside a fence the sanitizer keeps pages out of."""
         blocks = []
         for i, s in enumerate((s for s in self.sources if s.passages), 1):
             dated = f" ({s.age})" if s.age else ""
+            depth = "page read" if s.fetched else "search snippet only"
             body = "\n".join(s.passages)
-            blocks.append(f"[{i}] {s.title}{dated}\n{s.url}\n{body}")
+            blocks.append(f"[{i}] {s.title}{dated}, {depth}\n{s.url}\n{body}")
         return "<evidence>\n" + "\n\n".join(blocks) + "\n</evidence>"
 
 
@@ -126,6 +134,11 @@ def asks_for_fresh_facts(message: str) -> bool:
     if "\n" in text or len(text) > MAX_FRESH_CHARS or len(text.split()) > MAX_FRESH_WORDS:
         return False  # a pasted block would leave whole; only a short question may
     return bool(_FRESH.search(text)) and not _PERSONAL.search(text)
+
+
+def mentions_someone(message: str) -> bool:
+    """About her or the operator. "It" and "they" are follow-ups, not people here."""
+    return bool(_PEOPLE.search(message or ""))
 
 
 def needs_pages(query: str) -> bool:
@@ -272,6 +285,7 @@ class ResearchService:
 
     def _sources(self, query: str, results: list[Any], pages: dict[str, str]) -> list[Source]:
         sources = []
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         per_source = max(1, self._budget // max(1, len(results)))
         for r in results:
             url = getattr(r, "url", "")
@@ -293,6 +307,8 @@ class ResearchService:
                     age=_inline(getattr(r, "age", None)) or None,
                     passages=passages,
                     fetched=bool(page),
+                    provider=getattr(r, "provider", ""),
+                    retrieved_at=now,
                 )
             )
         return sources

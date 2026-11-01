@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from typing import List, Any
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,16 @@ class CitationService:
     - System auto-generates citations with verified URLs
     - Removes any hallucinated citations from responses
     """
+
+    @staticmethod
+    def compact_citations(search_results: List[Any]) -> str:
+        """One quiet line of links, for a reply that should stay in voice."""
+        links = []
+        for result in search_results[:3]:
+            host = urlparse(getattr(result, "url", "") or "").netloc.removeprefix("www.")
+            if host:
+                links.append(f"[{host}]({result.url})")
+        return f"\n\n🔍 {' · '.join(links)}" if links else ""
 
     @staticmethod
     def auto_generate_citations(search_results: List[Any]) -> str:
