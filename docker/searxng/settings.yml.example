@@ -19,6 +19,8 @@ search:
 # machine's IP. SearXNG hides the account, it does not keep the query local.
 use_default_settings:
   engines:
+    # An engine that inherits from another fails at startup unless its parent is
+    # listed too, which is why yandex, swisscows and dogpile appear here.
     keep_only:
       - wikipedia
       - bing
@@ -33,6 +35,15 @@ use_default_settings:
       - google images
       - google news
       - google videos
+      - yandex
+      - yandex images
+      - swisscows
+      - dogpile
+      - swisscows images
+      - dogpile images
+      - dailymotion
+      - youtube
+      - vimeo
       - mojeek
       - mojeek images
       - mojeek news
@@ -40,8 +51,30 @@ use_default_settings:
       - startpage images
       - startpage news
 
+outgoing:
+  request_timeout: 6.0
+  retries: 2
+
 engines:
   - name: bing
+    disabled: false
+  - name: bing images
+    disabled: false
+  - name: mojeek images
+    disabled: false
+  - name: startpage images
+    disabled: false
+  - name: yandex images
+    disabled: false
+  - name: swisscows images
+    disabled: false
+  - name: dogpile images
+    disabled: false
+  - name: youtube
+    disabled: false
+  - name: dailymotion
+    disabled: false
+  - name: vimeo
     disabled: false
   - name: duckduckgo
     disabled: false
