@@ -550,7 +550,7 @@ def _try_tool_brain(
         ToolBrainService, ST_ANSWERED, ST_SILENT, ST_DELEGATE_WALLET, ST_HITL,
         ST_RESEARCH,
     )
-    from ..services.query_resolution_service import QueryResolutionService, query_origin_ok
+    from ..services.query_resolution_service import QueryResolutionService
     from ..services import persona_lines
     from ..services.tool_interceptor import ToolCallInterceptor
     from ..services.citation_service import CitationService
@@ -808,15 +808,8 @@ def _try_tool_brain(
             current_session_id.reset(_session_token)
 
         if result.status == ST_RESEARCH:
-            # A query the model wrote gets the same rule. It falls back to the
-            # message itself, which is authorized by definition.
-            user_turns = [t.content for t in history if t.role == "user"] + [body.message]
-            query = result.research_query
-            if not query_origin_ok(query, user_turns):
-                logger.warning("[Research] model query added unauthorized words; rejected")
-                query = body.message
             return _research_turn(
-                card=card, system=system, body=body, query=query,
+                card=card, system=system, body=body, query=result.research_query,
                 trigger="model", metadata=metadata, persona_name=persona_name,
             )
 

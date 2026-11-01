@@ -129,7 +129,8 @@ _YEAR_RE = re.compile(r"^(19|20)\d{2}$")
 
 def _query_words(text: str) -> set:
     normal = unicodedata.normalize("NFKD", (text or "").casefold())
-    return set(_WORD_RE.findall("".join(c for c in normal if not unicodedata.combining(c))))
+    # \w, not _WORD_RE: a word in a script that pattern cannot see would go unchecked.
+    return set(re.findall(r"\w+", "".join(c for c in normal if not unicodedata.combining(c))))
 
 
 def query_origin_ok(query: str, user_turns: Sequence[str]) -> bool:
@@ -143,6 +144,22 @@ def query_origin_ok(query: str, user_turns: Sequence[str]) -> bool:
     """
     allowed = _query_words(" ".join(user_turns)) | _PUBLIC_QUERY_WORDS
     return all(w in allowed or _YEAR_RE.match(w) for w in _query_words(query))
+
+
+_MEDIA_REQUEST = re.compile(
+    r"^\W*(please\s+)?(can you\s+|could you\s+)?(show|send|find|get|give)\s+(me\s+)?"
+    r"(an?\s+|some\s+)?(picture|pictures|image|images|photo|photos|video|videos|pic|pics)"
+    r"\s+(of\s+)?",
+    re.IGNORECASE,
+)
+
+
+def authorized_query(query: str, user_turns: Sequence[str], message: str) -> str:
+    """The model's query if its words are authorized, else the message itself."""
+    if query and query_origin_ok(query, user_turns):
+        return query
+    logger.warning("[QueryOrigin] model query added unauthorized words; using the message")
+    return _MEDIA_REQUEST.sub("", message).strip() or message
 
 
 class QueryResolutionService:

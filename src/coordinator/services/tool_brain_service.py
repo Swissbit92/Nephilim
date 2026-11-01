@@ -88,6 +88,14 @@ ST_HITL = "hitl"
 ST_RESEARCH = "research"
 
 
+def _url_was_given(url: str, user_turns: List[str], results: Optional[List[Any]]) -> bool:
+    """A URL can carry data out in its path, so the model cannot compose one."""
+    known = " ".join(user_turns)
+    return bool(url) and (url in known or any(
+        url == getattr(r, "url", None) for r in (results or [])
+    ))
+
+
 @dataclass
 class ToolBrainResult:
     status: str
@@ -242,6 +250,7 @@ class ToolBrainService:
         from ..tools.registry import registry, TOOLSET_MCP_ALIASES
         from ..tools.tool_utils import format_search_results_for_llm
         from .ollama_think import wire_think
+        from .query_resolution_service import authorized_query
         from .resource_arbiter import guard_chat_model
 
         # Once per TURN, not per client.chat: one turn is 1-4 /api/chat calls
@@ -286,6 +295,10 @@ class ToolBrainService:
             messages.append({"role": role, "content": h.get("content", "")})
         messages.append({"role": "user", "content": user_message})
 
+        user_turns = [
+            h.get("content", "") for h in (history or [])
+            if (h.get("role") or "").lower() == "user"
+        ] + [user_message]
         trace: List[Dict[str, Any]] = []
         used_search = False
         search_results: Optional[List[Any]] = None
@@ -342,6 +355,19 @@ class ToolBrainService:
                     if not res.allowed:
                         messages.append({"role": "tool",
                                          "content": f"[tool '{name}' not permitted: {res.reason}]"})
+                        continue
+
+                    # The model wrote these arguments with persona, memory and
+                    # history in view, so nothing it wrote leaves unchecked.
+                    if res.allowed and name != "fetch_url" and "query" in args:
+                        args = {**args, "query": authorized_query(
+                            str(args["query"]), user_turns, user_message)}
+                    if res.allowed and name == "fetch_url" and not _url_was_given(
+                            str(args.get("url", "")), user_turns, search_results):
+                        logger.warning("[ToolBrain] fetch_url refused: URL not from the "
+                                       "operator or this turn's results")
+                        messages.append({"role": "tool",
+                                         "content": "[fetch_url refused: unknown URL]"})
                         continue
 
                     if name in research_tools:

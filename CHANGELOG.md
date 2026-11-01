@@ -15,8 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against a real local server, and the tests fail with the guard removed.
 - `100.64.0.0/10`, which Tailscale uses, is blocked.
 - The query rewriter is given user turns only, so assistant text, persona memory and graph facts
-  cannot reach a search query through it. A query the model writes must use only words from
-  the operator's turns or a small public list.
+  cannot reach a search query through it. Any query the model writes in the tool loop, including
+  image and video searches, must use only words from the operator's turns or a small public list.
+- `fetch_url` in the tool loop refuses a URL unless the operator gave it or a search this turn
+  returned it, because a composed URL can carry data out in its path.
 
 ### Fixed
 

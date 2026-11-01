@@ -27,6 +27,8 @@ def test_legitimate_queries_pass(query, turns):
     ("local LLM for a Swiss developer", ["best local LLM?"]),
     ("Oslo apartment prices", ["how are apartment prices?"]),
     ("nephilim companion hosting", ["best hosting?"]),
+    ("погода Осло", ["weather?"]),
+    ("大阪 hosting", ["best hosting?"]),
 ])
 def test_words_from_nowhere_are_rejected(query, turns):
     assert not query_origin_ok(query, turns)
