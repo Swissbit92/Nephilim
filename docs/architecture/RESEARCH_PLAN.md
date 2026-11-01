@@ -135,6 +135,31 @@ that shows it.
 
 On 50 questions these catch large regressions and cannot prove small gains.
 
+## Results, G0, 2026-11-01
+
+50 frozen questions, judged blind in both orderings on shared evidence holding everything either
+arm saw. A pair that flipped with order counts as a tie.
+
+| Comparison | Wins | Ties | p | Fully supported |
+|---|---|---|---|---|
+| Research path vs v0.10.1 pipeline, frozen Brave evidence | 16 to 3 | 31 | 0.004 | 84% vs 70% |
+| SearXNG, new engines, vs Brave | 8 to 20 | 22 | 0.036 | 74% vs 84% |
+
+| Category | Questions | Brave | SearXNG | Ties |
+|---|---|---|---|---|
+| Stable facts | 17 | 6 | 2 | 9 |
+| Fresh or current | 23 | 10 | 6 | 7 |
+| Multi-step | 10 | 4 | 0 | 6 |
+
+This is the first run where the research path beats the old pipeline, not merely matches it. It ran
+without live figure enforcement, and SearXNG used fresh results while Brave used frozen ones.
+
+Language and region did not help: top-five relevance stayed at 3 of 75 or worse in all five settings.
+The cause was the engines. Bing, DuckDuckGo, Google and Qwant are blocked or noisy from this IP, and
+Yahoo, Google CSE, Seznam and Privacywall work. Those blocks shift.
+
+SearXNG meets the 74% floor exactly and misses Gwen's 80% launch target.
+
 ## Hardening, v0.11.2
 
 | Change | Tested by | Remaining limit |

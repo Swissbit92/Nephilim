@@ -5,6 +5,14 @@ All notable changes to the NEPHILIM project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- SearXNG general search uses Yahoo, Google CSE, Seznam and Privacywall. Bing's general results had
+  turned to noise from this IP, and language settings did not help. Blind results are in the
+  [research plan](docs/architecture/RESEARCH_PLAN.md).
+
 ## [0.11.2] - 2026-11-01
 
 ### Security
