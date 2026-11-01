@@ -5,9 +5,32 @@ All notable changes to the NEPHILIM project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.12.0] - 2026-11-01
+
+### Added
+
+- Gwen can research behind `RESEARCH_NSFW_ENABLED`, on SearXNG only, under a per-persona policy.
+  See [ADR-025](docs/decisions/025-personas-research-under-a-per-persona-policy-and-gwen-stays-off-brave.md).
+- Research replies are labelled in summaries and RAG, and summaries keep what was looked up apart
+  from what the operator said.
+- Follow-ups to a researched reply, comparisons and cost questions now research.
+- Consequential topics decline when fewer than two pages were read.
 
 ### Changed
+
+- SearXNG drops engines that are blocked from this IP, taking general search from 6s to about 2s.
+- Image replies from the tool loop use `tool_action`, so they are not labelled as research.
+- The health alert also checks general search for relevance.
+- Evidence records provider, retrieval time, and whether a page was read or only a snippet.
+
+### Fixed
+
+- Word substitutions ran over citations and could rewrite a URL.
+- `dont[13]` no longer fires on "Sir Keir" or "Master Chief" in a factual reply.
+
+### Removed
+
+- Evals that used Brave results, and their stored data. Brave's terms bar both.
 
 - SearXNG general search uses Yahoo, Google CSE, Seznam and Privacywall. Bing's general results had
   turned to noise from this IP, and language settings did not help. Blind results are in the
@@ -96,7 +119,7 @@ the [research plan](docs/architecture/RESEARCH_PLAN.md).
   orderings by a different model family: `routed` won 29, SearXNG-first won 6, 5
   tied (sign test p=0.0001). SearXNG returned nothing on 11 of 40, Brave on none,
   and `routed` still won 22 to 4 on the 29 where SearXNG did answer. Harness:
-  `scripts/research/search_ab/`.
+  That harness used Brave results and was removed in 0.12.0.
 
 ### Added
 

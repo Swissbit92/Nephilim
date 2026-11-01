@@ -24,6 +24,8 @@ import hashlib
 from collections.abc import Sequence
 from typing import Any
 
+from ..config import get_settings
+
 # Used only when a persona card declares no lines of its own. Deliberately plain:
 # a persona that has not been given a voice for this should sound neutral rather
 # than borrow someone else's.
@@ -49,6 +51,9 @@ def _lines(persona_card: dict[str, Any]) -> Sequence[str]:
 def choose_line(persona_card: dict[str, Any], user_message: str) -> str:
     """Pick one deflection line, deterministically from the user's turn."""
     lines = _lines(persona_card)
+    researching = persona_card.get("research") and get_settings().search.research_nsfw_enabled
+    if researching and persona_card.get("cannot_lookup_research"):
+        lines = persona_card["cannot_lookup_research"]
     if len(lines) == 1:
         return lines[0]
     digest = hashlib.sha256((user_message or "").strip().lower().encode("utf-8")).digest()

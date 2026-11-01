@@ -187,6 +187,8 @@ _FINGERPRINT_EXCLUDE = frozenset({
     "dials_in_prompt",
     "dial_contrast",
     "constraints_in_prompt",
+    "research",
+    "cannot_lookup_research",
 })
 
 

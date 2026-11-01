@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import List, Optional, Tuple, Dict, Any
 import logging
 
+from .schemas import memory_text
 from .memory_text_utils import prepare_for_embedding, truncate_for_embedding
 
 try:
@@ -99,7 +100,7 @@ class EpisodicMemoryRAG:
         pairs = []
         for i, msg in enumerate(messages):
             # Format: "user: message content" or "assistant: response content"
-            text = f"{msg['role']}: {msg['content']}"
+            text = f"{msg['role']}: {memory_text(msg)}"
             metadata = {
                 "session_id": session_id,
                 "message_id": msg.get("id"),
@@ -404,7 +405,7 @@ class EpisodicMemoryRAG:
         pairs = []
         for i, msg in enumerate(new_messages):
             # Format: "user: message content" or "assistant: response content"
-            text = f"{msg['role']}: {msg['content']}"
+            text = f"{msg['role']}: {memory_text(msg)}"
             metadata = {
                 "session_id": session_id,
                 "message_id": msg.get("id"),

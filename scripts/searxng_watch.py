@@ -2,8 +2,8 @@
 """Telegram alert when SearXNG stops answering. Run by com.nephilim.searxng-watch.
 
 "Up" is not enough: engines block this IP with CAPTCHAs while /healthz stays 200,
-so the probe runs a real image search, the category nsfw personas and media
-searches have no fallback for. Nothing else notices, because a failed search just
+so the probe runs real searches: images, which nsfw personas and media searches have
+no fallback for, and general, which gets noisy without going empty. Nothing else notices, because a failed search just
 looks like a companion with no results.
 
 Alerts once after ALERT_AFTER failed runs in a row, and once on recovery. A send
@@ -29,21 +29,35 @@ ALERT_AFTER = 2
 SEND_ATTEMPTS = 3
 SEND_BACKOFF_SECONDS = 5
 TIMEOUT_SECONDS = 25
+#: (category, query, a word a relevant top result must contain, if any)
+PROBES = (("images", "swiss alps", ""), ("general", "height of the Matterhorn", "matterhorn"))
+
+
+def _search(base_url: str, query: str, category: str) -> dict:
+    params = urllib.parse.urlencode(
+        {"q": query, "format": "json", "categories": category, "safesearch": 0}
+    )
+    with urllib.request.urlopen(f"{base_url}/search?{params}", timeout=TIMEOUT_SECONDS) as r:
+        return json.load(r)
 
 
 def probe(base_url: str = BASE_URL) -> str | None:
     """Return None when healthy, else what is wrong."""
-    query = urllib.parse.urlencode(
-        {"q": "swiss alps", "format": "json", "categories": "images", "safesearch": 0}
-    )
-    try:
-        with urllib.request.urlopen(f"{base_url}/search?{query}", timeout=TIMEOUT_SECONDS) as r:
-            data = json.load(r)
-    except (OSError, ValueError) as e:
-        return f"not answering ({e})"
-    if not data.get("results"):
-        blocked = sorted({u[0] for u in data.get("unresponsive_engines", [])})
-        return f"up but returning nothing (blocked: {', '.join(blocked) or 'none reported'})"
+    for category, query, needle in PROBES:
+        try:
+            data = _search(base_url, query, category)
+        except (OSError, ValueError) as e:
+            return f"not answering ({e})"
+        results = data.get("results") or []
+        if not results:
+            blocked = sorted({u[0] for u in data.get("unresponsive_engines", [])})
+            return (
+                f"up but returning no {category} results "
+                f"(blocked: {', '.join(blocked) or 'none reported'})"
+            )
+        # Engines can answer with noise, which /healthz and a result count both miss.
+        if needle and not any(needle in str(r).lower() for r in results[:5]):
+            return f"returning irrelevant {category} results"
     return None
 
 
@@ -104,7 +118,7 @@ def step(state: dict, problem: str | None, send: Callable[[str], bool]) -> dict:
         return {**state, "failures": failures}
     sent = send(
         f"⚠️ SearXNG is {problem}.\n"
-        "Gwen's searches and all image and video search return nothing until it is back."
+        "Gwen's searches and all image and video search are affected until it is back."
     )
     return {"failures": failures, "alerted": sent}
 

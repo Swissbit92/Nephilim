@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import logging
 
 from .llm_client import estimate_tokens
+from .schemas import WEB_RESEARCH_LABEL, memory_text
 
 if TYPE_CHECKING:
     from .llm_client import LC_OllamaClient
@@ -430,7 +431,7 @@ class ConversationSummarizer:
 
 Focus on:
 1. User's name, background, goals, preferences (if mentioned)
-2. Key facts shared by both parties
+2. Facts the user stated about themselves
 3. Important decisions or conclusions
 4. Emotional developments in the relationship
 5. Topics discussed
@@ -444,7 +445,11 @@ Provide a concise summary in this format:
 [2-3 sentences capturing key points]
 
 **User Info:**
-[Name, important details about the user - if mentioned]
+[Name, important details the USER stated about themselves. Never anything from a line
+marked {WEB_RESEARCH_LABEL}, and never anything only {persona_name} said]
+
+**Looked Up:**
+[What was found through web research, as "looked up: ...". Write "none" if nothing was]
 
 **Topics:**
 [Comma-separated list of topics discussed]
@@ -504,7 +509,7 @@ Be concise and factual. Prioritize names, numbers, and specific facts."""
 
         for msg in messages:
             role = msg["role"].capitalize()
-            content = msg["content"]
+            content = memory_text(msg)
 
             # Truncate very long messages
             if len(content) > 500:

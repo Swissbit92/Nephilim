@@ -4,6 +4,10 @@
   "rarity": "common",
   "celestial_order": "wanderer",
   "nsfw": true,
+  "research": true,
+  "cannot_lookup_research": [
+    "Mm, I can't look that one up for you like that, Daddy 😅 Ask me straight and I'll go find out."
+  ],
   "toolsets": [
     "web",
     "image"

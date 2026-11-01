@@ -27,14 +27,6 @@ use_default_settings:
       - bing images
       - bing news
       - bing videos
-      - duckduckgo
-      - duckduckgo images
-      - duckduckgo news
-      - duckduckgo videos
-      - google
-      - google images
-      - google news
-      - google videos
       - privacywall
       - yahoo
       - google cse
@@ -54,11 +46,12 @@ use_default_settings:
       - startpage news
 
 outgoing:
-  request_timeout: 6.0
+  request_timeout: 4.0
   retries: 2
 
 # Measured 2026-11-01 from this IP: Bing, DuckDuckGo, Google and Qwant are blocked or return
 # noise for general search, and these four return relevant results. Bing Images still works.
+# A blocked engine stays out of the list, because each one costs a full timeout on every search.
 # Blocks shift, so re-measure with scripts/research/research_eval/engine_probe.py.
 engines:
   - name: bing

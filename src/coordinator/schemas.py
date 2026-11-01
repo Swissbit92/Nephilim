@@ -3,12 +3,34 @@
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 
 # ----------------- Controlled vocabularies -----------------
+
+#: Stored replies built from retrieved web text.
+RESEARCH_SOURCE_TYPES = frozenset({"tool_brain", "brave_mcp"})
+WEB_RESEARCH_LABEL = "[from web research]"
+#: The citation itself, in either format. A reply is split into stored bubbles and its
+#: whitespace reflowed, so it is not always at the start of a line. A 🔍 in prose is not this.
+SOURCES_LINE = re.compile(r"🔍\s*(?:Sources|\[)")
+
+
+def memory_text(message: dict) -> str:
+    """A stored message as memory should read it, with web research marked.
+
+    Summaries and RAG carry a reply into later turns, where it would otherwise read
+    as something simply known. The mark keeps what was looked up apart from what the
+    operator said, for as long as the text survives.
+    """
+    content = message.get("content", "")
+    if message.get("role") == "assistant" and message.get("source_type") in RESEARCH_SOURCE_TYPES:
+        return f"{WEB_RESEARCH_LABEL} {content}"
+    return content
+
 
 class SourceType(StrEnum):
     """Where a response came from — the `source_type` on ResponseMetadata / messages.
@@ -21,6 +43,8 @@ class SourceType(StrEnum):
     """
 
     LLM = "llm"
+    # A tool that did something and read nothing, such as queueing an image.
+    TOOL_ACTION = "tool_action"
     BRAVE_MCP = "brave_mcp"
     WALLET_MCP = "wallet_mcp"
     WALLET_FLOW = "wallet_flow"

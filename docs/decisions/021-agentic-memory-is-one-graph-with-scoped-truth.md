@@ -401,7 +401,7 @@ The block reading
     (:Entity)-[:ASSERTS {...}]->(:Entity)
 
 is wrong in four names. What ships is `:Episode` + `CONTINUES`
-(`episode_repository.py`, 229 nodes / 228 edges) and
+(`episode_repository.py`, 229 nodes / 228 edges at the time, 344 on 2026-11-01) and
 `(:Fact)-[:ABOUT]->(:Operator)` (`operator_fact_repository.py`). `:Episodic`,
 `NEXT_EPISODE`, `MENTIONS` and `ASSERTS` exist nowhere in `graph_surface.py`.
 
