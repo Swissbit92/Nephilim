@@ -26,13 +26,7 @@ def memory_text(message: dict) -> str:
     operator said, for as long as the text survives.
     """
     content = message.get("content", "")
-    # The source type alone also covers an image reply from the tool loop, and the
-    # citation line is what shows a reply was built from search.
-    if (
-        message.get("role") == "assistant"
-        and message.get("source_type") in RESEARCH_SOURCE_TYPES
-        and SOURCES_LINE.search(content)
-    ):
+    if message.get("role") == "assistant" and message.get("source_type") in RESEARCH_SOURCE_TYPES:
         return f"{WEB_RESEARCH_LABEL} {content}"
     return content
 
@@ -48,6 +42,8 @@ class SourceType(StrEnum):
     """
 
     LLM = "llm"
+    # A tool that did something and read nothing, such as queueing an image.
+    TOOL_ACTION = "tool_action"
     BRAVE_MCP = "brave_mcp"
     WALLET_MCP = "wallet_mcp"
     WALLET_FLOW = "wallet_flow"

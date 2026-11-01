@@ -938,7 +938,7 @@ def _try_tool_brain(
             )
         if result.status == ST_ANSWERED and result.answer and side_effect_tools \
                 and not result.used_search:
-            metadata.source_type = SourceType.TOOL_BRAIN
+            metadata.source_type = SourceType.TOOL_ACTION
             metadata.tools_used = side_effect_tools
             # The regex narrowed the surface to one tool; the model still
             # chose to call it. Record both so "a tool ran" is never read as

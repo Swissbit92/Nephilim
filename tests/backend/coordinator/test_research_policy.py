@@ -274,8 +274,12 @@ class TestMemory:
     }
 
     def test_an_image_reply_from_the_tool_loop_is_not_marked(self):
-        message = {"role": "assistant", "content": "Drawing that now", "source_type": "tool_brain"}
+        message = {"role": "assistant", "content": "Drawing that now", "source_type": "tool_action"}
         assert memory_text(message) == "Drawing that now"
+
+    def test_a_research_reply_with_no_citation_line_is_still_marked(self):
+        message = {"role": "assistant", "content": "It is 42", "source_type": "tool_brain"}
+        assert memory_text(message).startswith("[from web research]")
 
     def test_a_research_reply_is_marked_in_summaries(self):
         text = ConversationSummarizer()._format_messages([self.MSG])
