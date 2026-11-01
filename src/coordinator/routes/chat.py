@@ -426,7 +426,7 @@ def _start_research(*, policy, trigger, card, system, body, history, metadata, p
         return response
 
     session = getattr(body, "session_id", "") or ""
-    if not research_cap.allow(session, get_settings().search.research_hourly_cap):
+    if session and not research_cap.allow(session, get_settings().search.research_hourly_cap):
         return spoken("research_paused", "capped")
 
     # Freshness sends the checked message itself. Resolution folds in history, which

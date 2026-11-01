@@ -15,11 +15,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..config import get_settings
+from ..schemas import SOURCES_LINE
 from .query_resolution_service import QueryResolutionService, query_origin_ok
 from .research_service import asks_for_fresh_facts, mentions_someone
 
-#: Her reply carries this when it was built from research.
-SOURCES_MARK = "🔍"
+_ASKS = re.compile(
+    r"\?\s*$|^(what|which|who|when|where|why|how|is|are|does|do|can|could|and)\b.*\b\w+\b.*\b\w+\b",
+    re.IGNORECASE,
+)
+_MIN_FOLLOWUP_WORDS = 3
 
 _CONSEQUENTIAL = re.compile(
     r"\b(invest|investing|investment|tax|taxes|loan|mortgage|pension|insurance|dose|dosage"
@@ -82,8 +86,11 @@ def _follows_research(message: str, history: Sequence[Any]) -> bool:
     last = history[-1]
     return (
         last.role == "assistant"
-        and SOURCES_MARK in (last.content or "")
+        and SOURCES_LINE.search(last.content or "")
         and "\n" not in message.strip()
+        # An acknowledgement is not a question: "thanks", "ok lol", "why?".
+        and len(message.split()) >= _MIN_FOLLOWUP_WORDS
+        and _ASKS.search(message.strip())
         and QueryResolutionService._looks_like_followup(message)
     )
 

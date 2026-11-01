@@ -54,6 +54,7 @@ def flags(monkeypatch):
 def _gwen_turn(
     msg,
     *,
+    session="s",
     intent=QueryIntent.NEEDS_WEB_SEARCH,
     history=(),
     package=None,
@@ -92,12 +93,16 @@ def _gwen_turn(
             intent=intent,
             metadata=meta,
             body=SimpleNamespace(
-                message=msg, session_id="s", persona="gwen", extra_system_context=recalled
+                message=msg, session_id=session, persona="gwen", extra_system_context=recalled
             ),
             persona_name="Gwen",
             deps={"brave_client": None},
         )
     return resp, meta, brain, research, svc
+
+
+def _gwen_turn_sessionless(msg):
+    return _gwen_turn(msg, session=None)
 
 
 class TestGrant:
@@ -227,6 +232,15 @@ class TestProposal:
         history = [turn("assistant", "It is a wallet.\n\n🔍 Sources: x")]
         assert rp.proposal(rp._ORDINARY, False, "how much does it cost?", history) == "followup"
 
+    @pytest.mark.parametrize("message", ["thanks", "yes", "ok lol", "why?", "and then?", "that is great"])
+    def test_an_acknowledgement_does_not_research(self, message):
+        history = [turn("assistant", "It is a wallet.\n\n🔍 Sources: x")]
+        assert rp.proposal(rp._ORDINARY, False, message, history) is None
+
+    def test_a_mark_inside_prose_is_not_a_researched_reply(self):
+        history = [turn("assistant", "I searched my heart 🔍 for you")]
+        assert rp.proposal(rp._ORDINARY, False, "how much does it cost?", history) is None
+
     def test_a_followup_to_chat_does_not(self):
         history = [turn("assistant", "It is lovely.")]
         assert rp.proposal(rp._ORDINARY, False, "how much does it cost?", history) is None
@@ -238,6 +252,13 @@ class TestProposal:
         )
 
 
+def test_a_sessionless_request_is_not_capped(flags, monkeypatch):
+    flags()
+    monkeypatch.setattr(rp.research_cap, "allow", lambda *a: False)
+    _, _, _, research, _ = _gwen_turn_sessionless("what is the weather today?")
+    research.run.assert_called_once()
+
+
 def test_hourly_cap_recovers():
     cap = rp.HourlyCap()
     assert (
@@ -246,7 +267,15 @@ def test_hourly_cap_recovers():
 
 
 class TestMemory:
-    MSG = {"role": "assistant", "content": "Web says he lives in Oslo", "source_type": "tool_brain"}
+    MSG = {
+        "role": "assistant",
+        "content": "Web says he lives in Oslo\n\n🔍 Sources:\n- x",
+        "source_type": "tool_brain",
+    }
+
+    def test_an_image_reply_from_the_tool_loop_is_not_marked(self):
+        message = {"role": "assistant", "content": "Drawing that now", "source_type": "tool_brain"}
+        assert memory_text(message) == "Drawing that now"
 
     def test_a_research_reply_is_marked_in_summaries(self):
         text = ConversationSummarizer()._format_messages([self.MSG])

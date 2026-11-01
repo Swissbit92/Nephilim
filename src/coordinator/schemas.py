@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
@@ -13,6 +14,8 @@ from pydantic import BaseModel, Field
 #: Stored replies built from retrieved web text.
 RESEARCH_SOURCE_TYPES = frozenset({"tool_brain", "brave_mcp"})
 WEB_RESEARCH_LABEL = "[from web research]"
+#: Citations start a line, so a 🔍 inside her prose or the operator's is not a match.
+SOURCES_LINE = re.compile(r"^🔍", re.MULTILINE)
 
 
 def memory_text(message: dict) -> str:
@@ -23,7 +26,13 @@ def memory_text(message: dict) -> str:
     operator said, for as long as the text survives.
     """
     content = message.get("content", "")
-    if message.get("source_type") in RESEARCH_SOURCE_TYPES and message.get("role") == "assistant":
+    # The source type alone also covers an image reply from the tool loop, and the
+    # citation line is what shows a reply was built from search.
+    if (
+        message.get("role") == "assistant"
+        and message.get("source_type") in RESEARCH_SOURCE_TYPES
+        and SOURCES_LINE.search(content)
+    ):
         return f"{WEB_RESEARCH_LABEL} {content}"
     return content
 
